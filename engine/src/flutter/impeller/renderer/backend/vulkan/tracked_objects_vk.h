@@ -39,6 +39,8 @@ class TrackedObjectsVK {
 
   GPUProbe& GetGPUProbe() const;
 
+  std::vector<WaitSemaphore> TakeWaitSemaphores();
+
  private:
   std::shared_ptr<DescriptorPoolVK> desc_pool_;
   // `shared_ptr` since command buffers have a link to the command pool.
@@ -47,6 +49,7 @@ class TrackedObjectsVK {
   std::vector<std::shared_ptr<SharedObjectVK>> tracked_objects_;
   std::vector<std::shared_ptr<const DeviceBuffer>> tracked_buffers_;
   std::vector<std::shared_ptr<const TextureSourceVK>> tracked_textures_;
+  std::vector<WaitSemaphore> wait_semaphores_;
   std::unique_ptr<GPUProbe> probe_;
   bool is_valid_ = false;
 

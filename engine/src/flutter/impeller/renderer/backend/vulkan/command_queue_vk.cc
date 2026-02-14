@@ -60,8 +60,25 @@ fml::Status CommandQueueVK::Submit(
     return fml::Status(fml::StatusCode::kCancelled, "Failed to create fence.");
   }
 
+  // Collect wait semaphores from all tracked objects (e.g. DMA-BUF
+  // acquire fences imported as VkSemaphores).
+  std::vector<vk::Semaphore> wait_semaphore_handles;
+  std::vector<vk::PipelineStageFlags> wait_stage_masks;
+  std::vector<WaitSemaphore> wait_semaphores_storage;
+  for (auto& objs : tracked_objects) {
+    for (auto& sem : objs->TakeWaitSemaphores()) {
+      wait_semaphore_handles.push_back(*sem.semaphore);
+      wait_stage_masks.push_back(sem.wait_stage);
+      wait_semaphores_storage.push_back(std::move(sem));
+    }
+  }
+
   vk::SubmitInfo submit_info;
   submit_info.setCommandBuffers(vk_buffers);
+  if (!wait_semaphore_handles.empty()) {
+    submit_info.setWaitSemaphores(wait_semaphore_handles);
+    submit_info.setWaitDstStageMask(wait_stage_masks);
+  }
   auto status = context->GetGraphicsQueue()->Submit(submit_info, *fence);
   if (status != vk::Result::eSuccess) {
     VALIDATION_LOG << "Failed to submit queue: " << vk::to_string(status);
@@ -71,10 +88,14 @@ fml::Status CommandQueueVK::Submit(
   // Submit will proceed, call callback with true when it is done and do not
   // call when `reset` is collected.
   auto added_fence = context->GetFenceWaiter()->AddFence(
-      std::move(fence), [completion_callback, tracked_objects = std::move(
-                                                  tracked_objects)]() mutable {
-        // Ensure tracked objects are destructed before calling any final
-        // callbacks.
+      std::move(fence),
+      [completion_callback,
+       tracked_objects = std::move(tracked_objects),
+       wait_semaphores_storage =
+           std::move(wait_semaphores_storage)]() mutable {
+        // Ensure tracked objects and semaphores are destructed before calling
+        // any final callbacks.
+        wait_semaphores_storage.clear();
         tracked_objects.clear();
         if (completion_callback) {
           completion_callback(CommandBuffer::Status::kCompleted);

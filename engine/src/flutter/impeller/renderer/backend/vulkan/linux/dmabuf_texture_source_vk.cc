@@ -5,6 +5,7 @@
 #include "impeller/renderer/backend/vulkan/linux/dmabuf_texture_source_vk.h"
 
 #include "impeller/renderer/backend/vulkan/allocator_vk.h"
+#include "impeller/renderer/backend/vulkan/capabilities_vk.h"
 #include "impeller/renderer/backend/vulkan/context_vk.h"
 #include "impeller/renderer/backend/vulkan/texture_source_vk.h"
 
@@ -63,11 +64,6 @@ DmabufTextureSourceVK::DmabufTextureSourceVK(
     const DmabufDescriptor& desc)
     : TextureSourceVK(ToTextureDescriptor(desc)) {
   if (!p_context) {
-    return;
-  }
-
-  if (desc.acquire_fence_fd >= 0) {
-    VALIDATION_LOG << "DMA-BUF acquire fences are not yet supported.";
     return;
   }
 
@@ -209,6 +205,40 @@ DmabufTextureSourceVK::DmabufTextureSourceVK(
 #endif  // IMPELLER_DEBUG
 
   is_valid_ = true;
+
+  // Import acquire fence as VkSemaphore for GPU-side synchronization.
+  if (desc.acquire_fence_fd >= 0) {
+    const auto& caps = CapabilitiesVK::Cast(*context.GetCapabilities());
+    if (!caps.HasExtension(
+            OptionalLinuxDeviceExtensionVK::kKHRExternalSemaphoreFd) ||
+        !caps.HasExtension(
+            OptionalLinuxDeviceExtensionVK::kKHRExternalSemaphore)) {
+      VALIDATION_LOG << "Cannot import DMA-BUF acquire fence: "
+                        "VK_KHR_external_semaphore_fd not available.";
+    } else {
+      auto sem_result = device.createSemaphoreUnique({});
+      if (sem_result.result == vk::Result::eSuccess) {
+        vk::ImportSemaphoreFdInfoKHR import_info;
+        import_info.semaphore = *sem_result.value;
+        import_info.fd = desc.acquire_fence_fd;
+        import_info.handleType =
+            vk::ExternalSemaphoreHandleTypeFlagBits::eSyncFd;
+        import_info.flags = vk::SemaphoreImportFlagBitsKHR::eTemporary;
+        auto import_result = device.importSemaphoreFdKHR(import_info);
+        if (import_result == vk::Result::eSuccess) {
+          // Vulkan now owns the fd — must NOT close it after this point.
+          acquire_semaphore_ = std::move(sem_result.value);
+        }
+        // On failure, the fd is NOT consumed by Vulkan. Ownership stays with
+        // the caller of DmabufTextureSourceVK (ultimately the embedder's
+        // release_callback path). No action needed here.
+      }
+    }
+  }
+
+  // DRM format modifier images have a layout determined by the modifier.
+  // Mark as shader-read-only so SetLayout() has the correct old layout.
+  SetLayoutWithoutEncoding(vk::ImageLayout::eShaderReadOnlyOptimal);
 }
 
 // |TextureSourceVK|
@@ -236,6 +266,19 @@ vk::ImageView DmabufTextureSourceVK::GetRenderTargetView() const {
 // |TextureSourceVK|
 bool DmabufTextureSourceVK::IsSwapchainImage() const {
   return false;
+}
+
+// |TextureSourceVK|
+std::optional<WaitSemaphore>
+DmabufTextureSourceVK::ConsumeAcquireSemaphore() const {
+  if (!acquire_semaphore_) {
+    return std::nullopt;
+  }
+  WaitSemaphore result;
+  result.semaphore = std::move(acquire_semaphore_);
+  result.wait_stage = vk::PipelineStageFlagBits::eFragmentShader |
+                      vk::PipelineStageFlagBits::eComputeShader;
+  return result;
 }
 
 }  // namespace impeller

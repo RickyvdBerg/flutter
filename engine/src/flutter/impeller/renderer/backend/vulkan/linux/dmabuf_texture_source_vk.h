@@ -6,6 +6,7 @@
 #define FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_LINUX_DMABUF_TEXTURE_SOURCE_VK_H_
 
 #include <cstdint>
+#include <optional>
 
 #include "impeller/renderer/backend/vulkan/texture_source_vk.h"
 #include "impeller/renderer/backend/vulkan/vk.h"
@@ -61,12 +62,16 @@ class DmabufTextureSourceVK final : public TextureSourceVK {
   // |TextureSourceVK|
   bool IsSwapchainImage() const override;
 
+  // |TextureSourceVK|
+  std::optional<WaitSemaphore> ConsumeAcquireSemaphore() const override;
+
   bool IsValid() const;
 
  private:
   vk::UniqueDeviceMemory device_memory_ = {};
   vk::UniqueImage image_ = {};
   vk::UniqueImageView image_view_ = {};
+  mutable vk::UniqueSemaphore acquire_semaphore_ = {};
   bool is_valid_ = false;
 
   DmabufTextureSourceVK(const DmabufTextureSourceVK&) = delete;

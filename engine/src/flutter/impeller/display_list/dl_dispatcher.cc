@@ -1341,4 +1341,43 @@ bool RenderToTarget(ContentContext& context,
   return true;
 }
 
+bool RenderToTarget(ContentContext& context,
+                    RenderTarget render_target,
+                    const sk_sp<flutter::DisplayList>& display_list,
+                    const std::vector<SkIRect>& damage_rects,
+                    bool reset_host_buffer,
+                    bool is_onscreen) {
+  auto to_impeller_rect = [](const SkIRect& rect) {
+    return Rect::MakeLTRB(rect.left(), rect.top(), rect.right(),
+                          rect.bottom());
+  };
+  if (damage_rects.empty()) {
+    auto size = render_target.GetRenderTargetSize();
+    SkIRect full = SkIRect::MakeWH(size.width, size.height);
+    return RenderToTarget(context, render_target, display_list,
+                          to_impeller_rect(full), reset_host_buffer,
+                          is_onscreen);
+  }
+
+  if (damage_rects.size() == 1) {
+    return RenderToTarget(context, render_target, display_list,
+                          to_impeller_rect(damage_rects[0]),
+                          reset_host_buffer, is_onscreen);
+  }
+
+  // Multiple damage rects: delegate to single-rect overload with the bounding
+  // box. The individual rects are still useful at the surface level (e.g.,
+  // VK_KHR_incremental_present, buffer damage tracking), but per-rect GPU
+  // scissoring via repeated Dispatch() is not possible because Canvas assumes
+  // a single Dispatch per lifetime (current_depth_ and clip_depth invariants
+  // would be violated on the second iteration).
+  SkIRect cull_bounds = damage_rects[0];
+  for (size_t i = 1; i < damage_rects.size(); i++) {
+    cull_bounds.join(damage_rects[i]);
+  }
+  return RenderToTarget(context, render_target, display_list,
+                        to_impeller_rect(cull_bounds), reset_host_buffer,
+                        is_onscreen);
+}
+
 }  // namespace impeller

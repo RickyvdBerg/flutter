@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <vector>
 
 #include "flutter/display_list/dl_op_receiver.h"
 #include "flutter/display_list/geometry/dl_geometry_types.h"
@@ -462,6 +463,14 @@ bool RenderToTarget(ContentContext& context,
                     RenderTarget render_target,
                     const sk_sp<flutter::DisplayList>& display_list,
                     Rect cull_rect,
+                    bool reset_host_buffer,
+                    bool is_onscreen = true);
+
+/// @brief Render to target with per-rect damage for scissor optimization.
+bool RenderToTarget(ContentContext& context,
+                    RenderTarget render_target,
+                    const sk_sp<flutter::DisplayList>& display_list,
+                    const std::vector<SkIRect>& damage_rects,
                     bool reset_host_buffer,
                     bool is_onscreen = true);
 

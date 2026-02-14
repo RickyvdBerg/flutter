@@ -6,6 +6,8 @@
 #if !SLIMPELLER
 
 #include "flutter/shell/gpu/gpu_surface_metal_skia.h"
+#include "flutter/display_list/geometry/dl_geometry_types.h"
+#include "flutter/display_list/geometry/dl_region.h"
 
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
@@ -169,7 +171,8 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceMetalSkia::AcquireFrameFromCAMetalLayer(
         if (entry.first != texture) {
           // Accumulate damage for other framebuffers
           if (surface_frame.submit_info().frame_damage) {
-            entry.second = entry.second.Union(*surface_frame.submit_info().frame_damage);
+            auto bounds = surface_frame.submit_info().frame_damage->bounds();
+            entry.second = entry.second.Union(bounds);
           }
         }
       }
@@ -196,7 +199,7 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceMetalSkia::AcquireFrameFromCAMetalLayer(
     void* texture = (__bridge void*)drawable.texture;
     auto i = damage_.find(texture);
     if (i != damage_.end()) {
-      framebuffer_info.existing_damage = i->second;
+      framebuffer_info.existing_damage = DlRegion(i->second);
     }
     framebuffer_info.supports_partial_repaint = true;
   }

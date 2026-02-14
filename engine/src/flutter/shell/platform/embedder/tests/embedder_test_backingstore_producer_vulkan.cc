@@ -17,6 +17,8 @@ namespace {
 struct UserData {
   sk_sp<SkSurface> surface;
   FlutterVulkanImage* image;
+  VkImageView image_view;
+  fml::RefPtr<TestVulkanContext> vulkan_context;
 };
 }  // namespace
 
@@ -88,13 +90,30 @@ bool EmbedderTestBackingStoreProducerVulkan::Create(
   image->format = VK_FORMAT_R8G8B8A8_UNORM;
   backing_store_out->vulkan.image = image;
 
+  // Create a VkImageView for Impeller use via the proc table.
+  VkImageView image_view = test_vulkan_context_->CreateImageView(
+      image_info.fImage, VK_FORMAT_R8G8B8A8_UNORM, surface_size);
+  if (image_view == VK_NULL_HANDLE) {
+    FML_LOG(ERROR) << "Could not create VkImageView for test backing store.";
+    return false;
+  }
+  backing_store_out->vulkan.image_view =
+      reinterpret_cast<uint64_t>(image_view);
+
   // Collect all allocated resources in the destruction_callback.
+  // Hold a ref to the TestVulkanContext so its device outlives the image view.
   {
-    auto user_data = new UserData{.surface = surface, .image = image};
+    auto user_data = new UserData{
+        .surface = surface,
+        .image = image,
+        .image_view = image_view,
+        .vulkan_context = test_vulkan_context_,
+    };
     backing_store_out->user_data = user_data;
     backing_store_out->vulkan.user_data = user_data;
     backing_store_out->vulkan.destruction_callback = [](void* user_data) {
       UserData* d = reinterpret_cast<UserData*>(user_data);
+      d->vulkan_context->DestroyImageView(d->image_view);
       delete d->image;
       delete d;
     };

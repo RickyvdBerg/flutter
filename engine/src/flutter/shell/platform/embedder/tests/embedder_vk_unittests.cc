@@ -129,6 +129,100 @@ TEST_F(EmbedderTest, CanSwapOutVulkanCalls) {
   EXPECT_TRUE(g_vulkan_proc_info.did_call_queue_submit);
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Vulkan + Impeller compositor tests
+////////////////////////////////////////////////////////////////////////////////
+
+TEST_F(EmbedderTest, VulkanImpellerCompositorCanLaunchEngine) {
+  auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.AddCommandLineArgument("--enable-impeller");
+  builder.SetSurface(SkISize::Make(800, 600));
+  builder.SetCompositor();
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
+  builder.SetDartEntrypoint("render_impeller_test");
+
+  // Verify the engine launches without hitting the "Unimplemented" error.
+  fml::AutoResetWaitableEvent latch;
+  context.AddIsolateCreateCallback([&latch]() { latch.Signal(); });
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+  latch.Wait();
+}
+
+TEST_F(EmbedderTest, VulkanImpellerCompositorPresentCallbackFires) {
+  auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.AddCommandLineArgument("--enable-impeller");
+  builder.SetDartEntrypoint("render_impeller_test");
+  builder.SetSurface(SkISize::Make(800, 600));
+  builder.SetCompositor();
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
+
+  fml::CountDownLatch latch(1);
+  context.GetCompositor().SetNextPresentCallback(
+      [&](FlutterViewId view_id, const FlutterLayer** layers,
+          size_t layers_count) {
+        ASSERT_GT(layers_count, 0u);
+
+        // The first layer should be a backing store rendered by Impeller.
+        ASSERT_EQ(layers[0]->type, kFlutterLayerContentTypeBackingStore);
+        ASSERT_EQ(layers[0]->backing_store->type,
+                  kFlutterBackingStoreTypeVulkan);
+
+        latch.CountDown();
+      });
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 800;
+  event.height = 600;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+
+  latch.Wait();
+}
+
+TEST_F(EmbedderTest, VulkanImpellerCompositorRendersScene) {
+  auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.AddCommandLineArgument("--enable-impeller");
+  builder.SetDartEntrypoint("render_impeller_test");
+  builder.SetSurface(SkISize::Make(800, 600));
+  builder.SetCompositor();
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
+
+  auto rendered_scene = context.GetNextSceneImage();
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 800;
+  event.height = 600;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+
+  // Verify that a scene was rendered (the future resolves with a non-null
+  // image). Golden image comparison is deferred to a follow-up once the
+  // reference images are captured with SwiftShader.
+  auto scene_image = rendered_scene.get();
+  ASSERT_TRUE(scene_image);
+}
+
 }  // namespace testing
 }  // namespace flutter
 

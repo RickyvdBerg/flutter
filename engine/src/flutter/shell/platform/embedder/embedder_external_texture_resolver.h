@@ -18,6 +18,11 @@
 #endif
 
 namespace flutter {
+
+#ifdef __linux__
+class DmabufTextureMailbox;
+#endif
+
 class EmbedderExternalTextureResolver {
  public:
   EmbedderExternalTextureResolver() = default;
@@ -38,6 +43,10 @@ class EmbedderExternalTextureResolver {
 
   bool SupportsExternalTextures();
 
+#ifdef __linux__
+  void SetDmabufMailbox(DmabufTextureMailbox* mailbox);
+#endif
+
  private:
 #ifdef SHELL_ENABLE_GL
   EmbedderExternalTextureGL::ExternalTextureCallback gl_callback_;
@@ -45,6 +54,10 @@ class EmbedderExternalTextureResolver {
 
 #ifdef SHELL_ENABLE_METAL
   EmbedderExternalTextureMetal::ExternalTextureCallback metal_callback_;
+#endif
+
+#ifdef __linux__
+  DmabufTextureMailbox* dmabuf_mailbox_ = nullptr;
 #endif
 
   FML_DISALLOW_COPY_AND_ASSIGN(EmbedderExternalTextureResolver);

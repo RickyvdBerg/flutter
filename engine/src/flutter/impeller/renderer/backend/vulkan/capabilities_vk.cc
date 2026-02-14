@@ -701,6 +701,14 @@ bool CapabilitiesVK::SetPhysicalDevice(
     supports_external_fence_and_semaphore_ = true;
   }
 
+  // DMA-BUF import for Linux external textures
+  if (HasExtension(OptionalLinuxDeviceExtensionVK::kKHRExternalMemoryFd) &&
+      HasExtension(OptionalLinuxDeviceExtensionVK::kEXTExternalMemoryDmaBuf) &&
+      HasExtension(
+          OptionalLinuxDeviceExtensionVK::kEXTImageDrmFormatModifier)) {
+    supports_dmabuf_import_ = true;
+  }
+
   minimum_uniform_alignment_ =
       device_properties_.limits.minUniformBufferOffsetAlignment;
   minimum_storage_alignment_ =
@@ -893,6 +901,10 @@ void CapabilitiesVK::ApplyWorkarounds(const WorkaroundsVK& workarounds) {
 
 bool CapabilitiesVK::SupportsExternalSemaphoreExtensions() const {
   return supports_external_fence_and_semaphore_;
+}
+
+bool CapabilitiesVK::SupportsDmabufImport() const {
+  return supports_dmabuf_import_;
 }
 
 bool CapabilitiesVK::SupportsExtendedRangeFormats() const {

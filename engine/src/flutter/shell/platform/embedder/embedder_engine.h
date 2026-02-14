@@ -5,6 +5,7 @@
 #ifndef FLUTTER_SHELL_PLATFORM_EMBEDDER_EMBEDDER_ENGINE_H_
 #define FLUTTER_SHELL_PLATFORM_EMBEDDER_EMBEDDER_ENGINE_H_
 
+#include <functional>
 #include <memory>
 #include <unordered_map>
 
@@ -14,6 +15,11 @@
 #include "flutter/shell/platform/embedder/embedder.h"
 #include "flutter/shell/platform/embedder/embedder_external_texture_resolver.h"
 #include "flutter/shell/platform/embedder/embedder_thread_host.h"
+
+#ifdef __linux__
+#include "flutter/shell/platform/embedder/dmabuf_texture_mailbox.h"
+#endif
+
 namespace flutter {
 
 struct ShellArgs;
@@ -90,6 +96,13 @@ class EmbedderEngine {
 
   Shell& GetShell();
 
+#ifdef __linux__
+  bool PublishDmabufTexture(int64_t texture_id,
+                            const impeller::DmabufDescriptor& desc,
+                            std::function<void()> release_callback);
+  DmabufTextureMailbox* GetDmabufMailbox() const;
+#endif
+
  private:
   std::unique_ptr<EmbedderThreadHost> thread_host_;
   TaskRunners task_runners_;
@@ -97,6 +110,9 @@ class EmbedderEngine {
   std::unique_ptr<ShellArgs> shell_args_;
   std::unique_ptr<Shell> shell_;
   std::unique_ptr<EmbedderExternalTextureResolver> external_texture_resolver_;
+#ifdef __linux__
+  std::unique_ptr<DmabufTextureMailbox> dmabuf_mailbox_;
+#endif
 
   FML_DISALLOW_COPY_AND_ASSIGN(EmbedderEngine);
 };

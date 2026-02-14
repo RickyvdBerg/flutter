@@ -5,8 +5,11 @@
 #include "flutter/shell/gpu/gpu_surface_vulkan_impeller.h"
 
 #include <memory>
+#include <vector>
 
 #include "flow/surface_frame.h"
+#include "flutter/display_list/geometry/dl_geometry_types.h"
+#include "flutter/display_list/geometry/dl_region.h"
 #include "flutter/fml/make_copyable.h"
 #include "fml/trace_event.h"
 #include "impeller/core/formats.h"
@@ -114,12 +117,29 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
         return false;
       }
 
-      SkIRect sk_cull_rect = SkIRect::MakeWH(cull_rect.width, cull_rect.height);
+      // Extract damage rects from submit info.
+      const auto& info = surface_frame.submit_info();
+      std::vector<SkIRect> damage_rects;
+      if (info.buffer_damage.has_value()) {
+        for (const auto& r : info.buffer_damage->getRects(/*deband=*/true)) {
+          damage_rects.push_back(ToSkIRect(r));
+        }
+      }
+
+      // Fallback: if no buffer_damage was provided (e.g., partial repaint
+      // disabled or first frame), repaint the full surface. In steady state
+      // this path is not reached because the rasterizer's zero-damage check
+      // prevents submission of empty-damage frames.
+      if (damage_rects.empty()) {
+        SkIRect full = SkIRect::MakeWH(cull_rect.width, cull_rect.height);
+        damage_rects.push_back(full);
+      }
+
       return impeller::RenderToTarget(
           aiks_context->GetContentContext(),                                //
           render_target,                                                    //
           display_list,                                                     //
-          sk_cull_rect,                                                     //
+          damage_rects,                                                     //
           /*reset_host_buffer=*/surface_frame.submit_info().frame_boundary  //
       );
     };
@@ -197,10 +217,15 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
     impeller::RenderTarget render_target = surface->GetRenderTarget();
     auto cull_rect = render_target.GetRenderTargetSize();
 
-    SurfaceFrame::EncodeCallback encode_callback = [aiks_context =
-                                                        aiks_context_,  //
-                                                    render_target,
-                                                    cull_rect  //
+    uint64_t image_key = flutter_image.image;
+
+    SurfaceFrame::EncodeCallback encode_callback =
+        fml::MakeCopyable([aiks_context = aiks_context_,  //
+                           damage = damage_,
+                           disable_partial_repaint = disable_partial_repaint_,
+                           render_target,
+                           cull_rect,  //
+                           image_key   //
     ](SurfaceFrame& surface_frame, DlCanvas* canvas) mutable -> bool {
       if (!aiks_context) {
         return false;
@@ -212,14 +237,47 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
         return false;
       }
 
-      SkIRect sk_cull_rect = SkIRect::MakeWH(cull_rect.width, cull_rect.height);
-      return impeller::RenderToTarget(aiks_context->GetContentContext(),  //
-                                      render_target,                      //
-                                      display_list,                       //
-                                      sk_cull_rect,                       //
-                                      /*reset_host_buffer=*/true          //
+      if (!disable_partial_repaint && damage) {
+        for (auto& entry : *damage) {
+          if (entry.first != image_key) {
+            // Accumulate damage for other framebuffers.
+            if (surface_frame.submit_info().frame_damage) {
+              auto bounds =
+                  surface_frame.submit_info().frame_damage->bounds();
+              entry.second.join(ToSkIRect(bounds));
+            }
+          }
+        }
+        // Reset accumulated damage for current framebuffer.
+        (*damage)[image_key] = SkIRect::MakeEmpty();
+      }
+
+      // Extract damage rects from submit info.
+      const auto& info = surface_frame.submit_info();
+      std::vector<SkIRect> damage_rects;
+      if (info.buffer_damage.has_value()) {
+        for (const auto& r : info.buffer_damage->getRects(/*deband=*/true)) {
+          damage_rects.push_back(ToSkIRect(r));
+        }
+      }
+
+      // Fallback: if no buffer_damage was provided (e.g., partial repaint
+      // disabled or first frame), repaint the full surface. In steady state
+      // this path is not reached because the rasterizer's zero-damage check
+      // prevents submission of empty-damage frames.
+      if (damage_rects.empty()) {
+        SkIRect full = SkIRect::MakeWH(cull_rect.width, cull_rect.height);
+        damage_rects.push_back(full);
+      }
+
+      return impeller::RenderToTarget(
+          aiks_context->GetContentContext(),                                //
+          render_target,                                                    //
+          display_list,                                                     //
+          damage_rects,                                                     //
+          /*reset_host_buffer=*/surface_frame.submit_info().frame_boundary  //
       );
-    };
+    });
 
     SurfaceFrame::SubmitCallback submit_callback =
         [image = flutter_image, delegate = delegate_,
@@ -264,6 +322,16 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
     };
 
     SurfaceFrame::FramebufferInfo framebuffer_info{.supports_readback = true};
+
+    if (!disable_partial_repaint_) {
+      // Provide accumulated damage to rasterizer (area in current framebuffer
+      // that lags behind front buffer).
+      auto i = damage_->find(image_key);
+      if (i != damage_->end()) {
+        framebuffer_info.existing_damage = DlRegion(ToDlIRect(i->second));
+      }
+      framebuffer_info.supports_partial_repaint = true;
+    }
 
     return std::make_unique<SurfaceFrame>(nullptr,           // surface
                                           framebuffer_info,  // framebuffer info

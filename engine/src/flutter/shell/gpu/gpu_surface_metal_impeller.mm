@@ -8,6 +8,8 @@
 #import <QuartzCore/QuartzCore.h>
 #include "flow/surface.h"
 #include "flow/surface_frame.h"
+#include "flutter/display_list/geometry/dl_geometry_types.h"
+#include "flutter/display_list/geometry/dl_region.h"
 #include "impeller/display_list/aiks_context.h"
 #include "impeller/renderer/backend/metal/swapchain_transients_mtl.h"
 
@@ -137,7 +139,8 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceMetalImpeller::AcquireFrameFromCAMetalLa
             if (entry.first != texture) {
               // Accumulate damage for other framebuffers
               if (surface_frame.submit_info().frame_damage) {
-                entry.second.join(*surface_frame.submit_info().frame_damage);
+                auto bounds = surface_frame.submit_info().frame_damage->bounds();
+                entry.second.join(ToSkIRect(bounds));
               }
             }
           }
@@ -147,9 +150,9 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceMetalImpeller::AcquireFrameFromCAMetalLa
 
         std::optional<impeller::IRect> clip_rect;
         if (surface_frame.submit_info().buffer_damage.has_value()) {
-          auto buffer_damage = surface_frame.submit_info().buffer_damage;
-          clip_rect = impeller::IRect::MakeXYWH(buffer_damage->x(), buffer_damage->y(),
-                                                buffer_damage->width(), buffer_damage->height());
+          auto bounds = surface_frame.submit_info().buffer_damage->bounds();
+          clip_rect = impeller::IRect::MakeLTRB(bounds.GetLeft(), bounds.GetTop(),
+                                                bounds.GetRight(), bounds.GetBottom());
         }
 
         auto surface = impeller::SurfaceMTL::MakeFromMetalLayerDrawable(
@@ -201,7 +204,7 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceMetalImpeller::AcquireFrameFromCAMetalLa
     void* texture = (__bridge void*)drawable.texture;
     auto i = damage_->find(texture);
     if (i != damage_->end()) {
-      framebuffer_info.existing_damage = i->second;
+      framebuffer_info.existing_damage = DlRegion(ToDlIRect(i->second));
     }
     framebuffer_info.supports_partial_repaint = true;
   }
@@ -261,7 +264,8 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceMetalImpeller::AcquireFrameFromMTLTextur
             if (entry.first != texture_ptr) {
               // Accumulate damage for other framebuffers
               if (surface_frame.submit_info().frame_damage) {
-                entry.second.join(*surface_frame.submit_info().frame_damage);
+                auto bounds = surface_frame.submit_info().frame_damage->bounds();
+                entry.second.join(ToSkIRect(bounds));
               }
             }
           }
@@ -271,9 +275,9 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceMetalImpeller::AcquireFrameFromMTLTextur
 
         std::optional<impeller::IRect> clip_rect;
         if (surface_frame.submit_info().buffer_damage.has_value()) {
-          auto buffer_damage = surface_frame.submit_info().buffer_damage;
-          clip_rect = impeller::IRect::MakeXYWH(buffer_damage->x(), buffer_damage->y(),
-                                                buffer_damage->width(), buffer_damage->height());
+          auto bounds = surface_frame.submit_info().buffer_damage->bounds();
+          clip_rect = impeller::IRect::MakeLTRB(bounds.GetLeft(), bounds.GetTop(),
+                                                bounds.GetRight(), bounds.GetBottom());
         }
 
         auto surface = impeller::SurfaceMTL::MakeFromTexture(
@@ -320,7 +324,7 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceMetalImpeller::AcquireFrameFromMTLTextur
     void* texture = (__bridge void*)mtl_texture;
     auto i = damage_->find(texture);
     if (i != damage_->end()) {
-      framebuffer_info.existing_damage = i->second;
+      framebuffer_info.existing_damage = DlRegion(ToDlIRect(i->second));
     }
     framebuffer_info.supports_partial_repaint = true;
   }

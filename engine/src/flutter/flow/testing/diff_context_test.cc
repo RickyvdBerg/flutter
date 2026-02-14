@@ -6,6 +6,7 @@
 
 #include <utility>
 #include "flutter/display_list/dl_builder.h"
+#include "flutter/display_list/geometry/dl_region.h"
 
 namespace flutter {
 namespace testing {
@@ -26,7 +27,8 @@ Damage DiffContextTest::DiffLayerTree(MockLayerTree& layer_tree,
                  impeller_enabled);
   dc.PushCullRect(DlRect::MakeSize(layer_tree.size()));
   layer_tree.root()->Diff(&dc, old_layer_tree.root());
-  return dc.ComputeDamage(additional_damage, horizontal_clip_alignment,
+  return dc.ComputeDamage(DlRegion(additional_damage),
+                          horizontal_clip_alignment,
                           vertical_clip_alignment);
 }
 

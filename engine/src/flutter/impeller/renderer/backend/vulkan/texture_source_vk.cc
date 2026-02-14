@@ -4,6 +4,8 @@
 
 #include "impeller/renderer/backend/vulkan/texture_source_vk.h"
 
+#include <optional>
+
 namespace impeller {
 
 TextureSourceVK::TextureSourceVK(TextureDescriptor desc) : desc_(desc) {}
@@ -16,6 +18,10 @@ const TextureDescriptor& TextureSourceVK::GetTextureDescriptor() const {
 
 std::shared_ptr<YUVConversionVK> TextureSourceVK::GetYUVConversion() const {
   return nullptr;
+}
+
+std::optional<WaitSemaphore> TextureSourceVK::ConsumeAcquireSemaphore() const {
+  return std::nullopt;
 }
 
 vk::ImageLayout TextureSourceVK::GetLayout() const {

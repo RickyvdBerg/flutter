@@ -2023,6 +2023,10 @@ typedef struct {
   /// so the written layer images can be freely bound by the embedder without
   /// any additional synchronization.
   const FlutterVulkanImage* image;
+  /// Handle to the VkImageView for the image. Required when using Impeller.
+  /// The image view must be compatible with the image's format and created with
+  /// color aspect, single mip level, and single array layer.
+  uint64_t image_view;
   /// A baton that is not interpreted by the engine in any way. It will be given
   /// back to the embedder in the destruction callback below. Embedder resources
   /// may be associated with this baton.

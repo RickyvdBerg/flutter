@@ -122,6 +122,66 @@ enum class OptionalAndroidDeviceExtensionVK : uint32_t {
 };
 
 //------------------------------------------------------------------------------
+/// @brief      A device extension available on some Linux platforms, needed
+///             for DMA-BUF import and external memory/sync interop.
+///
+///             Platform agnostic code can still check if these Linux
+///             extensions are present.
+///
+enum class OptionalLinuxDeviceExtensionVK : uint32_t {
+  //----------------------------------------------------------------------------
+  /// For importing file-descriptor-based external memory (DMA-BUFs).
+  ///
+  /// https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_memory_fd.html
+  ///
+  kKHRExternalMemoryFd,
+
+  //----------------------------------------------------------------------------
+  /// For importing DMA-BUF memory as VkDeviceMemory.
+  ///
+  /// https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_EXT_external_memory_dma_buf.html
+  ///
+  kEXTExternalMemoryDmaBuf,
+
+  //----------------------------------------------------------------------------
+  /// For querying and using DRM format modifiers with images.
+  ///
+  /// https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_EXT_image_drm_format_modifier.html
+  ///
+  kEXTImageDrmFormatModifier,
+
+  //----------------------------------------------------------------------------
+  /// For exporting/importing semaphores via file descriptors.
+  ///
+  /// https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_semaphore_fd.html
+  ///
+  kKHRExternalSemaphoreFd,
+
+  //----------------------------------------------------------------------------
+  /// Dependency of kKHRExternalSemaphoreFd.
+  ///
+  /// https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_semaphore.html
+  ///
+  kKHRExternalSemaphore,
+
+  //----------------------------------------------------------------------------
+  /// For exporting/importing fences via file descriptors.
+  ///
+  /// https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_fence_fd.html
+  ///
+  kKHRExternalFenceFd,
+
+  //----------------------------------------------------------------------------
+  /// Dependency of kKHRExternalFenceFd.
+  ///
+  /// https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_fence.html
+  ///
+  kKHRExternalFence,
+
+  kLast,
+};
+
+//------------------------------------------------------------------------------
 /// @brief      A device extension enabled if available. Subsystems cannot
 ///             assume availability and must check if these extensions are
 ///             available.
@@ -199,6 +259,8 @@ class CapabilitiesVK final : public Capabilities,
   bool HasExtension(OptionalDeviceExtensionVK ext) const;
 
   bool HasExtension(OptionalAndroidDeviceExtensionVK ext) const;
+
+  bool HasExtension(OptionalLinuxDeviceExtensionVK ext) const;
 
   std::optional<std::vector<std::string>> GetEnabledLayers() const;
 
@@ -325,6 +387,8 @@ class CapabilitiesVK final : public Capabilities,
       required_android_device_extensions_;
   std::set<OptionalAndroidDeviceExtensionVK>
       optional_android_device_extensions_;
+  std::set<OptionalLinuxDeviceExtensionVK>
+      optional_linux_device_extensions_;
   std::set<OptionalDeviceExtensionVK> optional_device_extensions_;
   mutable PixelFormat default_color_format_ = PixelFormat::kUnknown;
   PixelFormat default_stencil_format_ = PixelFormat::kUnknown;

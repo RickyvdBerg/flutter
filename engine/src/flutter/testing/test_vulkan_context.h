@@ -26,6 +26,14 @@ class TestVulkanContext : public fml::RefCountedThreadSafe<TestVulkanContext> {
 
   sk_sp<GrDirectContext> GetGrDirectContext() const;
 
+  VkDevice GetDeviceHandle() const;
+
+  VkImageView CreateImageView(VkImage image,
+                               VkFormat format,
+                               const SkISize& size) const;
+
+  void DestroyImageView(VkImageView view) const;
+
  private:
   fml::RefPtr<vulkan::VulkanProcTable> vk_;
   std::unique_ptr<vulkan::VulkanApplication> application_;

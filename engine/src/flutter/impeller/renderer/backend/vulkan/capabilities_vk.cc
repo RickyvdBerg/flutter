@@ -97,6 +97,12 @@ std::optional<std::vector<std::string>> CapabilitiesVK::GetEnabledLayers()
 
 std::optional<std::vector<std::string>>
 CapabilitiesVK::GetEnabledInstanceExtensions() const {
+  // When the embedder provides extensions, trust its extension list directly.
+  // The embedder has already created the VkInstance with its chosen extensions.
+  if (use_embedder_extensions_) {
+    return embedder_instance_extensions_;
+  }
+
   std::vector<std::string> required;
 
   if (!HasExtension("VK_KHR_surface")) {
@@ -217,6 +223,28 @@ static const char* GetExtensionName(OptionalAndroidDeviceExtensionVK ext) {
   }
 }
 
+static const char* GetExtensionName(OptionalLinuxDeviceExtensionVK ext) {
+  switch (ext) {
+    case OptionalLinuxDeviceExtensionVK::kKHRExternalMemoryFd:
+      return VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
+    case OptionalLinuxDeviceExtensionVK::kEXTExternalMemoryDmaBuf:
+      return VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME;
+    case OptionalLinuxDeviceExtensionVK::kEXTImageDrmFormatModifier:
+      return VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME;
+    case OptionalLinuxDeviceExtensionVK::kKHRExternalSemaphoreFd:
+      return VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
+    case OptionalLinuxDeviceExtensionVK::kKHRExternalSemaphore:
+      return VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME;
+    case OptionalLinuxDeviceExtensionVK::kKHRExternalFenceFd:
+      return VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME;
+    case OptionalLinuxDeviceExtensionVK::kKHRExternalFence:
+      return VK_KHR_EXTERNAL_FENCE_EXTENSION_NAME;
+    case OptionalLinuxDeviceExtensionVK::kLast:
+      return "Unknown";
+  }
+  FML_UNREACHABLE();
+}
+
 static const char* GetExtensionName(OptionalDeviceExtensionVK ext) {
   switch (ext) {
     case OptionalDeviceExtensionVK::kEXTPipelineCreationFeedback:
@@ -262,19 +290,21 @@ static std::optional<std::set<std::string>> GetSupportedDeviceExtensions(
 std::optional<std::vector<std::string>>
 CapabilitiesVK::GetEnabledDeviceExtensions(
     const vk::PhysicalDevice& physical_device) const {
+  // When the embedder provides extensions, trust its extension list directly.
+  // The embedder has already created the VkDevice with its chosen extensions.
+  if (use_embedder_extensions_) {
+    return embedder_device_extensions_;
+  }
+
   std::set<std::string> exts;
 
-  if (!use_embedder_extensions_) {
+  {
     auto maybe_exts = GetSupportedDeviceExtensions(physical_device);
 
     if (!maybe_exts.has_value()) {
       return std::nullopt;
     }
     exts = maybe_exts.value();
-  } else {
-    for (const auto& ext : embedder_device_extensions_) {
-      exts.insert(ext);
-    }
   }
 
   std::vector<std::string> enabled;
@@ -313,6 +343,17 @@ CapabilitiesVK::GetEnabledDeviceExtensions(
         return true;
       };
 
+  auto for_each_optional_linux_extension =
+      [&](OptionalLinuxDeviceExtensionVK ext) {
+#ifdef FML_OS_LINUX
+        auto name = GetExtensionName(ext);
+        if (exts.find(name) != exts.end()) {
+          enabled.push_back(name);
+        }
+#endif  //  FML_OS_LINUX
+        return true;
+      };
+
   auto for_each_optional_extension = [&](OptionalDeviceExtensionVK ext) {
     auto name = GetExtensionName(ext);
     if (exts.find(name) != exts.end()) {
@@ -329,7 +370,9 @@ CapabilitiesVK::GetEnabledDeviceExtensions(
       IterateExtensions<OptionalDeviceExtensionVK>(
           for_each_optional_extension) &&
       IterateExtensions<OptionalAndroidDeviceExtensionVK>(
-          for_each_optional_android_extension);
+          for_each_optional_android_extension) &&
+      IterateExtensions<OptionalLinuxDeviceExtensionVK>(
+          for_each_optional_linux_extension);
 
   if (!iterate_extensions) {
     VALIDATION_LOG << "Device not suitable since required extensions are not "
@@ -579,6 +622,7 @@ bool CapabilitiesVK::SetPhysicalDevice(
     required_android_device_extensions_.clear();
     optional_device_extensions_.clear();
     optional_android_device_extensions_.clear();
+    optional_linux_device_extensions_.clear();
 
     std::set<std::string> exts;
     if (!use_embedder_extensions_) {
@@ -619,6 +663,14 @@ bool CapabilitiesVK::SetPhysicalDevice(
           auto name = GetExtensionName(ext);
           if (exts.find(name) != exts.end()) {
             optional_android_device_extensions_.insert(ext);
+          }
+          return true;
+        });
+    IterateExtensions<OptionalLinuxDeviceExtensionVK>(
+        [&](OptionalLinuxDeviceExtensionVK ext) {
+          auto name = GetExtensionName(ext);
+          if (exts.find(name) != exts.end()) {
+            optional_linux_device_extensions_.insert(ext);
           }
           return true;
         });
@@ -762,6 +814,11 @@ bool CapabilitiesVK::HasExtension(OptionalDeviceExtensionVK ext) const {
 bool CapabilitiesVK::HasExtension(OptionalAndroidDeviceExtensionVK ext) const {
   return optional_android_device_extensions_.find(ext) !=
          optional_android_device_extensions_.end();
+}
+
+bool CapabilitiesVK::HasExtension(OptionalLinuxDeviceExtensionVK ext) const {
+  return optional_linux_device_extensions_.find(ext) !=
+         optional_linux_device_extensions_.end();
 }
 
 bool CapabilitiesVK::SupportsTextureFixedRateCompression() const {

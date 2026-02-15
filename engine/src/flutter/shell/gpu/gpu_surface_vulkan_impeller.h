@@ -27,8 +27,9 @@ FML_TEST_CLASS(GPUSurfaceVulkanImpeller,
 
 class GPUSurfaceVulkanImpeller final : public Surface {
  public:
-  explicit GPUSurfaceVulkanImpeller(GPUSurfaceVulkanDelegate* delegate,
-                                    std::shared_ptr<impeller::Context> context);
+  GPUSurfaceVulkanImpeller(GPUSurfaceVulkanDelegate* delegate,
+                           std::shared_ptr<impeller::Context> context,
+                           bool render_to_surface);
 
   // |Surface|
   ~GPUSurfaceVulkanImpeller() override;
@@ -41,6 +42,7 @@ class GPUSurfaceVulkanImpeller final : public Surface {
                   RecreatesTransientsWhenFrameSizeChanges);
 
   GPUSurfaceVulkanDelegate* delegate_;
+  bool render_to_surface_ = true;
   std::shared_ptr<impeller::Context> impeller_context_;
   std::shared_ptr<impeller::AiksContext> aiks_context_;
   std::shared_ptr<impeller::SwapchainTransientsVK> transients_;

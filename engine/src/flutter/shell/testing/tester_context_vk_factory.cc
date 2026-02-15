@@ -92,8 +92,8 @@ class TesterContextVK : public TesterContext {
   // |TesterContext|
   std::unique_ptr<Surface> CreateRenderingSurface() override {
     FML_DCHECK(context_);
-    auto surface =
-        std::make_unique<GPUSurfaceVulkanImpeller>(nullptr, surface_context_);
+    auto surface = std::make_unique<GPUSurfaceVulkanImpeller>(
+        nullptr, surface_context_, true /* render_to_surface */);
     FML_DCHECK(surface->IsValid());
     return surface;
   }

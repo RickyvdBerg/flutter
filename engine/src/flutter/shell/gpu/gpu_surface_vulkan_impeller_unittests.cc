@@ -71,7 +71,8 @@ TEST(GPUSurfaceVulkanImpeller, DisposesThreadLocalResources) {
   TestGPUSurfaceVulkanDelegate delegate;
 
   std::unique_ptr<Surface> surface =
-      std::make_unique<GPUSurfaceVulkanImpeller>(&delegate, context);
+      std::make_unique<GPUSurfaceVulkanImpeller>(
+          &delegate, context, true /* render_to_surface */);
 
   // Add a command pool to the global map.
   auto pool = context->GetCommandPoolRecycler()->Get();
@@ -91,7 +92,8 @@ TEST(GPUSurfaceVulkanImpeller, RecreatesTransientsWhenFrameSizeChanges) {
 
   TestGPUSurfaceVulkanDelegate delegate;
 
-  auto surface = std::make_unique<GPUSurfaceVulkanImpeller>(&delegate, context);
+  auto surface = std::make_unique<GPUSurfaceVulkanImpeller>(
+      &delegate, context, true /* render_to_surface */);
 
   auto frame = surface->AcquireFrame(DlISize(100, 100));
   ASSERT_NE(frame, nullptr);

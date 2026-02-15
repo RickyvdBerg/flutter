@@ -4,6 +4,7 @@
 
 #include "fml/status.h"
 
+#include "flutter/fml/make_copyable.h"
 #include "impeller/renderer/backend/vulkan/command_queue_vk.h"
 
 #include "impeller/base/validation.h"
@@ -89,18 +90,19 @@ fml::Status CommandQueueVK::Submit(
   // call when `reset` is collected.
   auto added_fence = context->GetFenceWaiter()->AddFence(
       std::move(fence),
-      [completion_callback,
-       tracked_objects = std::move(tracked_objects),
-       wait_semaphores_storage =
-           std::move(wait_semaphores_storage)]() mutable {
-        // Ensure tracked objects and semaphores are destructed before calling
-        // any final callbacks.
-        wait_semaphores_storage.clear();
-        tracked_objects.clear();
-        if (completion_callback) {
-          completion_callback(CommandBuffer::Status::kCompleted);
-        }
-      });
+      fml::MakeCopyable(
+          [completion_callback,
+           tracked_objects = std::move(tracked_objects),
+           wait_semaphores_storage =
+               std::move(wait_semaphores_storage)]() mutable {
+            // Ensure tracked objects and semaphores are destructed before
+            // calling any final callbacks.
+            wait_semaphores_storage.clear();
+            tracked_objects.clear();
+            if (completion_callback) {
+              completion_callback(CommandBuffer::Status::kCompleted);
+            }
+          }));
   if (!added_fence) {
     return fml::Status(fml::StatusCode::kCancelled, "Failed to add fence.");
   }

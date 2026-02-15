@@ -1855,14 +1855,28 @@ void Shell::OnResizeFramePresented(uint64_t configure_serial) {
   resize_sync_cv_.notify_one();
 }
 
-bool Shell::WaitForResizeFrame(uint64_t configure_serial,
-                               uint32_t timeout_ms) {
-  std::unique_lock lock(resize_sync_mutex_);
-  auto deadline = std::chrono::steady_clock::now() +
-                  std::chrono::milliseconds(timeout_ms);
-  return resize_sync_cv_.wait_until(lock, deadline, [&] {
-    return completed_configure_serial_ >= configure_serial;
-  });
+bool Shell::WaitForResizeFrame(uint64_t configure_serial, uint32_t timeout_ms) {
+  auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+
+  while (std::chrono::steady_clock::now() < deadline) {
+    {
+      std::unique_lock lock(resize_sync_mutex_);
+      if (completed_configure_serial_ >= configure_serial) {
+        return true;
+      }
+      // Wake periodically so the platform thread can continue servicing
+      // engine-posted tasks while this synchronous API is waiting.
+      resize_sync_cv_.wait_for(lock, std::chrono::milliseconds(1));
+      if (completed_configure_serial_ >= configure_serial) {
+        return true;
+      }
+    }
+    fml::MessageLoop::GetCurrent().RunExpiredTasksNow();
+  }
+
+  std::scoped_lock lock(resize_sync_mutex_);
+  return completed_configure_serial_ >= configure_serial;
 }
 
 // |ServiceProtocol::Handler|

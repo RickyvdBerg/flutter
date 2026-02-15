@@ -151,6 +151,10 @@ class Animator final {
   bool frame_scheduled_ = false;
   std::deque<uint64_t> trace_flow_ids_;
   bool has_rendered_ = false;
+  // Non-zero while a synchronous resize frame is pending. This serial is
+  // stamped onto subsequent frame recorders until a frame is successfully
+  // committed to the pipeline.
+  uint64_t pending_configure_serial_ = 0;
 
   fml::TaskRunnerAffineWeakPtrFactory<Animator> weak_factory_;
 

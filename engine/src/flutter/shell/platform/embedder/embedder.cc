@@ -3454,6 +3454,12 @@ FlutterEngineResult FlutterEnginePublishDmabufTexture(
     return LOG_EMBEDDER_ERROR(kInvalidArguments,
                               "Invalid number of DMA-BUF planes.");
   }
+  for (uint32_t i = 0; i < descriptor->num_planes; i++) {
+    if (descriptor->planes[i].fd < 0) {
+      return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                                "DMA-BUF plane fd must be non-negative.");
+    }
+  }
   if (descriptor->width == 0 || descriptor->height == 0) {
     return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid DMA-BUF dimensions.");
   }

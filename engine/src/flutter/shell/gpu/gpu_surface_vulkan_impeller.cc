@@ -267,13 +267,13 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
           if (entry.first != image_key) {
             // Accumulate damage for other framebuffers.
             if (surface_frame.submit_info().frame_damage) {
-              auto bounds = surface_frame.submit_info().frame_damage->bounds();
-              entry.second.join(ToSkIRect(bounds));
+              entry.second = DlRegion::MakeUnion(
+                  entry.second, *surface_frame.submit_info().frame_damage);
             }
           }
         }
         // Reset accumulated damage for current framebuffer.
-        (*damage)[image_key] = SkIRect::MakeEmpty();
+        (*damage)[image_key] = DlRegion();
       }
 
       const auto damage_rects =
@@ -338,7 +338,7 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
       // that lags behind front buffer).
       auto i = damage_->find(image_key);
       if (i != damage_->end()) {
-        framebuffer_info.existing_damage = DlRegion(ToDlIRect(i->second));
+        framebuffer_info.existing_damage = i->second;
       }
       framebuffer_info.supports_partial_repaint = true;
     }

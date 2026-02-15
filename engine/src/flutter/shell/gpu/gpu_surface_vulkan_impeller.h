@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "flutter/common/graphics/gl_context_switch.h"
+#include "flutter/display_list/geometry/dl_region.h"
 #include "flutter/flow/surface.h"
 #include "flutter/fml/macros.h"
 #include "flutter/fml/memory/weak_ptr.h"
@@ -52,8 +53,8 @@ class GPUSurfaceVulkanImpeller final : public Surface {
   bool disable_partial_repaint_ = false;
   // Accumulated damage for each back buffer; keyed by VkImage handle
   // (FlutterVulkanImageHandle / uint64_t).
-  std::shared_ptr<std::map<uint64_t, SkIRect>> damage_ =
-      std::make_shared<std::map<uint64_t, SkIRect>>();
+  std::shared_ptr<std::map<uint64_t, DlRegion>> damage_ =
+      std::make_shared<std::map<uint64_t, DlRegion>>();
 
   // |Surface|
   std::unique_ptr<SurfaceFrame> AcquireFrame(const DlISize& size) override;

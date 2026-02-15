@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <vector>
@@ -17,6 +18,7 @@
 namespace impeller {
 
 class ContextVK;
+struct DmabufImportedImageResourceVK;
 
 /// @brief      Describes a single plane of a DMA-BUF.
 struct DmabufPlaneDescriptor {
@@ -85,9 +87,7 @@ class DmabufTextureSourceVK final : public TextureSourceVK {
   bool IsValid() const;
 
  private:
-  vk::UniqueDeviceMemory device_memory_ = {};
-  vk::UniqueImage image_ = {};
-  vk::UniqueImageView image_view_ = {};
+  std::shared_ptr<DmabufImportedImageResourceVK> imported_resource_;
   mutable vk::UniqueSemaphore acquire_semaphore_ = {};
   mutable std::mutex release_callback_mutex_;
   std::function<void()> release_callback_;

@@ -117,6 +117,11 @@ class FrameTimingsRecorder {
   /// Returns the recorded time from when `RecordRasterEnd` is called.
   FrameTiming GetRecordedTime() const;
 
+  // Not guarded by state_mutex_: set once before pipeline produce (UI thread),
+  // read after pipeline consume (raster thread). Pipeline provides ordering.
+  void SetConfigureSerial(uint64_t serial) { configure_serial_ = serial; }
+  uint64_t GetConfigureSerial() const { return configure_serial_; }
+
   /// Asserts in unopt builds that the recorder is current at the specified
   /// state.
   ///
@@ -160,6 +165,8 @@ class FrameTimingsRecorder {
 
   // Set when `RecordRasterEnd` is called. Cannot be reset once set.
   FrameTiming timing_;
+
+  uint64_t configure_serial_ = 0;
 
   FML_DISALLOW_COPY_ASSIGN_AND_MOVE(FrameTimingsRecorder);
 };

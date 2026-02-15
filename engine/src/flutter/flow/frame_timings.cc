@@ -270,6 +270,7 @@ std::unique_ptr<FrameTimingsRecorder> FrameTimingsRecorder::CloneUntil(
     recorder->picture_cache_bytes_ = picture_cache_bytes_;
   }
 
+  recorder->configure_serial_ = configure_serial_;
   return recorder;
 }
 

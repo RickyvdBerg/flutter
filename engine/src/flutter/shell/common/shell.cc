@@ -1036,6 +1036,16 @@ void Shell::OnPlatformViewSetViewportMetrics(int64_t view_id,
         }
       });
 
+  // Set expected frame size BEFORE triggering the frame pipeline.
+  // Critical for synchronous resize: the raster thread may pick up the
+  // frame before RunNowAndFlushMessages returns.
+  {
+    std::scoped_lock<std::mutex> lock(resize_mutex_);
+    expected_frame_sizes_[view_id] =
+        SkISize::Make(metrics.physical_width, metrics.physical_height);
+    device_pixel_ratio_ = metrics.device_pixel_ratio;
+  }
+
   fml::TaskRunner::RunNowAndFlushMessages(
       task_runners_.GetUITaskRunner(),
       [engine = engine_->GetWeakPtr(), view_id, metrics]() {
@@ -1043,13 +1053,6 @@ void Shell::OnPlatformViewSetViewportMetrics(int64_t view_id,
           engine->SetViewportMetrics(view_id, metrics);
         }
       });
-
-  {
-    std::scoped_lock<std::mutex> lock(resize_mutex_);
-    expected_frame_sizes_[view_id] =
-        SkISize::Make(metrics.physical_width, metrics.physical_height);
-    device_pixel_ratio_ = metrics.device_pixel_ratio;
-  }
 }
 
 // |PlatformView::Delegate|
@@ -1684,6 +1687,25 @@ bool Shell::ShouldDiscardLayerTree(int64_t view_id,
   auto expected_frame_size = ExpectedFrameSize(view_id);
   return !expected_frame_size.isEmpty() &&
          ToSkISize(tree.frame_size()) != expected_frame_size;
+}
+
+void Shell::OnResizeFramePresented(uint64_t configure_serial) {
+  if (configure_serial == 0) {
+    return;
+  }
+  std::scoped_lock lock(resize_sync_mutex_);
+  completed_configure_serial_ = configure_serial;
+  resize_sync_cv_.notify_one();
+}
+
+bool Shell::WaitForResizeFrame(uint64_t configure_serial,
+                               uint32_t timeout_ms) {
+  std::unique_lock lock(resize_sync_mutex_);
+  auto deadline = std::chrono::steady_clock::now() +
+                  std::chrono::milliseconds(timeout_ms);
+  return resize_sync_cv_.wait_until(lock, deadline, [&] {
+    return completed_configure_serial_ >= configure_serial;
+  });
 }
 
 // |ServiceProtocol::Handler|

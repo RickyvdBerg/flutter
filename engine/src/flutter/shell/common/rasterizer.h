@@ -171,6 +171,10 @@ class Rasterizer final : public SnapshotDelegate,
 
     virtual bool ShouldDiscardLayerTree(int64_t view_id,
                                         const flutter::LayerTree& tree) = 0;
+
+    /// Called after a frame with a non-zero configure_serial has been
+    /// successfully rasterized and presented.
+    virtual void OnResizeFramePresented(uint64_t configure_serial) = 0;
   };
 
   //----------------------------------------------------------------------------

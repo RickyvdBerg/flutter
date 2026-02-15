@@ -53,6 +53,10 @@ class Animator final {
 
   void RequestFrame(bool regenerate_layer_trees = true);
 
+  /// Bypasses vsync wait and immediately begins a frame build.
+  /// Used for synchronous resize to minimize latency.
+  void ScheduleImmediateFrame(uint64_t configure_serial);
+
   //--------------------------------------------------------------------------
   /// @brief    Tells the Animator that all views that should render for this
   ///           frame have been rendered.

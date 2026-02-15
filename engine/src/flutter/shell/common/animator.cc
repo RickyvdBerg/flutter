@@ -65,7 +65,8 @@ void Animator::ScheduleImmediateFrame(uint64_t configure_serial) {
   // Bypass AwaitVSync — build immediately.
   // BeginFrame triggers Dart build synchronously (merged UI+Platform threads).
   // EndFrame packages layer trees into pipeline and posts to raster thread.
-  BeginFrame(std::move(recorder));
+  BeginFrame(std::move(recorder),
+             /*preserve_regenerate_layer_trees=*/frame_scheduled_);
   EndFrame();
 }
 
@@ -82,7 +83,8 @@ void Animator::EnqueueTraceFlowId(uint64_t trace_flow_id) {
 }
 
 void Animator::BeginFrame(
-    std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder) {
+    std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder,
+    bool preserve_regenerate_layer_trees) {
   TRACE_EVENT_ASYNC_END0("flutter", "Frame Request Pending",
                          frame_request_number_);
   // Clear layer trees rendered out of a frame. Only Animator::Render called
@@ -115,9 +117,8 @@ void Animator::BeginFrame(
     trace_flow_ids_.pop_front();
   }
 
-  const bool had_pending_scheduled_frame = frame_scheduled_;
   frame_scheduled_ = false;
-  if (!had_pending_scheduled_frame) {
+  if (!preserve_regenerate_layer_trees) {
     regenerate_layer_trees_ = false;
   }
   pending_frame_semaphore_.Signal();

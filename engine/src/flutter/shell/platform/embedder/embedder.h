@@ -3272,7 +3272,9 @@ typedef struct {
 ///             On failure, the caller retains ownership and must close them.
 ///
 typedef struct {
-  /// The size of this struct. Must be sizeof(FlutterDmabufDescriptor).
+  /// The size of this struct. Must be at least large enough to include the
+  /// acquire_fence_fd field. Newer fields (damage_rects) are read via
+  /// SAFE_ACCESS and default safely when struct_size is smaller.
   size_t struct_size;
   /// Width of the texture in pixels.
   uint32_t width;
@@ -3290,6 +3292,13 @@ typedef struct {
   /// Acquire fence fd. The engine will wait on this fence before reading the
   /// texture. Set to -1 if no fence is needed.
   int acquire_fence_fd;
+  /// Number of damage rects (0 = full frame dirty, max 4).
+  /// Damage rects describe the region that changed since the last published
+  /// frame. When num_damage_rects is 0, the entire texture is assumed dirty.
+  uint32_t num_damage_rects;
+  /// Damage rects in pixel coordinates, origin top-left.
+  /// Only the first num_damage_rects entries are valid.
+  FlutterRect damage_rects[4];
 } FlutterDmabufDescriptor;
 
 //------------------------------------------------------------------------------

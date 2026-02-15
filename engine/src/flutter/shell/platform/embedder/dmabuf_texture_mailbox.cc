@@ -45,6 +45,15 @@ std::unique_ptr<DmabufMailboxEntry> DmabufTextureMailbox::Consume(
   return result;
 }
 
+std::vector<DlIRect> DmabufTextureMailbox::PeekDamage(int64_t texture_id) {
+  std::scoped_lock lock(mutex_);
+  auto it = entries_.find(texture_id);
+  if (it == entries_.end()) {
+    return {};
+  }
+  return it->second.damage_rects;
+}
+
 void DmabufTextureMailbox::Remove(int64_t texture_id) {
   std::scoped_lock lock(mutex_);
   auto it = entries_.find(texture_id);

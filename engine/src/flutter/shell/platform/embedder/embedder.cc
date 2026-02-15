@@ -3372,7 +3372,8 @@ FlutterEngineResult FlutterEnginePublishDmabufTexture(
     return LOG_EMBEDDER_ERROR(kInvalidArguments,
                               "DMA-BUF descriptor was null.");
   }
-  if (descriptor->struct_size != sizeof(FlutterDmabufDescriptor)) {
+  if (descriptor->struct_size < offsetof(FlutterDmabufDescriptor, acquire_fence_fd) +
+                                    sizeof(descriptor->acquire_fence_fd)) {
     return LOG_EMBEDDER_ERROR(kInvalidArguments,
                               "Invalid DMA-BUF descriptor struct size.");
   }
@@ -3398,6 +3399,22 @@ FlutterEngineResult FlutterEnginePublishDmabufTexture(
     desc.planes[i].stride = descriptor->planes[i].stride;
   }
   desc.acquire_fence_fd = descriptor->acquire_fence_fd;
+
+  // Damage rects (optional — old callers won't have these fields).
+  uint32_t num_damage = SAFE_ACCESS(descriptor, num_damage_rects, 0);
+  if (num_damage > 4) {
+    num_damage = 4;
+  }
+  if (num_damage > 0 && STRUCT_HAS_MEMBER(descriptor, damage_rects)) {
+    for (uint32_t i = 0; i < num_damage; i++) {
+      const FlutterRect& r = descriptor->damage_rects[i];
+      desc.damage_rects.push_back(impeller::DmabufDamageRect{
+          static_cast<int32_t>(r.left),
+          static_cast<int32_t>(r.top),
+          static_cast<int32_t>(r.right),
+          static_cast<int32_t>(r.bottom)});
+    }
+  }
 
   // Wrap the C release callback into a std::function.
   std::function<void()> release_fn;

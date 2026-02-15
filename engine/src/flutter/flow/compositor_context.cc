@@ -16,7 +16,8 @@ namespace flutter {
 std::vector<DlIRect> FrameDamage::ComputeClipRects(
     flutter::LayerTree& layer_tree,
     bool has_raster_cache,
-    bool impeller_enabled) {
+    bool impeller_enabled,
+    TextureRegistry* texture_registry) {
   if (!layer_tree.root_layer()) {
     return {};
   }
@@ -24,7 +25,7 @@ std::vector<DlIRect> FrameDamage::ComputeClipRects(
   DiffContext context(layer_tree.frame_size(), layer_tree.paint_region_map(),
                       prev_layer_tree_ ? prev_layer_tree_->paint_region_map()
                                        : empty_paint_region_map,
-                      has_raster_cache, impeller_enabled);
+                      has_raster_cache, impeller_enabled, texture_registry);
   context.PushCullRect(DlRect::MakeSize(layer_tree.frame_size()));
   {
     DiffContext::AutoSubtreeRestore subtree(&context);
@@ -125,7 +126,8 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
   DlIRect clip_bounds = DlIRect::MakeLTRB(0, 0, 0, 0);
   if (frame_damage) {
     clip_rects = frame_damage->ComputeClipRects(
-        layer_tree, !ignore_raster_cache, !gr_context_);
+        layer_tree, !ignore_raster_cache, !gr_context_,
+        context_.texture_registry().get());
 
     if (!clip_rects.empty()) {
       DlRegion rgn(clip_rects);

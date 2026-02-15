@@ -346,7 +346,12 @@ bool Engine::SendViewFocusEvent(const ViewFocusEvent& event) {
 void Engine::SetViewportMetrics(int64_t view_id,
                                 const ViewportMetrics& metrics) {
   runtime_controller_->SetViewportMetrics(view_id, metrics);
-  ScheduleFrame();
+  if (metrics.configure_serial != 0) {
+    // Synchronous resize: bypass vsync wait, build frame immediately.
+    animator_->ScheduleImmediateFrame(metrics.configure_serial);
+  } else {
+    ScheduleFrame();
+  }
 }
 
 void Engine::DispatchPlatformMessage(std::unique_ptr<PlatformMessage> message) {

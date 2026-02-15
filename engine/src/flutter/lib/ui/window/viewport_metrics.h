@@ -5,6 +5,7 @@
 #ifndef FLUTTER_LIB_UI_WINDOW_VIEWPORT_METRICS_H_
 #define FLUTTER_LIB_UI_WINDOW_VIEWPORT_METRICS_H_
 
+#include <cstdint>
 #include <ostream>
 #include <vector>
 
@@ -73,6 +74,7 @@ struct ViewportMetrics {
   double physical_display_corner_radius_top_right = -1.0;
   double physical_display_corner_radius_bottom_right = -1.0;
   double physical_display_corner_radius_bottom_left = -1.0;
+  uint64_t configure_serial = 0;  // Wayland configure serial for sync resize
 };
 
 bool operator==(const ViewportMetrics& a, const ViewportMetrics& b);

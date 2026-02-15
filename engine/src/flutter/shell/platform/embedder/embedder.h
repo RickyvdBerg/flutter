@@ -1097,6 +1097,8 @@ typedef struct {
   /// If |has_constraints| is `true`, this must be greater than or equal to
   /// |min_height_constraint| and |height|.
   size_t max_height_constraint;
+  /// Opaque serial for resize correlation. Zero means normal async path.
+  uint64_t configure_serial;
 } FlutterWindowMetricsEvent;
 
 typedef struct {
@@ -3048,6 +3050,21 @@ FLUTTER_EXPORT
 FlutterEngineResult FlutterEngineSendWindowMetricsEvent(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     const FlutterWindowMetricsEvent* event);
+
+/// Sends window metrics and blocks until raster completes at the new size,
+/// or until timeout_ms expires. Must be called from the platform thread.
+///
+/// The @p configure_serial parameter takes precedence over any value set on
+/// the event's configure_serial field.
+///
+/// Returns kSuccess if a frame was presented before timeout.
+/// Returns kInternalInconsistency on timeout or error.
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineRenderViewImmediate(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    const FlutterWindowMetricsEvent* event,
+    uint64_t configure_serial,
+    uint32_t timeout_ms);
 
 FLUTTER_EXPORT
 FlutterEngineResult FlutterEngineSendPointerEvent(

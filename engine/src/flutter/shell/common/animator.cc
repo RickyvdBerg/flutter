@@ -46,6 +46,20 @@ Animator::Animator(Delegate& delegate,
 
 Animator::~Animator() = default;
 
+void Animator::ScheduleImmediateFrame(uint64_t configure_serial) {
+  // Create a FrameTimingsRecorder with synthetic vsync timestamps.
+  auto recorder = std::make_unique<FrameTimingsRecorder>();
+  auto now = fml::TimePoint::Now();
+  recorder->RecordVsync(now, now + fml::TimeDelta::FromMilliseconds(16));
+  recorder->SetConfigureSerial(configure_serial);
+
+  // Bypass AwaitVSync — build immediately.
+  // BeginFrame triggers Dart build synchronously (merged UI+Platform threads).
+  // EndFrame packages layer trees into pipeline and posts to raster thread.
+  BeginFrame(std::move(recorder));
+  EndFrame();
+}
+
 void Animator::EnqueueTraceFlowId(uint64_t trace_flow_id) {
   fml::TaskRunner::RunNowOrPostTask(
       task_runners_.GetUITaskRunner(),

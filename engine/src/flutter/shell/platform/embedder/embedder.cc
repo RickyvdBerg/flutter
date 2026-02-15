@@ -1780,6 +1780,7 @@ MakeViewportMetricsFromWindowMetrics(
   metrics.physical_view_inset_left =
       SAFE_ACCESS(flutter_metrics, physical_view_inset_left, 0.0);
   metrics.display_id = SAFE_ACCESS(flutter_metrics, display_id, 0);
+  metrics.configure_serial = SAFE_ACCESS(flutter_metrics, configure_serial, 0);
 
   if (metrics.device_pixel_ratio <= 0.0) {
     return "Device pixel ratio was invalid. It must be greater than zero.";
@@ -2826,6 +2827,45 @@ FlutterEngineResult FlutterEngineSendWindowMetricsEvent(
              ? kSuccess
              : LOG_EMBEDDER_ERROR(kInvalidArguments,
                                   "Viewport metrics were invalid.");
+}
+
+FlutterEngineResult FlutterEngineRenderViewImmediate(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    const FlutterWindowMetricsEvent* flutter_metrics,
+    uint64_t configure_serial,
+    uint32_t timeout_ms) {
+  if (engine == nullptr || flutter_metrics == nullptr) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                              "Invalid engine or metrics handle.");
+  }
+  if (configure_serial == 0) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                              "configure_serial must be non-zero.");
+  }
+
+  auto& shell =
+      reinterpret_cast<flutter::EmbedderEngine*>(engine)->GetShell();
+
+  // Set configure_serial on a mutable copy of the event.
+  FlutterWindowMetricsEvent event_copy = *flutter_metrics;
+  event_copy.configure_serial = configure_serial;
+
+  // Send window metrics through the normal path.
+  // With merged UI+Platform threads, RunNowAndFlushMessages runs
+  // Engine::SetViewportMetrics -> ScheduleImmediateFrame inline.
+  // The Dart build and pipeline produce happen synchronously.
+  // Only the raster-thread work remains after this returns.
+  FlutterEngineResult result =
+      FlutterEngineSendWindowMetricsEvent(engine, &event_copy);
+  if (result != kSuccess) {
+    return result;
+  }
+
+  // Block until raster thread signals completion, or timeout.
+  bool completed = shell.WaitForResizeFrame(configure_serial, timeout_ms);
+  return completed ? kSuccess
+                   : LOG_EMBEDDER_ERROR(kInternalInconsistency,
+                                        "Synchronous resize timed out.");
 }
 
 // Returns the flutter::PointerData::Change for the given FlutterPointerPhase.

@@ -26,8 +26,8 @@ AndroidSurfaceVKImpeller::AndroidSurfaceVKImpeller(
   auto& context_vk =
       impeller::ContextVK::Cast(*android_context->GetImpellerContext());
   surface_context_vk_ = context_vk.CreateSurfaceContext();
-  eager_gpu_surface_ =
-      std::make_unique<GPUSurfaceVulkanImpeller>(nullptr, surface_context_vk_);
+  eager_gpu_surface_ = std::make_unique<GPUSurfaceVulkanImpeller>(
+      nullptr, surface_context_vk_, true /* render_to_surface */);
 }
 
 AndroidSurfaceVKImpeller::~AndroidSurfaceVKImpeller() = default;
@@ -59,7 +59,8 @@ std::unique_ptr<Surface> AndroidSurfaceVKImpeller::CreateGPUSurface(
   }
 
   std::unique_ptr<GPUSurfaceVulkanImpeller> gpu_surface =
-      std::make_unique<GPUSurfaceVulkanImpeller>(nullptr, surface_context_vk_);
+      std::make_unique<GPUSurfaceVulkanImpeller>(
+          nullptr, surface_context_vk_, true /* render_to_surface */);
 
   if (!gpu_surface->IsValid()) {
     return nullptr;

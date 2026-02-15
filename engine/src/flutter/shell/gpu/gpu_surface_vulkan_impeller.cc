@@ -51,8 +51,9 @@ class WrappedTextureSourceVK : public impeller::TextureSourceVK {
 
 GPUSurfaceVulkanImpeller::GPUSurfaceVulkanImpeller(
     GPUSurfaceVulkanDelegate* delegate,
-    std::shared_ptr<impeller::Context> context)
-    : delegate_(delegate) {
+    std::shared_ptr<impeller::Context> context,
+    bool render_to_surface)
+    : delegate_(delegate), render_to_surface_(render_to_surface) {
   if (!context || !context->IsValid()) {
     return;
   }
@@ -87,6 +88,15 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
   if (size.isEmpty()) {
     FML_LOG(ERROR) << "Vulkan surface was asked for an empty frame.";
     return nullptr;
+  }
+
+  if (!render_to_surface_) {
+    return std::make_unique<SurfaceFrame>(
+        nullptr, SurfaceFrame::FramebufferInfo(),
+        [](const SurfaceFrame& surface_frame, DlCanvas* canvas) {
+          return true;
+        },
+        [](const SurfaceFrame& surface_frame) { return true; }, size);
   }
 
   if (delegate_ == nullptr) {

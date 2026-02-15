@@ -26,6 +26,8 @@ class EmbedderTestContextVulkan : public EmbedderTestContext {
   // |EmbedderTestContext|
   size_t GetSurfacePresentCount() const override;
 
+  size_t GetNextImageCallCount() const;
+
   VkImage GetNextImage(const SkISize& size);
 
   bool PresentImage(VkImage image);
@@ -52,6 +54,7 @@ class EmbedderTestContextVulkan : public EmbedderTestContext {
 
   SkISize surface_size_ = SkISize::MakeEmpty();
   size_t present_count_ = 0;
+  size_t get_next_image_count_ = 0;
 
   FML_DISALLOW_COPY_AND_ASSIGN(EmbedderTestContextVulkan);
 };

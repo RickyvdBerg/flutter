@@ -4,6 +4,10 @@
 
 #include "impeller/renderer/backend/vulkan/linux/dmabuf_texture_source_vk.h"
 
+#include <unistd.h>
+#include <set>
+
+#include "flutter/fml/file.h"
 #include "impeller/renderer/backend/vulkan/allocator_vk.h"
 #include "impeller/renderer/backend/vulkan/capabilities_vk.h"
 #include "impeller/renderer/backend/vulkan/context_vk.h"
@@ -72,6 +76,10 @@ DmabufTextureSourceVK::DmabufTextureSourceVK(
                    << "(num_planes=" << desc.num_planes << ").";
     return;
   }
+  if (desc.planes[0].fd < 0) {
+    VALIDATION_LOG << "Invalid DMA-BUF plane fd: " << desc.planes[0].fd;
+    return;
+  }
 
   const auto& context = ContextVK::Cast(*p_context);
   const auto& device = context.GetDevice();
@@ -84,12 +92,27 @@ DmabufTextureSourceVK::DmabufTextureSourceVK(
     return;
   }
 
+  // Duplicate import FDs so partial failures never consume the caller's FDs.
+  fml::UniqueFD plane_fd_for_import = fml::Duplicate(desc.planes[0].fd);
+  if (!plane_fd_for_import.is_valid()) {
+    VALIDATION_LOG << "Could not duplicate DMA-BUF plane fd for import.";
+    return;
+  }
+  fml::UniqueFD acquire_fence_fd_for_import;
+  if (desc.acquire_fence_fd >= 0) {
+    acquire_fence_fd_for_import = fml::Duplicate(desc.acquire_fence_fd);
+    if (!acquire_fence_fd_for_import.is_valid()) {
+      VALIDATION_LOG << "Could not duplicate acquire fence fd for import.";
+      return;
+    }
+  }
+
   // Build per-plane layout info for the DRM format modifier.
   vk::SubresourceLayout plane_layouts[4] = {};
   for (uint32_t i = 0; i < desc.num_planes; i++) {
     plane_layouts[i].offset = desc.planes[i].offset;
     plane_layouts[i].rowPitch = desc.planes[i].stride;
-    plane_layouts[i].size = 0;       // Determined by driver.
+    plane_layouts[i].size = 0;  // Determined by driver.
     plane_layouts[i].arrayPitch = 0;
     plane_layouts[i].depthPitch = 0;
   }
@@ -146,9 +169,9 @@ DmabufTextureSourceVK::DmabufTextureSourceVK(
   // Chain: MemoryAllocateInfo -> MemoryDedicatedAllocateInfo ->
   //        ImportMemoryFdInfoKHR
   vk::ImportMemoryFdInfoKHR import_fd_info;
-  import_fd_info.handleType =
-      vk::ExternalMemoryHandleTypeFlagBits::eDmaBufEXT;
-  import_fd_info.fd = desc.planes[0].fd;
+  import_fd_info.handleType = vk::ExternalMemoryHandleTypeFlagBits::eDmaBufEXT;
+  int imported_plane_fd = plane_fd_for_import.release();
+  import_fd_info.fd = imported_plane_fd;
 
   vk::MemoryDedicatedAllocateInfo dedicated_info;
   dedicated_info.image = image.get();
@@ -161,10 +184,14 @@ DmabufTextureSourceVK::DmabufTextureSourceVK(
 
   auto device_memory_result = device.allocateMemoryUnique(mem_alloc_info);
   if (device_memory_result.result != vk::Result::eSuccess) {
+    if (imported_plane_fd >= 0) {
+      close(imported_plane_fd);
+    }
     VALIDATION_LOG << "Could not allocate device memory for DMA-BUF import: "
                    << vk::to_string(device_memory_result.result);
     return;
   }
+  imported_plane_fd = -1;
   auto device_memory = std::move(device_memory_result.value);
 
   // Bind the image to the imported memory.
@@ -193,20 +220,11 @@ DmabufTextureSourceVK::DmabufTextureSourceVK(
     return;
   }
 
-  // Success — Vulkan now owns the fd(s). Transfer ownership.
-  device_memory_ = std::move(device_memory);
-  image_ = std::move(image);
-  image_view_ = std::move(image_view_result.value);
+  vk::UniqueSemaphore acquire_semaphore;
 
-#ifdef IMPELLER_DEBUG
-  context.SetDebugName(device_memory_.get(), "DmaBuf Device Memory");
-  context.SetDebugName(image_.get(), "DmaBuf Image");
-  context.SetDebugName(image_view_.get(), "DmaBuf ImageView");
-#endif  // IMPELLER_DEBUG
-
-  is_valid_ = true;
-
-  // Import acquire fence as VkSemaphore for GPU-side synchronization.
+  // Import acquire fence as VkSemaphore for GPU-side synchronization. A fence
+  // was explicitly provided by the producer, so failing to import it means we
+  // cannot safely sample the texture.
   if (desc.acquire_fence_fd >= 0) {
     const auto& caps = CapabilitiesVK::Cast(*context.GetCapabilities());
     if (!caps.HasExtension(
@@ -215,34 +233,75 @@ DmabufTextureSourceVK::DmabufTextureSourceVK(
             OptionalLinuxDeviceExtensionVK::kKHRExternalSemaphore)) {
       VALIDATION_LOG << "Cannot import DMA-BUF acquire fence: "
                         "VK_KHR_external_semaphore_fd not available.";
-    } else {
-      auto sem_result = device.createSemaphoreUnique({});
-      if (sem_result.result == vk::Result::eSuccess) {
-        vk::ImportSemaphoreFdInfoKHR import_info;
-        import_info.semaphore = *sem_result.value;
-        import_info.fd = desc.acquire_fence_fd;
-        import_info.handleType =
-            vk::ExternalSemaphoreHandleTypeFlagBits::eSyncFd;
-        import_info.flags = vk::SemaphoreImportFlagBitsKHR::eTemporary;
-        auto import_result = device.importSemaphoreFdKHR(import_info);
-        if (import_result == vk::Result::eSuccess) {
-          // Vulkan now owns the fd — must NOT close it after this point.
-          acquire_semaphore_ = std::move(sem_result.value);
-        }
-        // On failure, the fd is NOT consumed by Vulkan. Ownership stays with
-        // the caller of DmabufTextureSourceVK (ultimately the embedder's
-        // release_callback path). No action needed here.
-      }
+      return;
     }
+
+    auto sem_result = device.createSemaphoreUnique({});
+    if (sem_result.result != vk::Result::eSuccess) {
+      VALIDATION_LOG << "Could not create semaphore for acquire fence import: "
+                     << vk::to_string(sem_result.result);
+      return;
+    }
+
+    int imported_acquire_fd = acquire_fence_fd_for_import.release();
+    vk::ImportSemaphoreFdInfoKHR import_info;
+    import_info.semaphore = *sem_result.value;
+    import_info.fd = imported_acquire_fd;
+    import_info.handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eSyncFd;
+    import_info.flags = vk::SemaphoreImportFlagBitsKHR::eTemporary;
+    auto import_result = device.importSemaphoreFdKHR(import_info);
+    if (import_result != vk::Result::eSuccess) {
+      if (imported_acquire_fd >= 0) {
+        close(imported_acquire_fd);
+      }
+      VALIDATION_LOG << "Could not import acquire fence semaphore: "
+                     << vk::to_string(import_result);
+      return;
+    }
+    acquire_semaphore = std::move(sem_result.value);
+  }
+
+  // Success — transfer resources into members.
+  device_memory_ = std::move(device_memory);
+  image_ = std::move(image);
+  image_view_ = std::move(image_view_result.value);
+  acquire_semaphore_ = std::move(acquire_semaphore);
+
+#ifdef IMPELLER_DEBUG
+  context.SetDebugName(device_memory_.get(), "DmaBuf Device Memory");
+  context.SetDebugName(image_.get(), "DmaBuf Image");
+  context.SetDebugName(image_view_.get(), "DmaBuf ImageView");
+#endif  // IMPELLER_DEBUG
+
+  // The import consumed duplicate FDs. Close the original caller-provided FDs
+  // now that ownership transfer has succeeded.
+  std::set<int> transferred_fds;
+  transferred_fds.insert(desc.planes[0].fd);
+  if (desc.acquire_fence_fd >= 0) {
+    transferred_fds.insert(desc.acquire_fence_fd);
+  }
+  for (int fd : transferred_fds) {
+    close(fd);
   }
 
   // DRM format modifier images have a layout determined by the modifier.
   // Mark as shader-read-only so SetLayout() has the correct old layout.
   SetLayoutWithoutEncoding(vk::ImageLayout::eShaderReadOnlyOptimal);
+
+  is_valid_ = true;
 }
 
 // |TextureSourceVK|
-DmabufTextureSourceVK::~DmabufTextureSourceVK() = default;
+DmabufTextureSourceVK::~DmabufTextureSourceVK() {
+  std::function<void()> callback;
+  {
+    std::scoped_lock lock(release_callback_mutex_);
+    callback = std::move(release_callback_);
+  }
+  if (callback) {
+    callback();
+  }
+}
 
 bool DmabufTextureSourceVK::IsValid() const {
   return is_valid_;
@@ -269,8 +328,8 @@ bool DmabufTextureSourceVK::IsSwapchainImage() const {
 }
 
 // |TextureSourceVK|
-std::optional<WaitSemaphore>
-DmabufTextureSourceVK::ConsumeAcquireSemaphore() const {
+std::optional<WaitSemaphore> DmabufTextureSourceVK::ConsumeAcquireSemaphore()
+    const {
   if (!acquire_semaphore_) {
     return std::nullopt;
   }
@@ -279,6 +338,25 @@ DmabufTextureSourceVK::ConsumeAcquireSemaphore() const {
   result.wait_stage = vk::PipelineStageFlagBits::eFragmentShader |
                       vk::PipelineStageFlagBits::eComputeShader;
   return result;
+}
+
+void DmabufTextureSourceVK::SetReleaseCallback(
+    std::function<void()> release_callback) {
+  if (!release_callback) {
+    return;
+  }
+  std::scoped_lock lock(release_callback_mutex_);
+  if (!release_callback_) {
+    release_callback_ = std::move(release_callback);
+    return;
+  }
+
+  auto existing = std::move(release_callback_);
+  release_callback_ = [first = std::move(existing),
+                       second = std::move(release_callback)]() mutable {
+    first();
+    second();
+  };
 }
 
 }  // namespace impeller

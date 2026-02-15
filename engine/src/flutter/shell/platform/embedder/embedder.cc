@@ -8,8 +8,10 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "flutter/fml/build_config.h"
@@ -46,6 +48,7 @@ extern const intptr_t kPlatformStrongDillSize;
 #include "flutter/common/task_runners.h"
 #include "flutter/fml/command_line.h"
 #include "flutter/fml/file.h"
+#include "flutter/fml/hash_combine.h"
 #include "flutter/fml/make_copyable.h"
 #include "flutter/fml/message_loop.h"
 #include "flutter/fml/paths.h"
@@ -109,14 +112,14 @@ extern const intptr_t kPlatformStrongDillSize;
 #include "third_party/skia/include/gpu/ganesh/vk/GrVkTypes.h"
 #ifdef IMPELLER_SUPPORTS_RENDERING
 #include "flutter/shell/platform/embedder/embedder_render_target_impeller.h"  // nogncheck
-#include "impeller/core/texture.h"                                            // nogncheck
-#include "impeller/renderer/backend/vulkan/context_vk.h"                      // nogncheck
-#include "impeller/renderer/backend/vulkan/formats_vk.h"                      // nogncheck
-#include "impeller/renderer/backend/vulkan/swapchain/surface_vk.h"            // nogncheck
+#include "impeller/core/texture.h"                                  // nogncheck
+#include "impeller/renderer/backend/vulkan/context_vk.h"            // nogncheck
+#include "impeller/renderer/backend/vulkan/formats_vk.h"            // nogncheck
+#include "impeller/renderer/backend/vulkan/swapchain/surface_vk.h"  // nogncheck
 #include "impeller/renderer/backend/vulkan/swapchain/swapchain_transients_vk.h"  // nogncheck
-#include "impeller/renderer/backend/vulkan/texture_source_vk.h"               // nogncheck
-#include "impeller/renderer/backend/vulkan/texture_vk.h"                      // nogncheck
-#include "impeller/renderer/render_target.h"                                   // nogncheck
+#include "impeller/renderer/backend/vulkan/texture_source_vk.h"  // nogncheck
+#include "impeller/renderer/backend/vulkan/texture_vk.h"         // nogncheck
+#include "impeller/renderer/render_target.h"                     // nogncheck
 #endif  // IMPELLER_SUPPORTS_RENDERING
 #endif  // SHELL_ENABLE_VULKAN
 
@@ -1336,9 +1339,7 @@ class EmbedderTextureSourceVK : public impeller::TextureSourceVK {
  private:
   impeller::vk::Image GetImage() const override { return image_; }
 
-  impeller::vk::ImageView GetImageView() const override {
-    return image_view_;
-  }
+  impeller::vk::ImageView GetImageView() const override { return image_view_; }
 
   impeller::vk::ImageView GetRenderTargetView() const override {
     return image_view_;
@@ -1349,6 +1350,78 @@ class EmbedderTextureSourceVK : public impeller::TextureSourceVK {
   impeller::vk::Image image_;
   impeller::vk::ImageView image_view_;
 };
+
+namespace {
+
+struct SwapchainTransientsCacheKey {
+  const impeller::Context* context = nullptr;
+  int format = 0;
+  int width = 0;
+  int height = 0;
+  bool enable_msaa = false;
+
+  bool operator==(const SwapchainTransientsCacheKey& other) const {
+    return context == other.context && format == other.format &&
+           width == other.width && height == other.height &&
+           enable_msaa == other.enable_msaa;
+  }
+};
+
+struct SwapchainTransientsCacheKeyHash {
+  std::size_t operator()(const SwapchainTransientsCacheKey& key) const {
+    return fml::HashCombine(reinterpret_cast<std::size_t>(key.context),
+                            static_cast<std::size_t>(key.format),
+                            static_cast<std::size_t>(key.width),
+                            static_cast<std::size_t>(key.height),
+                            static_cast<std::size_t>(key.enable_msaa));
+  }
+};
+
+std::shared_ptr<impeller::SwapchainTransientsVK> GetCachedSwapchainTransientsVK(
+    const std::shared_ptr<impeller::Context>& context,
+    const impeller::TextureDescriptor& desc,
+    bool enable_msaa) {
+  static std::mutex cache_mutex;
+  static std::unordered_map<SwapchainTransientsCacheKey,
+                            std::weak_ptr<impeller::SwapchainTransientsVK>,
+                            SwapchainTransientsCacheKeyHash>
+      cache;
+
+  SwapchainTransientsCacheKey key = {
+      .context = context.get(),
+      .format = static_cast<int>(desc.format),
+      .width = desc.size.width,
+      .height = desc.size.height,
+      .enable_msaa = enable_msaa,
+  };
+
+  std::scoped_lock lock(cache_mutex);
+  auto found = cache.find(key);
+  if (found != cache.end()) {
+    if (auto existing = found->second.lock()) {
+      return existing;
+    }
+    cache.erase(found);
+  }
+
+  auto created = std::make_shared<impeller::SwapchainTransientsVK>(
+      context, desc, enable_msaa);
+  cache[key] = created;
+
+  if (cache.size() > 64u) {
+    for (auto it = cache.begin(); it != cache.end();) {
+      if (it->second.expired()) {
+        it = cache.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  return created;
+}
+
+}  // namespace
 #endif  // SHELL_ENABLE_VULKAN && IMPELLER_SUPPORTS_RENDERING
 
 static std::unique_ptr<flutter::EmbedderRenderTarget>
@@ -1394,15 +1467,15 @@ MakeRenderTargetFromBackingStoreImpeller(
 
   impeller::vk::Image vk_image =
       impeller::vk::Image(reinterpret_cast<VkImage>(vulkan->image->image));
-  impeller::vk::ImageView vk_image_view =
-      impeller::vk::ImageView(reinterpret_cast<VkImageView>(vulkan->image_view));
+  impeller::vk::ImageView vk_image_view = impeller::vk::ImageView(
+      reinterpret_cast<VkImageView>(vulkan->image_view));
 
   auto wrapped_source =
       std::make_shared<EmbedderTextureSourceVK>(vk_image, vk_image_view, desc);
 
   auto impeller_context = aiks_context->GetContext();
-  auto transients = std::make_shared<impeller::SwapchainTransientsVK>(
-      impeller_context, desc, /*enable_msaa=*/true);
+  auto transients = GetCachedSwapchainTransientsVK(impeller_context, desc,
+                                                   /*enable_msaa=*/true);
 
   auto surface = impeller::SurfaceVK::WrapSwapchainImage(
       transients, wrapped_source, []() -> bool { return true; });
@@ -2843,8 +2916,7 @@ FlutterEngineResult FlutterEngineRenderViewImmediate(
                               "configure_serial must be non-zero.");
   }
 
-  auto& shell =
-      reinterpret_cast<flutter::EmbedderEngine*>(engine)->GetShell();
+  auto& shell = reinterpret_cast<flutter::EmbedderEngine*>(engine)->GetShell();
 
   // Set configure_serial on a mutable copy of the event.
   FlutterWindowMetricsEvent event_copy = *flutter_metrics;
@@ -3372,8 +3444,9 @@ FlutterEngineResult FlutterEnginePublishDmabufTexture(
     return LOG_EMBEDDER_ERROR(kInvalidArguments,
                               "DMA-BUF descriptor was null.");
   }
-  if (descriptor->struct_size < offsetof(FlutterDmabufDescriptor, acquire_fence_fd) +
-                                    sizeof(descriptor->acquire_fence_fd)) {
+  if (descriptor->struct_size <
+      offsetof(FlutterDmabufDescriptor, acquire_fence_fd) +
+          sizeof(descriptor->acquire_fence_fd)) {
     return LOG_EMBEDDER_ERROR(kInvalidArguments,
                               "Invalid DMA-BUF descriptor struct size.");
   }
@@ -3382,8 +3455,7 @@ FlutterEngineResult FlutterEnginePublishDmabufTexture(
                               "Invalid number of DMA-BUF planes.");
   }
   if (descriptor->width == 0 || descriptor->height == 0) {
-    return LOG_EMBEDDER_ERROR(kInvalidArguments,
-                              "Invalid DMA-BUF dimensions.");
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid DMA-BUF dimensions.");
   }
 
   // Convert the C API descriptor to the Impeller descriptor.
@@ -3409,10 +3481,8 @@ FlutterEngineResult FlutterEnginePublishDmabufTexture(
     for (uint32_t i = 0; i < num_damage; i++) {
       const FlutterRect& r = descriptor->damage_rects[i];
       desc.damage_rects.push_back(impeller::DmabufDamageRect{
-          static_cast<int32_t>(r.left),
-          static_cast<int32_t>(r.top),
-          static_cast<int32_t>(r.right),
-          static_cast<int32_t>(r.bottom)});
+          static_cast<int32_t>(r.left), static_cast<int32_t>(r.top),
+          static_cast<int32_t>(r.right), static_cast<int32_t>(r.bottom)});
     }
   }
 
@@ -3424,9 +3494,8 @@ FlutterEngineResult FlutterEnginePublishDmabufTexture(
     };
   }
 
-  if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)
-           ->PublishDmabufTexture(texture_identifier, desc,
-                                  std::move(release_fn))) {
+  if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)->PublishDmabufTexture(
+          texture_identifier, desc, std::move(release_fn))) {
     return LOG_EMBEDDER_ERROR(kInternalInconsistency,
                               "Could not publish DMA-BUF texture.");
   }

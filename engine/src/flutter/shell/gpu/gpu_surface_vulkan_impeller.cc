@@ -27,6 +27,8 @@ namespace flutter {
 
 namespace {
 
+constexpr size_t kMaxTrackedDamageImages = 16u;
+
 std::vector<SkIRect> DamageRectsOrFull(
     const SurfaceFrame::SubmitInfo& submit_info,
     impeller::ISize target_size) {
@@ -237,6 +239,11 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
         transients_, wrapped_onscreen, [&]() -> bool { return true; });
     impeller::RenderTarget render_target = surface->GetRenderTarget();
     uint64_t image_key = flutter_image.image;
+    if (!disable_partial_repaint_ && damage_ &&
+        damage_->find(image_key) == damage_->end() &&
+        damage_->size() >= kMaxTrackedDamageImages) {
+      damage_->clear();
+    }
 
     SurfaceFrame::EncodeCallback encode_callback =
         fml::MakeCopyable([aiks_context = aiks_context_,  //
@@ -260,8 +267,7 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
           if (entry.first != image_key) {
             // Accumulate damage for other framebuffers.
             if (surface_frame.submit_info().frame_damage) {
-              auto bounds =
-                  surface_frame.submit_info().frame_damage->bounds();
+              auto bounds = surface_frame.submit_info().frame_damage->bounds();
               entry.second.join(ToSkIRect(bounds));
             }
           }

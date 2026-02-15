@@ -47,6 +47,12 @@ Animator::Animator(Delegate& delegate,
 Animator::~Animator() = default;
 
 void Animator::ScheduleImmediateFrame(uint64_t configure_serial) {
+  if (!pending_frame_semaphore_.TryWait()) {
+    // Keep immediate scheduling aligned with RequestFrame gating so resize
+    // bursts do not inflate the pending-frame semaphore.
+    return;
+  }
+
   // Create a FrameTimingsRecorder with synthetic vsync timestamps.
   auto recorder = std::make_unique<FrameTimingsRecorder>();
   auto now = fml::TimePoint::Now();

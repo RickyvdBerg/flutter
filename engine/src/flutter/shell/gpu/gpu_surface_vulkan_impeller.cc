@@ -25,6 +25,10 @@
 
 namespace flutter {
 
+namespace {
+constexpr size_t kMaxTrackedDamageImages = 16u;
+}  // namespace
+
 class WrappedTextureSourceVK : public impeller::TextureSourceVK {
  public:
   explicit WrappedTextureSourceVK(impeller::vk::Image image,
@@ -228,66 +232,72 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
     auto cull_rect = render_target.GetRenderTargetSize();
 
     uint64_t image_key = flutter_image.image;
+    if (!disable_partial_repaint_ && damage_ &&
+        damage_->find(image_key) == damage_->end() &&
+        damage_->size() >= kMaxTrackedDamageImages) {
+      damage_->clear();
+    }
 
-    SurfaceFrame::EncodeCallback encode_callback =
-        fml::MakeCopyable([aiks_context = aiks_context_,  //
-                           damage = damage_,
-                           disable_partial_repaint = disable_partial_repaint_,
-                           render_target,
-                           cull_rect,  //
-                           image_key   //
+    SurfaceFrame::EncodeCallback encode_callback = fml::MakeCopyable(
+        [aiks_context = aiks_context_,  //
+         damage = damage_, disable_partial_repaint = disable_partial_repaint_,
+         render_target,
+         cull_rect,  //
+         image_key   //
     ](SurfaceFrame& surface_frame, DlCanvas* canvas) mutable -> bool {
-      if (!aiks_context) {
-        return false;
-      }
+          if (!aiks_context) {
+            return false;
+          }
 
-      auto display_list = surface_frame.BuildDisplayList();
-      if (!display_list) {
-        FML_LOG(ERROR) << "Could not build display list for surface frame.";
-        return false;
-      }
+          auto display_list = surface_frame.BuildDisplayList();
+          if (!display_list) {
+            FML_LOG(ERROR) << "Could not build display list for surface frame.";
+            return false;
+          }
 
-      if (!disable_partial_repaint && damage) {
-        for (auto& entry : *damage) {
-          if (entry.first != image_key) {
-            // Accumulate damage for other framebuffers.
-            if (surface_frame.submit_info().frame_damage) {
-              auto bounds =
-                  surface_frame.submit_info().frame_damage->bounds();
-              entry.second.join(ToSkIRect(bounds));
+          if (!disable_partial_repaint && damage) {
+            for (auto& entry : *damage) {
+              if (entry.first != image_key) {
+                // Accumulate damage for other framebuffers.
+                if (surface_frame.submit_info().frame_damage) {
+                  auto bounds =
+                      surface_frame.submit_info().frame_damage->bounds();
+                  entry.second.join(ToSkIRect(bounds));
+                }
+              }
+            }
+            // Reset accumulated damage for current framebuffer.
+            (*damage)[image_key] = SkIRect::MakeEmpty();
+          }
+
+          // Extract damage rects from submit info.
+          const auto& info = surface_frame.submit_info();
+          std::vector<SkIRect> damage_rects;
+          if (info.buffer_damage.has_value()) {
+            for (const auto& r :
+                 info.buffer_damage->getRects(/*deband=*/true)) {
+              damage_rects.push_back(ToSkIRect(r));
             }
           }
-        }
-        // Reset accumulated damage for current framebuffer.
-        (*damage)[image_key] = SkIRect::MakeEmpty();
-      }
 
-      // Extract damage rects from submit info.
-      const auto& info = surface_frame.submit_info();
-      std::vector<SkIRect> damage_rects;
-      if (info.buffer_damage.has_value()) {
-        for (const auto& r : info.buffer_damage->getRects(/*deband=*/true)) {
-          damage_rects.push_back(ToSkIRect(r));
-        }
-      }
+          // Fallback: if no buffer_damage was provided (e.g., partial repaint
+          // disabled or first frame), repaint the full surface. In steady state
+          // this path is not reached because the rasterizer's zero-damage check
+          // prevents submission of empty-damage frames.
+          if (damage_rects.empty()) {
+            SkIRect full = SkIRect::MakeWH(cull_rect.width, cull_rect.height);
+            damage_rects.push_back(full);
+          }
 
-      // Fallback: if no buffer_damage was provided (e.g., partial repaint
-      // disabled or first frame), repaint the full surface. In steady state
-      // this path is not reached because the rasterizer's zero-damage check
-      // prevents submission of empty-damage frames.
-      if (damage_rects.empty()) {
-        SkIRect full = SkIRect::MakeWH(cull_rect.width, cull_rect.height);
-        damage_rects.push_back(full);
-      }
-
-      return impeller::RenderToTarget(
-          aiks_context->GetContentContext(),                                //
-          render_target,                                                    //
-          display_list,                                                     //
-          damage_rects,                                                     //
-          /*reset_host_buffer=*/surface_frame.submit_info().frame_boundary  //
-      );
-    });
+          return impeller::RenderToTarget(
+              aiks_context->GetContentContext(),          //
+              render_target,                              //
+              display_list,                               //
+              damage_rects,                               //
+                                                          /*reset_host_buffer=*/
+              surface_frame.submit_info().frame_boundary  //
+          );
+        });
 
     SurfaceFrame::SubmitCallback submit_callback =
         [image = flutter_image, delegate = delegate_,

@@ -5,6 +5,7 @@
 #ifndef FLUTTER_COMMON_GRAPHICS_TEXTURE_H_
 #define FLUTTER_COMMON_GRAPHICS_TEXTURE_H_
 
+#include <atomic>
 #include <map>
 #include <vector>
 
@@ -63,10 +64,14 @@ class Texture : public ContextListener {
 
   /// Returns true if a new frame has been published since last check.
   /// Called from raster thread during diff.
-  bool HasNewFrame() const { return has_new_frame_; }
+  bool HasNewFrame() const {
+    return has_new_frame_.load(std::memory_order_acquire);
+  }
 
   /// Clear the new-frame flag after diff has consumed it.
-  void ClearNewFrameFlag() { has_new_frame_ = false; }
+  void ClearNewFrameFlag() {
+    has_new_frame_.store(false, std::memory_order_release);
+  }
 
   /// Damage information for the most recent frame.
   struct DamageInfo {
@@ -85,11 +90,14 @@ class Texture : public ContextListener {
  protected:
   /// Mark that a new frame is available. Called from MarkNewFrameAvailable
   /// implementations on the raster thread.
-  void SetNewFrameFlag() { has_new_frame_ = true; }
+  void SetNewFrameFlag() {
+    has_new_frame_.store(true, std::memory_order_release);
+  }
 
  private:
   int64_t id_;
-  bool has_new_frame_ = true;  // Start dirty — first frame must paint
+  std::atomic<bool> has_new_frame_{
+      true};  // Start dirty — first frame must paint
   FML_DISALLOW_COPY_AND_ASSIGN(Texture);
 };
 

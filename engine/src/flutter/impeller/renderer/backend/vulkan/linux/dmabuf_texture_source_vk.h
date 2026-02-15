@@ -6,6 +6,8 @@
 #define FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_LINUX_DMABUF_TEXTURE_SOURCE_VK_H_
 
 #include <cstdint>
+#include <functional>
+#include <mutex>
 #include <optional>
 #include <vector>
 
@@ -75,6 +77,11 @@ class DmabufTextureSourceVK final : public TextureSourceVK {
   // |TextureSourceVK|
   std::optional<WaitSemaphore> ConsumeAcquireSemaphore() const override;
 
+  /// Sets a callback that is invoked when the texture source is destroyed.
+  /// This is used by the embedder DMA-BUF API to signal that the engine is
+  /// done reading the imported buffer.
+  void SetReleaseCallback(std::function<void()> release_callback);
+
   bool IsValid() const;
 
  private:
@@ -82,6 +89,8 @@ class DmabufTextureSourceVK final : public TextureSourceVK {
   vk::UniqueImage image_ = {};
   vk::UniqueImageView image_view_ = {};
   mutable vk::UniqueSemaphore acquire_semaphore_ = {};
+  mutable std::mutex release_callback_mutex_;
+  std::function<void()> release_callback_;
   bool is_valid_ = false;
 
   DmabufTextureSourceVK(const DmabufTextureSourceVK&) = delete;

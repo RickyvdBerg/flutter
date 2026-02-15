@@ -1,0 +1,21 @@
+Avio Integration Addendum
+=========================
+
+Date: 2026-02-15
+
+External API behavior updates
+-----------------------------
+
+1. FlutterEnginePublishDmabufTexture now fails when acquire-fence import cannot be guaranteed.
+
+- If `FlutterDmabufDescriptor.acquire_fence_fd >= 0` and Vulkan semaphore-fd import extensions are unavailable, the publish call fails instead of silently proceeding without GPU-side synchronization.
+- If semaphore creation/import for `acquire_fence_fd` fails, the publish call fails.
+- Effect for embedders: when you provide an acquire fence, success now guarantees the fence wait was successfully wired into GPU submission; failures must be handled by the caller.
+
+2. DMA-BUF release callback timing is now tied to actual GPU/resource lifetime.
+
+- Release callbacks are now associated with the Vulkan DMA-BUF texture source lifetime instead of being fired immediately when a newer mailbox entry replaces an older one.
+- Effect for embedders: callback now signals that the engine has finished with that imported texture resource path, avoiding early reuse races.
+- Threading note: callback execution follows the texture-source destruction path (which may run on an engine-managed worker/fence thread), so callback bodies must remain thread-safe and non-blocking.
+
+No function signatures or struct layouts were changed.

@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "flutter/display_list/geometry/dl_rect.h"
+#include "flutter/display_list/geometry/dl_geometry_types.h"
 #include "impeller/renderer/backend/vulkan/linux/dmabuf_texture_source_vk.h"
 
 namespace flutter {

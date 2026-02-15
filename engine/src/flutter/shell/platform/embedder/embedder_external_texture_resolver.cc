@@ -10,6 +10,7 @@
 #ifdef __linux__
 #include "flutter/fml/logging.h"
 #include "flutter/shell/platform/embedder/dmabuf_texture_mailbox.h"
+#include "impeller/display_list/aiks_context.h"
 #include "impeller/display_list/dl_image_impeller.h"
 #include "impeller/renderer/backend/vulkan/texture_vk.h"
 #endif

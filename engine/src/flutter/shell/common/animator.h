@@ -122,7 +122,8 @@ class Animator final {
   // avoid being interrupted by a regular vsync. The reason to split them is to
   // allow ShellTest::PumpOneFrame to insert a Render in between.
 
-  void BeginFrame(std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder);
+  void BeginFrame(std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder,
+                  bool preserve_regenerate_layer_trees = false);
   void EndFrame();
 
   bool CanReuseLastLayerTrees();

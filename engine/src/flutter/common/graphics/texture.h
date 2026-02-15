@@ -6,6 +6,7 @@
 #define FLUTTER_COMMON_GRAPHICS_TEXTURE_H_
 
 #include <map>
+#include <vector>
 
 #include "flutter/display_list/dl_canvas.h"
 #include "flutter/fml/macros.h"
@@ -58,10 +59,37 @@ class Texture : public ContextListener {
   // Called on raster thread.
   virtual void OnTextureUnregistered() = 0;
 
-  int64_t Id() { return id_; }
+  int64_t Id() const { return id_; }
+
+  /// Returns true if a new frame has been published since last check.
+  /// Called from raster thread during diff.
+  bool HasNewFrame() const { return has_new_frame_; }
+
+  /// Clear the new-frame flag after diff has consumed it.
+  void ClearNewFrameFlag() { has_new_frame_ = false; }
+
+  /// Damage information for the most recent frame.
+  struct DamageInfo {
+    /// True if damage rects are available (vs full-frame repaint).
+    bool has_rects = false;
+    /// Damage rects in texture-local pixel coordinates. Empty + has_rects
+    /// means zero damage (no actual change despite new frame signal).
+    std::vector<DlIRect> rects;
+  };
+
+  /// Returns pending damage for the next frame. Called on raster thread
+  /// during diff, before the frame is consumed. Default: no rects available
+  /// (full repaint assumed).
+  virtual DamageInfo GetPendingDamage() const { return {}; }
+
+ protected:
+  /// Mark that a new frame is available. Called from MarkNewFrameAvailable
+  /// implementations on the raster thread.
+  void SetNewFrameFlag() { has_new_frame_ = true; }
 
  private:
   int64_t id_;
+  bool has_new_frame_ = true;  // Start dirty — first frame must paint
   FML_DISALLOW_COPY_AND_ASSIGN(Texture);
 };
 

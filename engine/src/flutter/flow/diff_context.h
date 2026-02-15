@@ -11,6 +11,7 @@
 #include <vector>
 #include "display_list/utils/dl_matrix_clip_tracker.h"
 #include "flutter/display_list/geometry/dl_region.h"
+#include "flutter/common/graphics/texture.h"
 #include "flutter/flow/paint_region.h"
 #include "flutter/fml/macros.h"
 
@@ -45,7 +46,8 @@ class DiffContext {
                        PaintRegionMap& this_frame_paint_region_map,
                        const PaintRegionMap& last_frame_paint_region_map,
                        bool has_raster_cache,
-                       bool impeller_enabled);
+                       bool impeller_enabled,
+                       TextureRegistry* texture_registry = nullptr);
 
   // Starts a new subtree.
   void BeginSubtree();
@@ -165,6 +167,8 @@ class DiffContext {
 
   bool impeller_enabled() const { return impeller_enabled_; }
 
+  TextureRegistry* texture_registry() const { return texture_registry_; }
+
   class Statistics {
    public:
     // Picture replaced by different picture
@@ -249,6 +253,7 @@ class DiffContext {
   const PaintRegionMap& last_frame_paint_region_map_;
   bool has_raster_cache_;
   bool impeller_enabled_;
+  TextureRegistry* texture_registry_ = nullptr;
 
   void AddDamage(const DlRect& rect);
 

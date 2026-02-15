@@ -10,7 +10,9 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
+#include "flutter/display_list/geometry/dl_rect.h"
 #include "impeller/renderer/backend/vulkan/linux/dmabuf_texture_source_vk.h"
 
 namespace flutter {
@@ -19,6 +21,7 @@ namespace flutter {
 struct DmabufMailboxEntry {
   std::shared_ptr<impeller::DmabufTextureSourceVK> texture_source;
   std::function<void()> release_callback;
+  std::vector<DlIRect> damage_rects;  // empty = full frame
 };
 
 /// @brief      Thread-safe single-slot-per-texture-id mailbox for DMA-BUF
@@ -48,6 +51,10 @@ class DmabufTextureMailbox {
   /// @brief      Remove the entry for the given texture_id and fire its
   ///             release_callback if present.
   void Remove(int64_t texture_id);
+
+  /// @brief      Peek at the damage rects for a texture without consuming.
+  ///             Returns empty vector if no entry or no damage info.
+  std::vector<DlIRect> PeekDamage(int64_t texture_id);
 
  private:
   std::mutex mutex_;

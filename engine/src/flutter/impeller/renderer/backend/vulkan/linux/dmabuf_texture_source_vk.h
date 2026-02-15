@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "impeller/renderer/backend/vulkan/texture_source_vk.h"
 #include "impeller/renderer/backend/vulkan/vk.h"
@@ -22,6 +23,14 @@ struct DmabufPlaneDescriptor {
   uint32_t stride = 0;
 };
 
+/// @brief      Damage rect for a DMA-BUF texture, in pixel coordinates.
+struct DmabufDamageRect {
+  int32_t left;
+  int32_t top;
+  int32_t right;
+  int32_t bottom;
+};
+
 /// @brief      Describes a DMA-BUF to be imported as a Vulkan image.
 struct DmabufDescriptor {
   uint32_t width = 0;
@@ -31,6 +40,7 @@ struct DmabufDescriptor {
   uint32_t num_planes = 0;
   DmabufPlaneDescriptor planes[4] = {};
   int acquire_fence_fd = -1;
+  std::vector<DmabufDamageRect> damage_rects;  // empty = full frame
 };
 
 //------------------------------------------------------------------------------

@@ -24,9 +24,46 @@ void TextureLayer::Diff(DiffContext* context, const Layer* old_layer) {
   if (!context->IsSubtreeDirty()) {
     FML_DCHECK(old_layer);
     auto prev = old_layer->as_texture_layer();
-    // TODO(knopp) It would be nice to be able to determine that a texture is
-    // dirty
-    context->MarkSubtreeDirty(context->GetOldLayerPaintRegion(prev));
+    bool is_dirty = true;
+    auto* registry = context->texture_registry();
+    if (registry) {
+      auto texture = registry->GetTexture(texture_id_);
+      if (texture) {
+        is_dirty = texture->HasNewFrame();
+        if (is_dirty) {
+          // Check for partial damage — use tighter bounds if available.
+          auto damage = texture->GetPendingDamage();
+          if (damage.has_rects && !damage.rects.empty()) {
+            // Union damage rects into single DlRect.
+            DlIRect union_rect = damage.rects[0];
+            for (size_t i = 1; i < damage.rects.size(); i++) {
+              union_rect = union_rect.Union(damage.rects[i]);
+            }
+            // Offset to texture position and intersect with texture bounds
+            // (all in local layer coordinates).
+            DlRect tex_bounds = DlRect::MakeOriginSize(offset_, size_);
+            DlRect local_damage = DlRect::Make(union_rect)
+                                      .Shift(offset_.x, offset_.y)
+                                      .Intersection(tex_bounds)
+                                      .value_or(tex_bounds);
+            // Map to screen coordinates — MarkSubtreeDirty(DlRect) adds
+            // directly to the screen-space damage region.
+            context->MarkSubtreeDirty(context->MapRect(local_damage));
+          } else if (damage.has_rects && damage.rects.empty()) {
+            // has_rects=true but empty: zero damage despite new frame signal.
+            is_dirty = false;
+          } else {
+            // No damage info — full texture region is dirty.
+            context->MarkSubtreeDirty(context->GetOldLayerPaintRegion(prev));
+          }
+        }
+        texture->ClearNewFrameFlag();
+      }
+    }
+    if (is_dirty && !context->IsSubtreeDirty()) {
+      // Fallback: couldn't get texture info, mark full region dirty.
+      context->MarkSubtreeDirty(context->GetOldLayerPaintRegion(prev));
+    }
   }
 
   // Make sure DiffContext knows there is a TextureLayer in this subtree.

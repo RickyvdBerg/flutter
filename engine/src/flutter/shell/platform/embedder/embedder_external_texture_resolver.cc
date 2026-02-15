@@ -99,7 +99,19 @@ class EmbedderExternalTextureDmabuf final : public Texture {
   }
 
   // |flutter::Texture|
-  void MarkNewFrameAvailable() override { last_image_ = nullptr; }
+  void MarkNewFrameAvailable() override {
+    last_image_ = nullptr;
+    SetNewFrameFlag();
+  }
+
+  // |flutter::Texture|
+  DamageInfo GetPendingDamage() const override {
+    auto rects = mailbox_->PeekDamage(Id());
+    if (rects.empty()) {
+      return {};  // No damage info — full repaint assumed.
+    }
+    return {.has_rects = true, .rects = std::move(rects)};
+  }
 
   // |flutter::Texture|
   void OnGrContextCreated() override {}

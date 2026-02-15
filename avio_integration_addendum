@@ -18,4 +18,14 @@ External API behavior updates
 - Effect for embedders: callback now signals that the engine has finished with that imported texture resource path, avoiding early reuse races.
 - Threading note: callback execution follows the texture-source destruction path (which may run on an engine-managed worker/fence thread), so callback bodies must remain thread-safe and non-blocking.
 
+3. FlutterEnginePublishDmabufTexture now validates plane file descriptors at API entry.
+
+- Any `descriptor->planes[i].fd < 0` now fails fast with `kInvalidArguments`.
+- Effect for embedders: invalid plane descriptors are rejected before import work begins.
+
+4. Synchronous resize completion handling is more robust for `FlutterEngineRenderViewImmediate`.
+
+- Configure serial propagation is now retained across fallback scheduling paths (including pipeline-full retries), so completion signaling is not dropped when the first immediate attempt cannot produce.
+- While waiting for completion, the platform thread now periodically services expired loop tasks to reduce deadlock risk from callbacks that need platform-thread progress.
+
 No function signatures or struct layouts were changed.

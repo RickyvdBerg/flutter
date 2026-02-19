@@ -170,9 +170,18 @@ sk_sp<GrDirectContext> PlatformViewEmbedder::CreateResourceContext() const {
 
 // |PlatformView|
 std::unique_ptr<VsyncWaiter> PlatformViewEmbedder::CreateVSyncWaiter() {
-  if (!platform_dispatch_table_.vsync_callback) {
+  if (!platform_dispatch_table_.vsync_callback &&
+      !platform_dispatch_table_.vsync_for_display_callback) {
     // Superclass implementation creates a timer based fallback.
     return PlatformView::CreateVSyncWaiter();
+  }
+
+  // Prefer per-display callback; construct with both so the waiter can
+  // fall back to the legacy callback when per-display is not available.
+  if (platform_dispatch_table_.vsync_for_display_callback) {
+    return std::make_unique<VsyncWaiterEmbedder>(
+        platform_dispatch_table_.vsync_callback,
+        platform_dispatch_table_.vsync_for_display_callback, task_runners_);
   }
 
   return std::make_unique<VsyncWaiterEmbedder>(

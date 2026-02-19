@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -521,6 +522,16 @@ class PlatformConfiguration final {
   void BeginFrame(fml::TimePoint frame_time, uint64_t frame_number);
 
   //----------------------------------------------------------------------------
+  /// @brief      Per-display variant of BeginFrame. Routes to the Dart
+  ///             `_beginFrameForDisplay` hook with per-display monotonic
+  ///             timestamp tracking, avoiding cross-display clamping.
+  ///
+  void BeginFrameForDisplay(int64_t display_id,
+                            const std::set<int64_t>& view_ids,
+                            fml::TimePoint frame_time,
+                            uint64_t frame_number);
+
+  //----------------------------------------------------------------------------
   /// @brief      Dart code cannot fully measure the time it takes for a
   ///             specific frame to be rendered. This is because Dart code only
   ///             runs on the UI task runner. That is only a small part of the
@@ -603,11 +614,13 @@ class PlatformConfiguration final {
   tonic::DartPersistentValue hit_test_;
   tonic::DartPersistentValue dispatch_semantics_action_;
   tonic::DartPersistentValue begin_frame_;
+  tonic::DartPersistentValue begin_frame_for_display_;
   tonic::DartPersistentValue draw_frame_;
   tonic::DartPersistentValue report_timings_;
 
   uint64_t last_frame_number_ = 0;
   int64_t last_microseconds_ = 0;
+  std::unordered_map<int64_t, int64_t> last_microseconds_per_display_;
 
   // All current views' view metrics mapped from view IDs.
   std::unordered_map<int64_t, ViewportMetrics> metrics_;

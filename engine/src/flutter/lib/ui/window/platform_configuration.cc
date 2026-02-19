@@ -84,6 +84,9 @@ void PlatformConfiguration::DidCreateIsolate() {
       Dart_GetField(library, tonic::ToDart("_dispatchSemanticsAction")));
   begin_frame_.Set(tonic::DartState::Current(),
                    Dart_GetField(library, tonic::ToDart("_beginFrame")));
+  begin_frame_for_display_.Set(
+      tonic::DartState::Current(),
+      Dart_GetField(library, tonic::ToDart("_beginFrameForDisplay")));
   draw_frame_.Set(tonic::DartState::Current(),
                   Dart_GetField(library, tonic::ToDart("_drawFrame")));
   report_timings_.Set(tonic::DartState::Current(),
@@ -472,7 +475,10 @@ void PlatformConfiguration::BeginFrame(fml::TimePoint frameTime,
   if (last_microseconds_ > microseconds) {
     // Do not allow time traveling frametimes
     // github.com/flutter/flutter/issues/106277
-    FML_LOG(ERROR)
+    // Demoted from ERROR: in multi-display compositors, minor timestamp regression
+    // is expected when two outputs at different refresh rates share a single
+    // BeginFrame callback. The clamping handles it correctly.
+    FML_LOG(WARNING)
         << "Reported frame time is older than the last one; clamping. "
         << microseconds << " < " << last_microseconds_
         << " ~= " << last_microseconds_ - microseconds;
@@ -485,6 +491,60 @@ void PlatformConfiguration::BeginFrame(fml::TimePoint frameTime,
                                                 Dart_NewInteger(microseconds),
                                                 Dart_NewInteger(frame_number),
                                             }));
+
+  UIDartState::Current()->FlushMicrotasksNow();
+
+  tonic::CheckAndHandleError(tonic::DartInvokeVoid(draw_frame_.Get()));
+}
+
+void PlatformConfiguration::BeginFrameForDisplay(
+    int64_t display_id,
+    const std::set<int64_t>& view_ids,
+    fml::TimePoint frameTime,
+    uint64_t frame_number) {
+  std::shared_ptr<tonic::DartState> dart_state =
+      begin_frame_for_display_.dart_state().lock();
+  if (!dart_state) {
+    return;
+  }
+  tonic::DartState::Scope scope(dart_state);
+
+  int64_t microseconds = frameTime.ToEpochDelta().ToMicroseconds();
+
+  // Per-display monotonic timestamp guard. Each display tracks its own
+  // last_microseconds independently, so a 60Hz display's older timestamp
+  // never gets clamped by a 240Hz display's newer timestamp.
+  int64_t& last_us = last_microseconds_per_display_[display_id];
+  if (last_us > microseconds) {
+    FML_LOG(WARNING)
+        << "Per-display frame time regression for display " << display_id
+        << "; clamping. " << microseconds << " < " << last_us;
+    microseconds = last_us;
+  }
+  last_us = microseconds;
+
+  // Global monotonic guard: the Dart _beginFrameForDisplay callback may fall
+  // back to the legacy _beginFrame path which shares a single
+  // _currentFrameTimeStamp across all displays.  Without this guard,
+  // interleaving 240 Hz and 60 Hz vsync timestamps can cause the Dart
+  // animation framework to see time going backwards, producing jittery
+  // animations and stuck hover effects.
+  if (last_microseconds_ > microseconds) {
+    microseconds = last_microseconds_;
+  }
+  last_microseconds_ = microseconds;
+
+  // Build a Dart List<int> of view IDs for this display.
+  Dart_Handle view_id_list = Dart_NewList(view_ids.size());
+  intptr_t i = 0;
+  for (int64_t view_id : view_ids) {
+    Dart_ListSetAt(view_id_list, i++, Dart_NewInteger(view_id));
+  }
+
+  tonic::CheckAndHandleError(tonic::DartInvoke(
+      begin_frame_for_display_.Get(),
+      {Dart_NewInteger(microseconds), Dart_NewInteger(display_id),
+       view_id_list}));
 
   UIDartState::Current()->FlushMicrotasksNow();
 

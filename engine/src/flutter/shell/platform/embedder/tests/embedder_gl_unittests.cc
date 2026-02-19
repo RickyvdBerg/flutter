@@ -4142,6 +4142,58 @@ TEST_F(EmbedderTest, SetValidMultiDisplayConfiguration) {
   latch.Wait();
 }
 
+TEST_F(EmbedderTest, UpdateDisplayConfigurationAfterStartup) {
+  auto& context = GetEmbedderContext<EmbedderTestContextGL>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(SkISize::Make(800, 600));
+  builder.SetCompositor();
+  builder.SetDartEntrypoint("empty_scene");
+  fml::AutoResetWaitableEvent latch;
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY([&](Dart_NativeArguments args) { latch.Signal(); }));
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterEngineDisplay startup_display;
+  startup_display.struct_size = sizeof(FlutterEngineDisplay);
+  startup_display.display_id = 1;
+  startup_display.single_display = true;
+  startup_display.refresh_rate = 20;
+  startup_display.width = 800;
+  startup_display.height = 600;
+  startup_display.device_pixel_ratio = 1.0;
+
+  std::vector<FlutterEngineDisplay> startup_displays = {startup_display};
+  ASSERT_EQ(FlutterEngineNotifyDisplayUpdate(
+                engine.get(), kFlutterEngineDisplaysUpdateTypeStartup,
+                startup_displays.data(), startup_displays.size()),
+            kSuccess);
+
+  FlutterEngineDisplay updated_display = startup_display;
+  updated_display.refresh_rate = 120;
+
+  std::vector<FlutterEngineDisplay> updated_displays = {updated_display};
+  ASSERT_EQ(FlutterEngineNotifyDisplayUpdate(
+                engine.get(), kFlutterEngineDisplaysUpdateTypeUpdate,
+                updated_displays.data(), updated_displays.size()),
+            kSuccess);
+
+  flutter::Shell& shell = ToEmbedderEngine(engine.get())->GetShell();
+  ASSERT_EQ(shell.GetMainDisplayRefreshRate(), updated_display.refresh_rate);
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 800;
+  event.height = 600;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event), kSuccess);
+
+  latch.Wait();
+}
+
 TEST_F(EmbedderTest, MultipleDisplaysWithSingleDisplayTrueIsInvalid) {
   auto& context = GetEmbedderContext<EmbedderTestContextGL>();
 

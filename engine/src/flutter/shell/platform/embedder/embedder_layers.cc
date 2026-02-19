@@ -11,11 +11,13 @@ namespace flutter {
 EmbedderLayers::EmbedderLayers(DlISize frame_size,
                                double device_pixel_ratio,
                                DlMatrix root_surface_transformation,
-                               uint64_t presentation_time)
+                               uint64_t presentation_time,
+                               std::optional<DlRegion> frame_damage)
     : frame_size_(frame_size),
       device_pixel_ratio_(device_pixel_ratio),
       root_surface_transformation_(root_surface_transformation),
-      presentation_time_(presentation_time) {}
+      presentation_time_(presentation_time),
+      frame_damage_(std::move(frame_damage)) {}
 
 EmbedderLayers::~EmbedderLayers() = default;
 
@@ -61,6 +63,33 @@ void EmbedderLayers::PushBackingStoreLayer(
   auto present_info = std::make_unique<FlutterBackingStorePresentInfo>();
   present_info->struct_size = sizeof(FlutterBackingStorePresentInfo);
   present_info->paint_region = paint_region.get();
+
+  if (frame_damage_.has_value()) {
+    auto frame_damage_rects = std::make_unique<std::vector<FlutterRect>>();
+    const auto frame_damage_rect_list = frame_damage_->getRects(/*deband=*/true);
+    frame_damage_rects->reserve(frame_damage_rect_list.size());
+    for (const auto& rect : frame_damage_rect_list) {
+      auto transformed_rect =
+          DlRect::Make(rect).TransformAndClipBounds(root_surface_transformation_);
+      frame_damage_rects->push_back(FlutterRect{
+          .left = transformed_rect.GetLeft(),
+          .top = transformed_rect.GetTop(),
+          .right = transformed_rect.GetRight(),
+          .bottom = transformed_rect.GetBottom(),
+      });
+    }
+
+    auto frame_damage_region = std::make_unique<FlutterRegion>();
+    frame_damage_region->struct_size = sizeof(FlutterRegion);
+    frame_damage_region->rects = frame_damage_rects->data();
+    frame_damage_region->rects_count = frame_damage_rects->size();
+    present_info->frame_damage = frame_damage_region.get();
+    rects_referenced_.push_back(std::move(frame_damage_rects));
+    regions_referenced_.push_back(std::move(frame_damage_region));
+  } else {
+    present_info->frame_damage = nullptr;
+  }
+
   regions_referenced_.push_back(std::move(paint_region));
   layer.backing_store_present_info = present_info.get();
   layer.presentation_time = presentation_time_;

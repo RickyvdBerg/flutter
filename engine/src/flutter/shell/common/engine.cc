@@ -297,6 +297,14 @@ void Engine::BeginFrame(fml::TimePoint frame_time, uint64_t frame_number) {
   runtime_controller_->BeginFrame(frame_time, frame_number);
 }
 
+void Engine::BeginFrameForDisplay(int64_t display_id,
+                                  const std::set<int64_t>& view_ids,
+                                  fml::TimePoint frame_time,
+                                  uint64_t frame_number) {
+  runtime_controller_->BeginFrameForDisplay(display_id, view_ids, frame_time,
+                                            frame_number);
+}
+
 void Engine::ReportTimings(std::vector<int64_t> timings) {
   runtime_controller_->ReportTimings(std::move(timings));
 }
@@ -684,6 +692,14 @@ const std::weak_ptr<VsyncWaiter> Engine::GetVsyncWaiter() const {
 void Engine::SetDisplays(const std::vector<DisplayData>& displays) {
   runtime_controller_->SetDisplays(displays);
   ScheduleFrame();
+}
+
+void Engine::SetViewDisplay(int64_t view_id, int64_t display_id) {
+  animator_->SetViewDisplay(view_id, display_id);
+}
+
+void Engine::ScheduleFrameForDisplay(int64_t display_id) {
+  animator_->RequestFrameForDisplay(display_id);
 }
 
 void Engine::ShutdownPlatformIsolates() {

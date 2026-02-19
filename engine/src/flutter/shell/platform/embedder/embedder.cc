@@ -1390,8 +1390,8 @@ std::shared_ptr<impeller::SwapchainTransientsVK> GetCachedSwapchainTransientsVK(
   SwapchainTransientsCacheKey key = {
       .context = context.get(),
       .format = static_cast<int>(desc.format),
-      .width = desc.size.width,
-      .height = desc.size.height,
+      .width = static_cast<int>(desc.size.width),
+      .height = static_cast<int>(desc.size.height),
       .enable_msaa = enable_msaa,
   };
 
@@ -2397,6 +2397,17 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
     };
   }
 
+  flutter::VsyncWaiterEmbedder::VsyncForDisplayCallback
+      vsync_for_display_callback = nullptr;
+  if (SAFE_ACCESS(args, vsync_for_display_callback, nullptr) != nullptr) {
+    vsync_for_display_callback =
+        [ptr = args->vsync_for_display_callback, user_data](
+            intptr_t baton, flutter::VsyncWaiter::DisplayId display_id) {
+          return ptr(user_data, baton,
+                     static_cast<FlutterEngineDisplayId>(display_id));
+        };
+  }
+
   flutter::PlatformViewEmbedder::ComputePlatformResolvedLocaleCallback
       compute_platform_resolved_locale_callback = nullptr;
   if (SAFE_ACCESS(args, compute_platform_resolved_locale_callback, nullptr) !=
@@ -2499,6 +2510,7 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
           on_pre_engine_restart_callback,             //
           channel_update_callback,                    //
           view_focus_change_request_callback,         //
+          vsync_for_display_callback,                 //
       };
 
   auto on_create_platform_view = InferPlatformViewCreationCallback(
@@ -3597,6 +3609,60 @@ FlutterEngineResult FlutterEngineOnVsync(FLUTTER_API_SYMBOL(FlutterEngine)
   return kSuccess;
 }
 
+FlutterEngineResult FlutterEngineOnVsyncForDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    intptr_t baton,
+    FlutterEngineDisplayId display_id,
+    uint64_t frame_start_time_nanos,
+    uint64_t frame_target_time_nanos) {
+  if (engine == nullptr) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid engine handle.");
+  }
+
+  const auto display_id_str = std::to_string(display_id);
+  TRACE_EVENT1("flutter", "FlutterEngineOnVsyncForDisplay", "display_id",
+               display_id_str.c_str());
+
+  auto start_time = fml::TimePoint::FromEpochDelta(
+      fml::TimeDelta::FromNanoseconds(frame_start_time_nanos));
+
+  auto target_time = fml::TimePoint::FromEpochDelta(
+      fml::TimeDelta::FromNanoseconds(frame_target_time_nanos));
+
+  if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)
+           ->OnVsyncEventForDisplay(baton, static_cast<int64_t>(display_id),
+                                    start_time, target_time)) {
+    return LOG_EMBEDDER_ERROR(
+        kInternalInconsistency,
+        "Could not notify the running engine instance of a per-display Vsync "
+        "event.");
+  }
+
+  return kSuccess;
+}
+
+FlutterEngineResult FlutterEngineSetViewDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterViewId view_id,
+    FlutterEngineDisplayId display_id) {
+  if (engine == nullptr) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid engine handle.");
+  }
+
+  TRACE_EVENT2_INT("flutter", "FlutterEngineSetViewDisplay", "view_id", view_id,
+                   "display_id", display_id);
+
+  if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)->SetViewDisplay(
+          static_cast<int64_t>(view_id),
+          static_cast<int64_t>(display_id))) {
+    return LOG_EMBEDDER_ERROR(
+        kInternalInconsistency,
+        "Could not assign view to display in the running engine instance.");
+  }
+
+  return kSuccess;
+}
+
 FlutterEngineResult FlutterEngineReloadSystemFonts(
     FLUTTER_API_SYMBOL(FlutterEngine) engine) {
   if (engine == nullptr) {
@@ -3973,6 +4039,9 @@ FlutterEngineResult FlutterEngineNotifyDisplayUpdate(
 
   switch (update_type) {
     case kFlutterEngineDisplaysUpdateTypeStartup: {
+      [[fallthrough]];
+    }
+    case kFlutterEngineDisplaysUpdateTypeUpdate: {
       std::vector<std::unique_ptr<flutter::Display>> displays;
       const auto* display = embedder_displays;
       for (size_t i = 0; i < display_count; i++) {
@@ -4005,6 +4074,24 @@ FlutterEngineResult FlutterEngineScheduleFrame(FLUTTER_API_SYMBOL(FlutterEngine)
              ? kSuccess
              : LOG_EMBEDDER_ERROR(kInvalidArguments,
                                   "Could not schedule frame.");
+}
+
+FlutterEngineResult FlutterEngineScheduleFrameForDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id) {
+  if (engine == nullptr) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid engine handle.");
+  }
+
+  const auto display_id_str = std::to_string(display_id);
+  TRACE_EVENT1("flutter", "FlutterEngineScheduleFrameForDisplay", "display_id",
+               display_id_str.c_str());
+
+  return reinterpret_cast<flutter::EmbedderEngine*>(engine)
+                 ->ScheduleFrameForDisplay(static_cast<int64_t>(display_id))
+             ? kSuccess
+             : LOG_EMBEDDER_ERROR(kInvalidArguments,
+                                  "Could not schedule frame for display.");
 }
 
 FlutterEngineResult FlutterEngineSetNextFrameCallback(
@@ -4074,6 +4161,8 @@ FlutterEngineResult FlutterEngineGetProcAddresses(
   SET_PROC(DispatchSemanticsAction, FlutterEngineDispatchSemanticsAction);
   SET_PROC(SendSemanticsAction, FlutterEngineSendSemanticsAction);
   SET_PROC(OnVsync, FlutterEngineOnVsync);
+  SET_PROC(OnVsyncForDisplay, FlutterEngineOnVsyncForDisplay);
+  SET_PROC(SetViewDisplay, FlutterEngineSetViewDisplay);
   SET_PROC(ReloadSystemFonts, FlutterEngineReloadSystemFonts);
   SET_PROC(TraceEventDurationBegin, FlutterEngineTraceEventDurationBegin);
   SET_PROC(TraceEventDurationEnd, FlutterEngineTraceEventDurationEnd);
@@ -4096,6 +4185,7 @@ FlutterEngineResult FlutterEngineGetProcAddresses(
 #ifdef __linux__
   SET_PROC(PublishDmabufTexture, FlutterEnginePublishDmabufTexture);
 #endif
+  SET_PROC(ScheduleFrameForDisplay, FlutterEngineScheduleFrameForDisplay);
 #undef SET_PROC
 
   return kSuccess;

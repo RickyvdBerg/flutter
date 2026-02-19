@@ -83,6 +83,16 @@ class EmbedderEngine {
                     fml::TimePoint frame_start_time,
                     fml::TimePoint frame_target_time);
 
+  /// Per-display variant: routes the vsync event to the correct display's
+  /// callback in the VsyncWaiter.
+  bool OnVsyncEventForDisplay(intptr_t baton,
+                              int64_t display_id,
+                              fml::TimePoint frame_start_time,
+                              fml::TimePoint frame_target_time);
+
+  /// Assigns a view to a display in the Animator's per-display tracking.
+  bool SetViewDisplay(int64_t view_id, int64_t display_id);
+
   bool ReloadSystemFonts();
 
   bool PostRenderThreadTask(const fml::closure& task);
@@ -93,6 +103,7 @@ class EmbedderEngine {
       const std::function<void(FlutterNativeThreadType)>& closure) const;
 
   bool ScheduleFrame();
+  bool ScheduleFrameForDisplay(int64_t display_id);
 
   Shell& GetShell();
 

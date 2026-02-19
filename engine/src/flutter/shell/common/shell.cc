@@ -3,6 +3,11 @@
 // found in the LICENSE file.
 
 #include <future>
+
+// Allow access to fml::MessageLoop::GetCurrent() for the synchronous resize
+// wait loop which must pump platform thread tasks.
+#define FML_USED_ON_EMBEDDER
+
 #include "fml/task_runner.h"
 #include "impeller/core/runtime_types.h"
 #include "impeller/renderer/context.h"
@@ -1382,6 +1387,26 @@ void Shell::OnAnimatorBeginFrame(fml::TimePoint frame_target_time,
   }
   if (engine_) {
     engine_->BeginFrame(frame_target_time, frame_number);
+  }
+}
+
+// |Animator::Delegate|
+void Shell::OnAnimatorBeginFrameForDisplay(
+    fml::TimePoint frame_target_time,
+    uint64_t frame_number,
+    int64_t display_id,
+    const std::set<int64_t>& view_ids) {
+  FML_DCHECK(is_set_up_);
+  FML_DCHECK(task_runners_.GetUITaskRunner()->RunsTasksOnCurrentThread());
+
+  // record the target time for use by rasterizer.
+  {
+    std::scoped_lock time_recorder_lock(time_recorder_mutex_);
+    latest_frame_target_time_.emplace(frame_target_time);
+  }
+  if (engine_) {
+    engine_->BeginFrameForDisplay(display_id, view_ids, frame_target_time,
+                                  frame_number);
   }
 }
 

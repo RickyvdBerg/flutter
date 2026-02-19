@@ -6,6 +6,7 @@
 #define FLUTTER_SHELL_COMMON_ENGINE_H_
 
 #include <memory>
+#include <set>
 #include <string>
 
 #include "flutter/assets/asset_manager.h"
@@ -580,6 +581,15 @@ class Engine final : public RuntimeDelegate, PointerDataDispatcher::Delegate {
   void BeginFrame(fml::TimePoint frame_time, uint64_t frame_number);
 
   //----------------------------------------------------------------------------
+  /// @brief      Per-display variant of BeginFrame. Routes to the Dart
+  ///             `_beginFrameForDisplay` hook with display and view context.
+  ///
+  void BeginFrameForDisplay(int64_t display_id,
+                            const std::set<int64_t>& view_ids,
+                            fml::TimePoint frame_time,
+                            uint64_t frame_number);
+
+  //----------------------------------------------------------------------------
   /// @brief      Notifies the engine that the UI task runner is not expected to
   ///             undertake a new frame workload till a specified timepoint. The
   ///             timepoint is measured in microseconds against the system's
@@ -797,6 +807,24 @@ class Engine final : public RuntimeDelegate, PointerDataDispatcher::Delegate {
   /// @param[in]  displays  A complete list of displays
   ///
   void SetDisplays(const std::vector<DisplayData>& displays);
+
+  //----------------------------------------------------------------------------
+  /// @brief      Assigns a view to a display for per-display vsync rendering.
+  ///
+  /// @param[in]  view_id     The view to assign.
+  /// @param[in]  display_id  The display to assign the view to.
+  ///
+  void SetViewDisplay(int64_t view_id, int64_t display_id);
+
+  //----------------------------------------------------------------------------
+  /// @brief      Requests a frame for a specific display in per-display mode.
+  ///
+  ///             This call only wakes the specified display's frame pipeline.
+  ///             If the display is unknown, the request is ignored.
+  ///
+  /// @param[in]  display_id  The display whose frame pipeline should run.
+  ///
+  void ScheduleFrameForDisplay(int64_t display_id);
 
   //----------------------------------------------------------------------------
   /// @brief      Notifies the engine that the embedder has sent it a message.

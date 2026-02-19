@@ -3942,6 +3942,51 @@ TEST_F(EmbedderTest, CanScheduleFrame) {
   check_latch.Wait();
 }
 
+TEST_F(EmbedderTest, CanScheduleFrameForDisplay) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(SkISize::Make(1, 1));
+  builder.SetDartEntrypoint("can_schedule_frame");
+  fml::AutoResetWaitableEvent latch;
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY(
+          [&latch](Dart_NativeArguments args) { latch.Signal(); }));
+
+  fml::AutoResetWaitableEvent check_latch;
+  context.AddNativeCallback(
+      "SignalNativeCount",
+      CREATE_NATIVE_ENTRY(
+          [&check_latch](Dart_NativeArguments args) { check_latch.Signal(); }));
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterEngineDisplay display = {};
+  display.struct_size = sizeof(FlutterEngineDisplay);
+  display.display_id = 1;
+  display.single_display = true;
+  display.refresh_rate = 60.0;
+  display.width = 1;
+  display.height = 1;
+  display.device_pixel_ratio = 1.0;
+
+  ASSERT_EQ(FlutterEngineNotifyDisplayUpdate(
+                engine.get(), kFlutterEngineDisplaysUpdateTypeStartup,
+                &display, 1),
+            kSuccess);
+  ASSERT_EQ(
+      FlutterEngineSetViewDisplay(engine.get(), kFlutterImplicitViewId, 1),
+      kSuccess);
+
+  // Wait for the application to attach the listener.
+  latch.Wait();
+
+  ASSERT_EQ(FlutterEngineScheduleFrameForDisplay(engine.get(), 1), kSuccess);
+
+  check_latch.Wait();
+}
+
 TEST_F(EmbedderTest, CanSetNextFrameCallback) {
   auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
   EmbedderConfigBuilder builder(context);

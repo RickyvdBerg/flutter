@@ -6,6 +6,8 @@
 #define FLUTTER_SHELL_COMMON_ANIMATOR_H_
 
 #include <deque>
+#include <set>
+#include <unordered_map>
 
 #include "flutter/common/task_runners.h"
 #include "flutter/flow/frame_timings.h"
@@ -33,6 +35,19 @@ class Animator final {
    public:
     virtual void OnAnimatorBeginFrame(fml::TimePoint frame_target_time,
                                       uint64_t frame_number) = 0;
+
+    /// Per-display variant of OnAnimatorBeginFrame. The delegate should
+    /// invoke PlatformDispatcher.onBeginFrame scoped to the given views.
+    ///
+    /// The default implementation calls the legacy OnAnimatorBeginFrame,
+    /// ignoring display_id and view_ids.
+    virtual void OnAnimatorBeginFrameForDisplay(
+        fml::TimePoint frame_target_time,
+        uint64_t frame_number,
+        int64_t display_id,
+        const std::set<int64_t>& view_ids) {
+      OnAnimatorBeginFrame(frame_target_time, frame_number);
+    }
 
     virtual void OnAnimatorNotifyIdle(fml::TimeDelta deadline) = 0;
 
@@ -79,6 +94,45 @@ class Animator final {
   ///           `PlatformDispatcher.scheduleWarmUpFrame`.
   ///
   void OnAllViewsRendered();
+
+  // -----------------------------------------------------------------------
+  // Per-Display VSync API
+  // -----------------------------------------------------------------------
+
+  /// Per-display frame scheduling state.
+  ///
+  /// Each registered display maintains its own independent frame lifecycle:
+  /// request -> vsync -> begin frame -> render views -> end frame -> rasterize.
+  struct DisplayFrameState {
+    int64_t display_id = VsyncWaiter::kDefaultDisplayId;
+    double refresh_rate = 60.0;
+    std::set<int64_t> view_ids;
+    std::set<int64_t> rendered_views_this_frame;
+    bool frame_scheduled = false;
+    bool frame_in_progress = false;
+    std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder;
+    FramePipeline::ProducerContinuation producer_continuation;
+    std::shared_ptr<FramePipeline> pipeline;
+  };
+
+  /// Registers a display with the given refresh rate.
+  void AddDisplay(int64_t display_id, double refresh_rate);
+
+  /// Removes a display. Views on it move to the default display.
+  void RemoveDisplay(int64_t display_id);
+
+  /// Removes displays not in the given set. Views on removed displays
+  /// move to the default display.
+  void RemoveStaleDisplays(const std::set<int64_t>& active_ids);
+
+  /// Assigns a view to a display for per-display vsync rendering.
+  void SetViewDisplay(int64_t view_id, int64_t display_id);
+
+  /// Requests a frame for a specific display on its next vsync.
+  void RequestFrameForDisplay(int64_t display_id);
+
+  /// Returns true if per-display mode is active.
+  bool IsPerDisplayMode() const;
 
   //--------------------------------------------------------------------------
   /// @brief    Tells the Animator that this frame needs to render another view.
@@ -136,6 +190,28 @@ class Animator final {
   // Clear |trace_flow_ids_| if |frame_scheduled_| is false.
   void ScheduleMaybeClearTraceFlowIds();
 
+  // -----------------------------------------------------------------------
+  // Per-Display Frame Lifecycle (Private)
+  // -----------------------------------------------------------------------
+
+  /// Callback invoked when a display's vsync fires.
+  void OnDisplayVsync(int64_t display_id,
+                      std::unique_ptr<FrameTimingsRecorder> recorder);
+
+  /// Begins a frame for the given display: acquires a pipeline slot,
+  /// notifies the delegate to invoke Dart callbacks for this display's views.
+  void BeginFrameForDisplay(DisplayFrameState& state);
+
+  /// Ends a frame for the given display: packages layer trees into a
+  /// FrameItem and submits to the pipeline.
+  void EndFrameForDisplay(DisplayFrameState& state);
+
+  /// Returns the DisplayFrameState for the given display, or nullptr.
+  DisplayFrameState* GetDisplayState(int64_t display_id);
+
+  /// Returns the display ID for the given view.
+  int64_t GetDisplayForView(int64_t view_id) const;
+
   Delegate& delegate_;
   TaskRunners task_runners_;
   std::shared_ptr<VsyncWaiter> waiter_;
@@ -156,6 +232,25 @@ class Animator final {
   // stamped onto subsequent frame recorders until a frame is successfully
   // committed to the pipeline.
   uint64_t pending_configure_serial_ = 0;
+
+  // -----------------------------------------------------------------------
+  // Per-Display State
+  // -----------------------------------------------------------------------
+
+  /// The display ID of the frame currently being processed, or -1 if no
+  /// per-display frame is active. Used to scope RequestFrame() calls made
+  /// during a display's frame (e.g. from Dart's scheduleFrame()) to only
+  /// re-schedule the active display, preventing cross-display coupling.
+  int64_t active_frame_display_id_ = -1;
+
+  /// Per-display frame states. Empty when in single-display mode.
+  std::unordered_map<int64_t, DisplayFrameState> display_states_;
+
+  /// View-to-display mapping. Views not in this map are on the default display.
+  std::unordered_map<int64_t, int64_t> view_to_display_;
+
+  /// Fallback state used when no displays are registered.
+  DisplayFrameState default_state_;
 
   fml::TaskRunnerAffineWeakPtrFactory<Animator> weak_factory_;
 

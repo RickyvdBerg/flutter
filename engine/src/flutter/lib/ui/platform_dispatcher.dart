@@ -450,6 +450,64 @@ class PlatformDispatcher {
     _invoke(onDrawFrame, _onDrawFrameZone);
   }
 
+  // ---------------------------------------------------------------------------
+  // Per-Display Frame Callbacks
+  // ---------------------------------------------------------------------------
+
+  /// Signature for [onBeginFrameForDisplay].
+  ///
+  /// The `timestamp` is the frame's vsync timestamp. The `displayId`
+  /// identifies which display fired the vsync. The `viewIds` lists the views
+  /// that should be rendered on this frame.
+  ///
+  /// When this callback is set, the engine calls it instead of [onBeginFrame]
+  /// for displays that have been registered via the embedder API. For displays
+  /// without explicit registration, [onBeginFrame] is still used.
+  // ignore: avoid_setters_without_getters, this is a new API
+  set onBeginFrameForDisplay(
+    void Function(Duration timestamp, int displayId, List<int> viewIds)? callback,
+  ) {
+    _onBeginFrameForDisplay = callback;
+    _onBeginFrameForDisplayZone = Zone.current;
+  }
+
+  void Function(Duration, int, List<int>)? get onBeginFrameForDisplay => _onBeginFrameForDisplay;
+  void Function(Duration, int, List<int>)? _onBeginFrameForDisplay;
+  Zone _onBeginFrameForDisplayZone = Zone.root;
+
+  /// Per-display draw-frame callback. Called after [onBeginFrameForDisplay]
+  /// completes and microtasks are drained.
+  // ignore: avoid_setters_without_getters, this is a new API
+  set onDrawFrameForDisplay(VoidCallback? callback) {
+    _onDrawFrameForDisplay = callback;
+    _onDrawFrameForDisplayZone = Zone.current;
+  }
+
+  VoidCallback? get onDrawFrameForDisplay => _onDrawFrameForDisplay;
+  VoidCallback? _onDrawFrameForDisplay;
+  Zone _onDrawFrameForDisplayZone = Zone.root;
+
+  // Called from the engine, via hooks.dart
+  void _beginFrameForDisplay(int microseconds, int displayId, List<int> viewIds) {
+    if (_onBeginFrameForDisplay != null) {
+      _onBeginFrameForDisplayZone.runUnaryGuarded((Duration timestamp) {
+        _onBeginFrameForDisplay!(timestamp, displayId, viewIds);
+      }, Duration(microseconds: microseconds));
+    } else {
+      // Fallback to legacy single-display path.
+      _beginFrame(microseconds);
+    }
+  }
+
+  // Called from the engine, via hooks.dart
+  void _drawFrameForDisplay() {
+    if (_onDrawFrameForDisplay != null) {
+      _invoke(onDrawFrameForDisplay, _onDrawFrameForDisplayZone);
+    } else {
+      _drawFrame();
+    }
+  }
+
   /// A callback that is invoked when pointer data is available.
   ///
   /// The framework invokes this callback in the same zone in which the callback

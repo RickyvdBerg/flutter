@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <set>
 #include <string_view>
 #include <unordered_map>
 
@@ -672,6 +673,13 @@ class Shell final : public PlatformView::Delegate,
   // |Animator::Delegate|
   void OnAnimatorBeginFrame(fml::TimePoint frame_target_time,
                             uint64_t frame_number) override;
+
+  // |Animator::Delegate|
+  void OnAnimatorBeginFrameForDisplay(
+      fml::TimePoint frame_target_time,
+      uint64_t frame_number,
+      int64_t display_id,
+      const std::set<int64_t>& view_ids) override;
 
   // |Animator::Delegate|
   void OnAnimatorNotifyIdle(fml::TimeDelta deadline) override;

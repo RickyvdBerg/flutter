@@ -6,6 +6,7 @@
 #define FLUTTER_RUNTIME_RUNTIME_CONTROLLER_H_
 
 #include <memory>
+#include <set>
 #include <vector>
 
 #include "assets/native_assets.h"
@@ -346,6 +347,15 @@ class RuntimeController : public PlatformConfigurationClient,
   ///             running isolate.
   ///
   bool BeginFrame(fml::TimePoint frame_time, uint64_t frame_number);
+
+  //----------------------------------------------------------------------------
+  /// @brief      Per-display variant of BeginFrame. Routes to the Dart
+  ///             `_beginFrameForDisplay` hook with display context.
+  ///
+  bool BeginFrameForDisplay(int64_t display_id,
+                            const std::set<int64_t>& view_ids,
+                            fml::TimePoint frame_time,
+                            uint64_t frame_number);
 
   //----------------------------------------------------------------------------
   /// @brief      Dart code cannot fully measure the time it takes for a

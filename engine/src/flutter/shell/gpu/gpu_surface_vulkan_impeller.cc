@@ -118,8 +118,15 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
   }
 
   if (!render_to_surface_) {
+    SurfaceFrame::FramebufferInfo info;
+    info.supports_partial_repaint = true;
+    info.supports_readback = true;
+    // Empty existing_damage signals "backing store is current" so the
+    // rasterizer's DiffContext can detect identical layer trees and skip
+    // the frame entirely (zero-damage optimisation).
+    info.existing_damage = DlRegion();
     return std::make_unique<SurfaceFrame>(
-        nullptr, SurfaceFrame::FramebufferInfo(),
+        nullptr, info,
         [](const SurfaceFrame& surface_frame, DlCanvas* canvas) {
           return true;
         },

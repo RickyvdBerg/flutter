@@ -628,6 +628,25 @@ typedef bool (*TextureFrameCallback)(void* /* user data */,
                                      size_t /* height */,
                                      FlutterOpenGLTexture* /* texture out */);
 typedef void (*VsyncCallback)(void* /* user data */, intptr_t /* baton */);
+
+/// Unique identifier for a display. Forward-declared here so that
+/// `FlutterVsyncForDisplayCallback` can reference it; the canonical
+/// definition is below with the display structures.
+typedef uint64_t FlutterEngineDisplayId;
+
+/// Per-display vsync callback. The engine calls this when it needs a vsync
+/// event for a specific display. The baton must be returned via
+/// `FlutterEngineOnVsyncForDisplay` with the same `display_id`.
+///
+/// When set in `FlutterProjectArgs`, this callback takes priority over
+/// `vsync_callback`. The engine will call this with `display_id` indicating
+/// which display needs a vsync. For single-display setups or when the display
+/// is unknown, `display_id` will be `kFlutterDefaultDisplayId` (0).
+typedef void (*FlutterVsyncForDisplayCallback)(
+    void* /* user data */,
+    intptr_t /* baton */,
+    FlutterEngineDisplayId /* display_id */);
+
 typedef void (*OnPreEngineRestartCallback)(void* /* user data */);
 
 /// A structure to represent the width and height.
@@ -1047,7 +1066,9 @@ typedef struct {
 /// Display refers to a graphics hardware system consisting of a framebuffer,
 /// typically a monitor or a screen. This ID is unique per display and is
 /// stable until the Flutter application restarts.
-typedef uint64_t FlutterEngineDisplayId;
+///
+/// Note: `FlutterEngineDisplayId` is forward-declared earlier in this file
+/// (near `FlutterVsyncForDisplayCallback`) so the typedef is not repeated here.
 
 typedef struct {
   /// The size of this struct. Must be sizeof(FlutterWindowMetricsEvent).
@@ -2168,6 +2189,15 @@ typedef struct {
   /// outside of this area are transparent and the embedder may choose not
   /// to render them. Coordinates are in physical pixels.
   FlutterRegion* paint_region;
+
+  /// The area of the backing store that changed since the last presented
+  /// frame. NULL if damage is unknown (embedder should assume full damage).
+  /// Coordinates are in physical pixels.
+  ///
+  /// This describes frame-to-frame delta (analogous to
+  /// EGL_KHR_swap_buffers_with_damage). It is metadata for composition
+  /// decisions and does not imply partial rasterization.
+  FlutterRegion* frame_damage;
 } FlutterBackingStorePresentInfo;
 
 typedef struct {
@@ -2366,6 +2396,11 @@ typedef enum {
   ///    2. The display is drawable, e.g. it isn't being mirrored from another
   ///    connected display or sleeping.
   kFlutterEngineDisplaysUpdateTypeStartup,
+  /// `FlutterEngineDisplay`s changed after startup (hotplug, unplug, mode
+  /// change, scale change, or active-display set change).
+  ///
+  /// Embedders should pass the complete set of currently active displays.
+  kFlutterEngineDisplaysUpdateTypeUpdate,
   kFlutterEngineDisplaysUpdateTypeCount,
 } FlutterEngineDisplaysUpdateType;
 
@@ -2811,6 +2846,18 @@ typedef struct {
   /// If true, the engine will decode images in wide gamut color spaces
   /// (Display P3) when supported. If false, images are decoded to sRGB.
   bool enable_wide_gamut;
+
+  /// Per-display vsync callback. When set, this callback is used instead of
+  /// `vsync_callback`. The engine passes a `display_id` indicating which
+  /// display needs a vsync event. The baton must be returned via
+  /// `FlutterEngineOnVsyncForDisplay`.
+  ///
+  /// This enables multi-monitor setups where each display has its own refresh
+  /// rate. Views assigned to a display (via `FlutterEngineSetViewDisplay`) will
+  /// only be rendered on that display's vsync.
+  ///
+  /// If this is null, the engine falls back to `vsync_callback`.
+  FlutterVsyncForDisplayCallback vsync_for_display_callback;
 } FlutterProjectArgs;
 
 typedef struct {
@@ -3455,6 +3502,55 @@ FlutterEngineResult FlutterEngineOnVsync(FLUTTER_API_SYMBOL(FlutterEngine)
                                          uint64_t frame_target_time_nanos);
 
 //------------------------------------------------------------------------------
+/// @brief      Notify the engine of a vsync event for a specific display.
+///             This is the per-display variant of `FlutterEngineOnVsync`.
+///
+///             The baton passed here must be one that was provided by the
+///             `FlutterVsyncForDisplayCallback`. The `display_id` must match
+///             the display that the baton was issued for.
+///
+///             Only the views assigned to this display (via
+///             `FlutterEngineSetViewDisplay`) will be rendered on this frame.
+///
+/// @param[in]  engine                   A running engine instance.
+/// @param[in]  baton                    The baton from the vsync callback.
+/// @param[in]  display_id               The display this vsync is for.
+/// @param[in]  frame_start_time_nanos   The start time of the frame in nanos.
+/// @param[in]  frame_target_time_nanos  The target time for the frame in nanos.
+///
+/// @return     The result of the call.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineOnVsyncForDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    intptr_t baton,
+    FlutterEngineDisplayId display_id,
+    uint64_t frame_start_time_nanos,
+    uint64_t frame_target_time_nanos);
+
+//------------------------------------------------------------------------------
+/// @brief      Assign a view to a display for per-display vsync rendering.
+///
+///             After this call, the view will only be rendered on the specified
+///             display's vsync events. The display must have been previously
+///             registered via `FlutterEngineNotifyDisplayUpdate`.
+///
+///             A view can be reassigned to a different display at any time
+///             (e.g., when a window is dragged between monitors).
+///
+/// @param[in]  engine      A running engine instance.
+/// @param[in]  view_id     The view to assign.
+/// @param[in]  display_id  The display to assign the view to.
+///
+/// @return     The result of the call.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineSetViewDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterViewId view_id,
+    FlutterEngineDisplayId display_id);
+
+//------------------------------------------------------------------------------
 /// @brief      Reloads the system fonts in engine.
 ///
 /// @param[in]  engine.                  A running engine instance.
@@ -3706,6 +3802,23 @@ FlutterEngineResult FlutterEngineScheduleFrame(FLUTTER_API_SYMBOL(FlutterEngine)
                                                    engine);
 
 //------------------------------------------------------------------------------
+/// @brief      Schedule a new frame for a specific display.
+///
+///             This is the per-display variant of
+///             `FlutterEngineScheduleFrame` and only wakes the specified
+///             display pipeline in per-display mode.
+///
+/// @param[in]  engine      A running engine instance.
+/// @param[in]  display_id  Display to schedule.
+///
+/// @return the result of the call made to the engine.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineScheduleFrameForDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id);
+
+//------------------------------------------------------------------------------
 /// @brief      Schedule a callback to be called after the next frame is drawn.
 ///             This must be called from the platform thread. The callback is
 ///             executed only once from the raster thread; embedders must
@@ -3811,6 +3924,16 @@ typedef FlutterEngineResult (*FlutterEngineOnVsyncFnPtr)(
     intptr_t baton,
     uint64_t frame_start_time_nanos,
     uint64_t frame_target_time_nanos);
+typedef FlutterEngineResult (*FlutterEngineOnVsyncForDisplayFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    intptr_t baton,
+    FlutterEngineDisplayId display_id,
+    uint64_t frame_start_time_nanos,
+    uint64_t frame_target_time_nanos);
+typedef FlutterEngineResult (*FlutterEngineSetViewDisplayFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterViewId view_id,
+    FlutterEngineDisplayId display_id);
 typedef FlutterEngineResult (*FlutterEngineReloadSystemFontsFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine);
 typedef void (*FlutterEngineTraceEventDurationBeginFnPtr)(const char* name);
@@ -3846,6 +3969,9 @@ typedef FlutterEngineResult (*FlutterEngineNotifyDisplayUpdateFnPtr)(
     size_t display_count);
 typedef FlutterEngineResult (*FlutterEngineScheduleFrameFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine);
+typedef FlutterEngineResult (*FlutterEngineScheduleFrameForDisplayFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id);
 typedef FlutterEngineResult (*FlutterEngineSetNextFrameCallbackFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     VoidCallback callback,
@@ -3918,9 +4044,12 @@ typedef struct {
   FlutterEngineRemoveViewFnPtr RemoveView;
   FlutterEngineSendViewFocusEventFnPtr SendViewFocusEvent;
   FlutterEngineSendSemanticsActionFnPtr SendSemanticsAction;
+  FlutterEngineOnVsyncForDisplayFnPtr OnVsyncForDisplay;
+  FlutterEngineSetViewDisplayFnPtr SetViewDisplay;
 #ifdef __linux__
   FlutterEnginePublishDmabufTextureFnPtr PublishDmabufTexture;
 #endif  // __linux__
+  FlutterEngineScheduleFrameForDisplayFnPtr ScheduleFrameForDisplay;
 } FlutterEngineProcTable;
 
 //------------------------------------------------------------------------------

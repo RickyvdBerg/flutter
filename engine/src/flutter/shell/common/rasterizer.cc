@@ -788,25 +788,58 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
     NOT_SLIMPELLER(compositor_context_->raster_cache().BeginFrame());
 
     std::unique_ptr<FrameDamage> damage;
+    std::optional<DlRegion> eve_frame_damage = std::nullopt;
     // when leaf layer tracing is enabled we wish to repaint the whole frame
     // for accurate performance metrics.
     if (frame->framebuffer_info().supports_partial_repaint) {
-      // Disable partial repaint if external_view_embedder_ SubmitFlutterView is
-      // involved - ExternalViewEmbedder unconditionally clears the entire
-      // surface and also partial repaint with platform view present is
-      // something that still need to be figured out.
-      bool force_full_repaint =
+      bool has_external_view_embedder =
           external_view_embedder_ &&
           (!raster_thread_merger_ || raster_thread_merger_->IsMerged());
 
-      damage = std::make_unique<FrameDamage>();
-      auto existing_damage = frame->framebuffer_info().existing_damage;
-      if (existing_damage.has_value() && !force_full_repaint) {
-        damage->SetPreviousLayerTree(GetLastLayerTree(view_id));
-        damage->AddAdditionalDamage(existing_damage.value());
-        damage->SetClipAlignment(
-            frame->framebuffer_info().horizontal_clip_alignment,
-            frame->framebuffer_info().vertical_clip_alignment);
+      if (has_external_view_embedder) {
+        // External view embedder path: SubmitFlutterView unconditionally
+        // clears the backing store, so partial repaint would cause visual
+        // corruption.  However, we CAN detect zero-damage frames (identical
+        // layer trees) and skip them entirely — no Raster, no
+        // SubmitFlutterView, no present callback, no Impeller work.
+        auto existing_damage = frame->framebuffer_info().existing_damage;
+        if (existing_damage.has_value()) {
+          FrameDamage zero_check;
+          zero_check.SetPreviousLayerTree(GetLastLayerTree(view_id));
+          zero_check.AddAdditionalDamage(existing_damage.value());
+          zero_check.SetClipAlignment(
+              frame->framebuffer_info().horizontal_clip_alignment,
+              frame->framebuffer_info().vertical_clip_alignment);
+
+          auto* gr_context = surface_->GetContext();
+          zero_check.ComputeClipRects(
+              layer_tree, surface_->EnableRasterCache(), !gr_context,
+              compositor_context_->texture_registry().get());
+
+          auto frame_dmg = zero_check.GetFrameDamage();
+          if (frame_dmg.has_value() && frame_dmg->isEmpty() &&
+              zero_check.GetBufferDamage().has_value()) {
+            // Zero damage — layer tree is identical to previous frame.
+            // Skip the entire rasterization and presentation.
+            NOT_SLIMPELLER(compositor_context_->raster_cache().EndFrame());
+            return DrawSurfaceStatus::kSuccess;
+          }
+          eve_frame_damage = std::move(frame_dmg);
+        }
+        // Non-zero damage: leave damage as nullptr so Raster() does a full
+        // repaint (PaintLayerTreeImpeller treats empty clip_bounds as
+        // "no clip = full repaint").
+      } else {
+        // Standard partial repaint path for non-EVE surfaces.
+        damage = std::make_unique<FrameDamage>();
+        auto existing_damage = frame->framebuffer_info().existing_damage;
+        if (existing_damage.has_value()) {
+          damage->SetPreviousLayerTree(GetLastLayerTree(view_id));
+          damage->AddAdditionalDamage(existing_damage.value());
+          damage->SetClipAlignment(
+              frame->framebuffer_info().horizontal_clip_alignment,
+              frame->framebuffer_info().vertical_clip_alignment);
+        }
       }
     }
 
@@ -841,6 +874,8 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
     if (damage) {
       submit_info.frame_damage = std::move(frame_dmg);
       submit_info.buffer_damage = damage->GetBufferDamage();
+    } else if (eve_frame_damage.has_value()) {
+      submit_info.frame_damage = std::move(eve_frame_damage);
     }
 
     frame->set_submit_info(submit_info);

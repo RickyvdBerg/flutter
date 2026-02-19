@@ -86,13 +86,20 @@ enum class DrawSurfaceStatus {
 };
 
 // The information to draw to all views of a frame.
+// In per-display vsync mode, each FrameItem contains layer trees for a
+// single display's views only. In single-display (legacy) mode, display_id
+// is 0 and the item contains all views.
 struct FrameItem {
   FrameItem(std::vector<std::unique_ptr<LayerTreeTask>> tasks,
-            std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder)
+            std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder,
+            int64_t display_id = 0)
       : layer_tree_tasks(std::move(tasks)),
-        frame_timings_recorder(std::move(frame_timings_recorder)) {}
+        frame_timings_recorder(std::move(frame_timings_recorder)),
+        display_id(display_id) {}
   std::vector<std::unique_ptr<LayerTreeTask>> layer_tree_tasks;
   std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder;
+  /// The display that triggered this frame. 0 = default/legacy.
+  int64_t display_id = 0;
 };
 
 using FramePipeline = Pipeline<FrameItem>;

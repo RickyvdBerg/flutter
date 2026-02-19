@@ -278,6 +278,33 @@ bool EmbedderEngine::OnVsyncEvent(intptr_t baton,
       task_runners_, baton, frame_start_time, frame_target_time);
 }
 
+bool EmbedderEngine::OnVsyncEventForDisplay(intptr_t baton,
+                                            int64_t display_id,
+                                            fml::TimePoint frame_start_time,
+                                            fml::TimePoint frame_target_time) {
+  if (!IsValid()) {
+    return false;
+  }
+
+  return VsyncWaiterEmbedder::OnEmbedderVsyncForDisplay(
+      task_runners_, baton, display_id, frame_start_time, frame_target_time);
+}
+
+bool EmbedderEngine::SetViewDisplay(int64_t view_id, int64_t display_id) {
+  if (!IsValid()) {
+    return false;
+  }
+
+  // Post to UI thread since Animator state must be accessed from UI thread.
+  shell_->GetTaskRunners().GetUITaskRunner()->PostTask(
+      [engine = shell_->GetEngine(), view_id, display_id]() {
+        if (engine) {
+          engine->SetViewDisplay(view_id, display_id);
+        }
+      });
+  return true;
+}
+
 bool EmbedderEngine::ReloadSystemFonts() {
   if (!IsValid()) {
     return false;
@@ -357,6 +384,20 @@ bool EmbedderEngine::ScheduleFrame() {
     return false;
   }
   platform_view->ScheduleFrame();
+  return true;
+}
+
+bool EmbedderEngine::ScheduleFrameForDisplay(int64_t display_id) {
+  if (!IsValid()) {
+    return false;
+  }
+
+  shell_->GetTaskRunners().GetUITaskRunner()->PostTask(
+      [engine = shell_->GetEngine(), display_id]() {
+        if (engine) {
+          engine->ScheduleFrameForDisplay(display_id);
+        }
+      });
   return true;
 }
 

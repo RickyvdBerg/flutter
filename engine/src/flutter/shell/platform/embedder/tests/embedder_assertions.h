@@ -141,7 +141,15 @@ inline bool operator==(const FlutterRegion& a, const FlutterRegion& b) {
 
 inline bool operator==(const FlutterBackingStorePresentInfo& a,
                        const FlutterBackingStorePresentInfo& b) {
-  return a.struct_size == b.struct_size && *a.paint_region == *b.paint_region;
+  auto region_eq = [](const FlutterRegion* lhs, const FlutterRegion* rhs) {
+    if (lhs == nullptr || rhs == nullptr) {
+      return lhs == rhs;
+    }
+    return *lhs == *rhs;
+  };
+  return a.struct_size == b.struct_size &&
+         region_eq(a.paint_region, b.paint_region) &&
+         region_eq(a.frame_damage, b.frame_damage);
 }
 
 inline bool operator==(const FlutterBackingStore& a,

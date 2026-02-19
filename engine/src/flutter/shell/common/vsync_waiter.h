@@ -19,14 +19,38 @@ namespace flutter {
 /// Abstract Base Class that represents a platform specific mechanism for
 /// getting callbacks when a vsync event happens.
 ///
+/// Per-display vsync support: The waiter maintains a map of pending callbacks
+/// keyed by display ID. Each display can independently request and receive
+/// vsync events. When no display ID is specified, `kDefaultDisplayId` is used,
+/// preserving backward compatibility with single-display setups.
+///
 /// @see VsyncWaiterAndroid
 /// @see VsyncWaiterEmbedder
 class VsyncWaiter : public std::enable_shared_from_this<VsyncWaiter> {
  public:
+  using DisplayId = int64_t;
   using Callback = std::function<void(std::unique_ptr<FrameTimingsRecorder>)>;
+
+  /// Sentinel value for the default (or only) display. All views not
+  /// explicitly assigned to a display are treated as being on this display.
+  static constexpr DisplayId kDefaultDisplayId = 0;
 
   virtual ~VsyncWaiter();
 
+  /// Requests a vsync callback for the specified display.
+  ///
+  /// When the platform fires a vsync for this display, the callback will be
+  /// invoked on the UI thread with a `FrameTimingsRecorder` capturing the
+  /// frame start and target times.
+  ///
+  /// Multiple displays can have pending callbacks simultaneously. A vsync
+  /// event for one display does not consume callbacks for other displays.
+  void AsyncWaitForVsync(DisplayId display_id, const Callback& callback);
+
+  /// Requests a vsync callback for the default display.
+  ///
+  /// This is the legacy single-display entry point. Equivalent to calling
+  /// `AsyncWaitForVsync(kDefaultDisplayId, callback)`.
   void AsyncWaitForVsync(const Callback& callback);
 
   /// Add a secondary callback for key |id| for the next vsync.
@@ -57,6 +81,11 @@ class VsyncWaiter : public std::enable_shared_from_this<VsyncWaiter> {
   // latches when in response to this invocation. On vsync, they are meant to
   // invoke the |FireCallback| method once (and only once) with the appropriate
   // arguments. This method should not block the current thread.
+  //
+  // Per-display variant: Platforms that support per-display vsync should
+  // override this to arm the latch for the specific display. The default
+  // implementation delegates to the parameterless AwaitVSync().
+  virtual void AwaitVSync(DisplayId display_id);
   virtual void AwaitVSync() = 0;
 
   // The intent of AwaitVSyncForSecondaryCallback() is simply to wake up at the
@@ -74,9 +103,23 @@ class VsyncWaiter : public std::enable_shared_from_this<VsyncWaiter> {
                     fml::TimePoint frame_target_time,
                     bool pause_secondary_tasks = true);
 
+  // Per-display variant: fires the pending callback for a specific display.
+  // Only the callback for the given `display_id` is invoked; callbacks for
+  // other displays remain pending. If no callback is pending for this
+  // display, the call is a no-op.
+  void FireCallback(DisplayId display_id,
+                    fml::TimePoint frame_start_time,
+                    fml::TimePoint frame_target_time,
+                    bool pause_secondary_tasks = true);
+
  private:
   std::mutex callback_mutex_;
   Callback callback_;
+  // Per-display pending callbacks. Each display can have at most one
+  // pending callback at a time. The default display's callback is stored
+  // in `callback_` for backward compatibility; per-display callbacks are
+  // stored here.
+  std::unordered_map<DisplayId, Callback> display_callbacks_;
   std::unordered_map<uintptr_t, fml::closure> secondary_callbacks_;
 
   void PauseDartEventLoopTasks();

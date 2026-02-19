@@ -23,30 +23,50 @@ VsyncWaiter::VsyncWaiter(const TaskRunners& task_runners)
 
 VsyncWaiter::~VsyncWaiter() = default;
 
-// Public method invoked by the animator.
-void VsyncWaiter::AsyncWaitForVsync(const Callback& callback) {
+// Per-display variant: requests a vsync for a specific display.
+void VsyncWaiter::AsyncWaitForVsync(DisplayId display_id,
+                                    const Callback& callback) {
   if (!callback) {
     return;
   }
 
-  TRACE_EVENT0("flutter", "AsyncWaitForVsync");
+  const auto display_id_str = std::to_string(display_id);
+  TRACE_EVENT1("flutter", "AsyncWaitForVsync", "display_id",
+               display_id_str.c_str());
 
   {
     std::scoped_lock lock(callback_mutex_);
-    if (callback_) {
-      // The animator may request a frame more than once within a frame
-      // interval. Multiple calls to request frame must result in a single
-      // callback per frame interval.
-      TRACE_EVENT_INSTANT0("flutter", "MultipleCallsToVsyncInFrameInterval");
-      return;
-    }
-    callback_ = callback;
-    if (!secondary_callbacks_.empty()) {
-      // Return directly as `AwaitVSync` is already called by
-      // `ScheduleSecondaryCallback`.
-      return;
+    if (display_id == kDefaultDisplayId) {
+      // Use the legacy callback_ member for the default display so that
+      // the existing FireCallback() path (used by all current platform
+      // vsync waiters) continues to work without changes.
+      if (callback_) {
+        TRACE_EVENT_INSTANT0("flutter", "MultipleCallsToVsyncInFrameInterval");
+        return;
+      }
+      callback_ = callback;
+      if (!secondary_callbacks_.empty()) {
+        return;
+      }
+    } else {
+      if (display_callbacks_.count(display_id) > 0) {
+        TRACE_EVENT_INSTANT0("flutter", "MultipleCallsToVsyncInFrameInterval");
+        return;
+      }
+      display_callbacks_[display_id] = callback;
     }
   }
+  AwaitVSync(display_id);
+}
+
+// Legacy single-display entry point.
+void VsyncWaiter::AsyncWaitForVsync(const Callback& callback) {
+  AsyncWaitForVsync(kDefaultDisplayId, callback);
+}
+
+// Default per-display AwaitVSync delegates to the parameterless version.
+// Subclasses that support per-display vsync should override this.
+void VsyncWaiter::AwaitVSync(DisplayId display_id) {
   AwaitVSync();
 }
 
@@ -149,6 +169,71 @@ void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
   for (auto& secondary_callback : secondary_callbacks) {
     task_runners_.GetUITaskRunner()->PostTask(secondary_callback);
   }
+}
+
+void VsyncWaiter::FireCallback(DisplayId display_id,
+                               fml::TimePoint frame_start_time,
+                               fml::TimePoint frame_target_time,
+                               bool pause_secondary_tasks) {
+  if (display_id == kDefaultDisplayId) {
+    // Delegate to the legacy path which handles both callback_ and
+    // secondary_callbacks_.
+    FireCallback(frame_start_time, frame_target_time, pause_secondary_tasks);
+    return;
+  }
+
+  FML_DCHECK(fml::TimePoint::Now() >= frame_start_time);
+
+  Callback callback;
+  {
+    std::scoped_lock lock(callback_mutex_);
+    auto it = display_callbacks_.find(display_id);
+    if (it == display_callbacks_.end()) {
+      const auto mismatched_display_id_str = std::to_string(display_id);
+      TRACE_EVENT_INSTANT1("flutter", "MismatchedDisplayFrameCallback",
+                           "display_id", mismatched_display_id_str.c_str());
+      return;
+    }
+    callback = std::move(it->second);
+    display_callbacks_.erase(it);
+  }
+
+  if (!callback) {
+    return;
+  }
+
+  const uint64_t flow_identifier = fml::tracing::TraceNonce();
+  if (pause_secondary_tasks) {
+    PauseDartEventLoopTasks();
+  }
+
+  const auto fire_display_id_str = std::to_string(display_id);
+  TRACE_EVENT1_WITH_FLOW_IDS("flutter", "VsyncFireCallback",
+                             /*flow_id_count=*/1,
+                             /*flow_ids=*/&flow_identifier, "display_id",
+                             fire_display_id_str.c_str());
+
+  TRACE_FLOW_BEGIN("flutter", kVsyncFlowName, flow_identifier);
+
+  fml::TaskQueueId ui_task_queue_id =
+      task_runners_.GetUITaskRunner()->GetTaskQueueId();
+  task_runners_.GetUITaskRunner()->PostTask([ui_task_queue_id, callback,
+                                             flow_identifier, frame_start_time,
+                                             frame_target_time,
+                                             pause_secondary_tasks]() {
+    FML_TRACE_EVENT_WITH_FLOW_IDS(
+        "flutter", kVsyncTraceName, /*flow_id_count=*/1,
+        /*flow_ids=*/&flow_identifier, "StartTime", frame_start_time,
+        "TargetTime", frame_target_time);
+    std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder =
+        std::make_unique<FrameTimingsRecorder>();
+    frame_timings_recorder->RecordVsync(frame_start_time, frame_target_time);
+    callback(std::move(frame_timings_recorder));
+    TRACE_FLOW_END("flutter", kVsyncFlowName, flow_identifier);
+    if (pause_secondary_tasks) {
+      ResumeDartEventLoopTasks(ui_task_queue_id);
+    }
+  });
 }
 
 void VsyncWaiter::PauseDartEventLoopTasks() {

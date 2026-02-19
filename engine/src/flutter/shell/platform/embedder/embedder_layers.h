@@ -6,6 +6,7 @@
 #define FLUTTER_SHELL_PLATFORM_EMBEDDER_EMBEDDER_LAYERS_H_
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "flutter/flow/embedded_views.h"
@@ -21,7 +22,8 @@ class EmbedderLayers {
   EmbedderLayers(SkISize frame_size,
                  double device_pixel_ratio,
                  SkMatrix root_surface_transformation,
-                 uint64_t presentation_time);
+                 uint64_t presentation_time,
+                 std::optional<DlRegion> frame_damage = std::nullopt);
 
   ~EmbedderLayers();
 
@@ -52,6 +54,7 @@ class EmbedderLayers {
   std::vector<std::unique_ptr<std::vector<FlutterRect>>> rects_referenced_;
   std::vector<FlutterLayer> presented_layers_;
   uint64_t presentation_time_;
+  std::optional<DlRegion> frame_damage_;
 
   FML_DISALLOW_COPY_AND_ASSIGN(EmbedderLayers);
 };

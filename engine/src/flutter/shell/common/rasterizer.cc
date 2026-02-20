@@ -799,9 +799,12 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
       if (has_external_view_embedder) {
         // External view embedder path: SubmitFlutterView unconditionally
         // clears the backing store, so partial repaint would cause visual
-        // corruption.  However, we CAN detect zero-damage frames (identical
-        // layer trees) and skip them entirely — no Raster, no
-        // SubmitFlutterView, no present callback, no Impeller work.
+        // corruption.
+        //
+        // Keep computing frame damage for metadata/reporting, but do not
+        // short-circuit the frame here. Compositor-authoritative embedders
+        // rely on the present callback path to keep generation and frame-flow
+        // state consistent.
         auto existing_damage = frame->framebuffer_info().existing_damage;
         if (existing_damage.has_value()) {
           FrameDamage zero_check;
@@ -816,15 +819,7 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
               layer_tree, surface_->EnableRasterCache(), !gr_context,
               compositor_context_->texture_registry().get());
 
-          auto frame_dmg = zero_check.GetFrameDamage();
-          if (frame_dmg.has_value() && frame_dmg->isEmpty() &&
-              zero_check.GetBufferDamage().has_value()) {
-            // Zero damage — layer tree is identical to previous frame.
-            // Skip the entire rasterization and presentation.
-            NOT_SLIMPELLER(compositor_context_->raster_cache().EndFrame());
-            return DrawSurfaceStatus::kSuccess;
-          }
-          eve_frame_damage = std::move(frame_dmg);
+          eve_frame_damage = zero_check.GetFrameDamage();
         }
         // Non-zero damage: leave damage as nullptr so Raster() does a full
         // repaint (PaintLayerTreeImpeller treats empty clip_bounds as

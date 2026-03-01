@@ -46,6 +46,56 @@ Animator::Animator(Delegate& delegate,
 
 Animator::~Animator() = default;
 
+size_t Animator::TotalTrackedDisplayViews() const {
+  size_t total = 0;
+  for (const auto& entry : display_states_) {
+    total += entry.second.view_ids.size();
+  }
+  return total;
+}
+
+void Animator::LogStateHighWatermarks(const char* reason) {
+  bool should_log = false;
+
+  if (layer_trees_tasks_.size() > layer_trees_tasks_high_water_) {
+    layer_trees_tasks_high_water_ = layer_trees_tasks_.size();
+    should_log = true;
+  }
+
+  if (display_states_.size() > display_states_high_water_) {
+    display_states_high_water_ = display_states_.size();
+    should_log = true;
+  }
+
+  if (view_to_display_.size() > view_to_display_high_water_) {
+    view_to_display_high_water_ = view_to_display_.size();
+    should_log = true;
+  }
+
+  if (default_state_.view_ids.size() > default_view_ids_high_water_) {
+    default_view_ids_high_water_ = default_state_.view_ids.size();
+    should_log = true;
+  }
+
+  const size_t display_view_ids = TotalTrackedDisplayViews();
+  if (display_view_ids > display_view_ids_high_water_) {
+    display_view_ids_high_water_ = display_view_ids;
+    should_log = true;
+  }
+
+  if (!should_log) {
+    return;
+  }
+
+  FML_LOG(IMPORTANT) << "Animator high-water (" << reason
+                     << "): layer_trees_tasks=" << layer_trees_tasks_high_water_
+                     << ", display_states=" << display_states_high_water_
+                     << ", view_to_display=" << view_to_display_high_water_
+                     << ", default_views=" << default_view_ids_high_water_
+                     << ", display_views=" << display_view_ids_high_water_
+                     << ", render_calls_total=" << render_calls_total_;
+}
+
 void Animator::ScheduleImmediateFrame(uint64_t configure_serial) {
   pending_configure_serial_ = configure_serial;
 
@@ -228,6 +278,7 @@ void Animator::Render(int64_t view_id,
                       std::unique_ptr<flutter::LayerTree> layer_tree,
                       float device_pixel_ratio) {
   has_rendered_ = true;
+  render_calls_total_++;
 
   if (!frame_timings_recorder_) {
     // Framework can directly call render with a built scene. A major reason is
@@ -242,11 +293,19 @@ void Animator::Render(int64_t view_id,
                                 "Animator::Render", /*flow_id_count=*/0,
                                 /*flow_ids=*/nullptr);
 
-  // Only inserts if the view ID has not been rendered before, ignoring
-  // duplicate Render calls.
-  layer_trees_tasks_.try_emplace(
-      view_id, std::make_unique<LayerTreeTask>(view_id, std::move(layer_tree),
-                                               device_pixel_ratio));
+  // Always keep the latest layer tree for each view.
+  //
+  // In per-display mode, the framework may still route through legacy global
+  // draw callbacks, which can emit multiple Render calls for the same view
+  // before that display's frame drains. Replacing here prevents stale layer
+  // trees from being replayed and keeps scanout deterministic.
+  const bool inserted_new_task =
+      layer_trees_tasks_.find(view_id) == layer_trees_tasks_.end();
+  layer_trees_tasks_[view_id] = std::make_unique<LayerTreeTask>(
+      view_id, std::move(layer_tree), device_pixel_ratio);
+  if (inserted_new_task) {
+    LogStateHighWatermarks("Render");
+  }
 
   // Per-display frame completion tracking. When all views for a display
   // have rendered, end that display's frame so it can be rasterized
@@ -254,10 +313,18 @@ void Animator::Render(int64_t view_id,
   if (IsPerDisplayMode()) {
     int64_t display_id = GetDisplayForView(view_id);
     DisplayFrameState* state = GetDisplayState(display_id);
-    if (state && state->frame_in_progress) {
-      state->rendered_views_this_frame.insert(view_id);
-      if (state->rendered_views_this_frame == state->view_ids) {
-        EndFrameForDisplay(*state);
+    if (state) {
+      if (state->frame_in_progress) {
+        state->rendered_views_this_frame.insert(view_id);
+        if (state->rendered_views_this_frame == state->view_ids) {
+          EndFrameForDisplay(*state);
+        }
+      } else if (!state->frame_scheduled) {
+        // A view can render while another display owns the active frame
+        // callback (for example, legacy global draw fallback). Ensure that the
+        // target display still receives a vsync callback to consume the cached
+        // layer tree.
+        RequestFrameForDisplay(display_id, false);
       }
     }
   }
@@ -279,6 +346,11 @@ void Animator::DrawLastLayerTrees(
   TRACE_EVENT0("flutter", "Animator::DrawLastLayerTrees");
 
   pending_frame_semaphore_.Signal();
+  DrawLastLayerTreesForDisplay(std::move(frame_timings_recorder));
+}
+
+void Animator::DrawLastLayerTreesForDisplay(
+    std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder) {
   // In this case BeginFrame doesn't get called, we need to
   // adjust frame timings to update build start and end times,
   // given that the frame doesn't get built in this case, we
@@ -296,13 +368,13 @@ void Animator::RequestFrame(bool regenerate_layer_trees) {
       // Only re-schedule the display whose frame is currently executing to
       // prevent cross-display coupling that would lock all displays to the
       // same frame rate.
-      RequestFrameForDisplay(active_frame_display_id_);
+      RequestFrameForDisplay(active_frame_display_id_, regenerate_layer_trees);
     } else {
       // Called outside a frame (e.g. initial setup, user input, view added).
       // Fan out to all displays with views.
       for (auto& [display_id, state] : display_states_) {
         if (!state.view_ids.empty()) {
-          RequestFrameForDisplay(display_id);
+          RequestFrameForDisplay(display_id, regenerate_layer_trees);
         }
       }
     }
@@ -382,10 +454,13 @@ void Animator::AddDisplay(int64_t display_id, double refresh_rate) {
   state.display_id = display_id;
   state.refresh_rate = refresh_rate;
 
-  // Each display gets its own pipeline so frames can be produced and
-  // rasterized independently without serializing through a shared pipeline.
-  if (!state.pipeline) {
-    state.pipeline = std::make_shared<FramePipeline>(2);
+  // Displays schedule frames independently, but rasterization still drains on
+  // one thread and the downstream pipeline pressure logic assumes a shared
+  // queue. Reuse the engine-wide pipeline for every display instead of
+  // creating per-display queues that can diverge and strand frame pressure.
+  FML_DCHECK(layer_tree_pipeline_);
+  if (state.pipeline.get() != layer_tree_pipeline_.get()) {
+    state.pipeline = layer_tree_pipeline_;
   }
 
   // Move any views that were assigned to this display before it was
@@ -401,6 +476,8 @@ void Animator::AddDisplay(int64_t display_id, double refresh_rate) {
       ++it;
     }
   }
+
+  LogStateHighWatermarks("AddDisplay");
 }
 
 void Animator::RemoveDisplay(int64_t display_id) {
@@ -419,6 +496,8 @@ void Animator::RemoveDisplay(int64_t display_id) {
     default_state_.view_ids.insert(view_id);
   }
   display_states_.erase(it);
+
+  LogStateHighWatermarks("RemoveDisplay");
 }
 
 void Animator::RemoveStaleDisplays(const std::set<int64_t>& active_ids) {
@@ -463,9 +542,44 @@ void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
     view_to_display_[view_id] = display_id;
     default_state_.view_ids.insert(view_id);
   }
+
+  LogStateHighWatermarks("SetViewDisplay");
 }
 
-void Animator::RequestFrameForDisplay(int64_t display_id) {
+void Animator::RemoveView(int64_t view_id) {
+  // Drop any queued render payload for the removed view immediately.
+  layer_trees_tasks_.erase(view_id);
+
+  default_state_.view_ids.erase(view_id);
+  default_state_.rendered_views_this_frame.erase(view_id);
+
+  auto mapping_it = view_to_display_.find(view_id);
+  if (mapping_it == view_to_display_.end()) {
+    return;
+  }
+
+  int64_t display_id = mapping_it->second;
+  view_to_display_.erase(mapping_it);
+
+  auto state_it = display_states_.find(display_id);
+  if (state_it == display_states_.end()) {
+    return;
+  }
+
+  DisplayFrameState& state = state_it->second;
+  state.view_ids.erase(view_id);
+  state.rendered_views_this_frame.erase(view_id);
+
+  // If this removal unblocks an in-progress frame waiting on the removed view,
+  // end the frame now so it does not stall.
+  if (state.frame_in_progress &&
+      state.rendered_views_this_frame == state.view_ids) {
+    EndFrameForDisplay(state);
+  }
+}
+
+void Animator::RequestFrameForDisplay(int64_t display_id,
+                                      bool regenerate_layer_trees) {
   // Only proceed if the display has been explicitly registered.
   if (display_states_.find(display_id) == display_states_.end()) {
     return;
@@ -475,11 +589,24 @@ void Animator::RequestFrameForDisplay(int64_t display_id) {
     return;
   }
 
-  if (state->frame_scheduled || state->frame_in_progress) {
+  if (state->frame_scheduled) {
+    state->pending_regenerate_layer_trees =
+        state->pending_regenerate_layer_trees || regenerate_layer_trees;
+    return;
+  }
+
+  // Latch frame requests that arrive while this display is currently building
+  // a frame. We cannot schedule an additional vsync callback yet, but we also
+  // must not drop the request (animations call scheduleFrame() during build).
+  if (state->frame_in_progress) {
+    state->frame_scheduled = true;
+    state->pending_regenerate_layer_trees =
+        state->pending_regenerate_layer_trees || regenerate_layer_trees;
     return;
   }
 
   state->frame_scheduled = true;
+  state->pending_regenerate_layer_trees = regenerate_layer_trees;
   const auto display_id_str = std::to_string(display_id);
   TRACE_EVENT1("flutter", "Animator::RequestFrameForDisplay", "display_id",
                display_id_str.c_str());
@@ -509,6 +636,8 @@ void Animator::OnDisplayVsync(int64_t display_id,
   }
 
   state->frame_scheduled = false;
+  state->frame_regenerate_layer_trees = state->pending_regenerate_layer_trees;
+  state->pending_regenerate_layer_trees = false;
   state->frame_timings_recorder = std::move(recorder);
 
   BeginFrameForDisplay(*state);
@@ -520,6 +649,24 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
                display_id_str.c_str());
 
   FML_DCHECK(!state.frame_in_progress);
+  state.total_frames++;
+
+  if (!state.frame_regenerate_layer_trees) {
+    if (!has_rendered_ || pending_configure_serial_ != 0) {
+      state.frame_regenerate_layer_trees = true;
+    } else {
+      state.consecutive_empty_frames = 0;
+      if (!state.frame_timings_recorder) {
+        state.frame_timings_recorder = std::make_unique<FrameTimingsRecorder>();
+        const fml::TimePoint now = fml::TimePoint::Now();
+        state.frame_timings_recorder->RecordVsync(now, now);
+      }
+      DrawLastLayerTreesForDisplay(std::move(state.frame_timings_recorder));
+      state.frame_timings_recorder = nullptr;
+      state.frame_regenerate_layer_trees = true;
+      return;
+    }
+  }
 
   // Acquire a pipeline production slot from this display's own pipeline.
   FML_DCHECK(state.pipeline);
@@ -527,15 +674,41 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
     state.producer_continuation = state.pipeline->Produce();
     if (!state.producer_continuation) {
       TRACE_EVENT0("flutter", "PipelineFull");
+      state.pipeline_full_count++;
+      // Throttled diagnostic: log at 1, 100, 1000, then every 5000.
+      if (state.pipeline_full_count == 1 ||
+          state.pipeline_full_count == 100 ||
+          state.pipeline_full_count == 1000 ||
+          (state.pipeline_full_count > 1000 &&
+           state.pipeline_full_count % 5000 == 0)) {
+        FML_LOG(IMPORTANT)
+            << "Animator: PipelineFull for display " << state.display_id
+            << " (count=" << state.pipeline_full_count
+            << ", total_frames=" << state.total_frames
+            << ", inflight=" << state.pipeline->GetInflightCount()
+            << ", render_calls_total=" << render_calls_total_ << ")";
+      }
       // Re-request so we try again on the next vsync.
       RequestFrameForDisplay(state.display_id);
       return;
     }
+    // Pipeline acquired; reset full counter.
+    state.pipeline_full_count = 0;
   }
 
   state.frame_in_progress = true;
   state.rendered_views_this_frame.clear();
   has_rendered_ = true;
+
+  // If layer trees for this display were already produced by a prior
+  // callback (for example, legacy global draw fallback rendering all views),
+  // mark them as rendered so this display can consume the newest cached task
+  // even when no new Render() arrives in this specific begin-frame callback.
+  for (int64_t view_id : state.view_ids) {
+    if (layer_trees_tasks_.find(view_id) != layer_trees_tasks_.end()) {
+      state.rendered_views_this_frame.insert(view_id);
+    }
+  }
 
   if (!state.frame_timings_recorder) {
     state.frame_timings_recorder = std::make_unique<FrameTimingsRecorder>();
@@ -582,6 +755,8 @@ void Animator::EndFrameForDisplay(DisplayFrameState& state) {
   }
 
   if (!display_layer_trees.empty()) {
+    state.consecutive_empty_frames = 0;
+
     state.frame_timings_recorder->RecordBuildEnd(fml::TimePoint::Now());
 
     delegate_.OnAnimatorUpdateLatestFrameTargetTime(
@@ -596,17 +771,40 @@ void Animator::EndFrameForDisplay(DisplayFrameState& state) {
     } else {
       delegate_.OnAnimatorDraw(state.pipeline);
     }
+  } else {
+    state.empty_frames++;
+    state.consecutive_empty_frames++;
+    // Emit a periodic warning when a display stalls for many consecutive
+    // empty frames (no Render() calls from Dart for this display's views).
+    if (state.consecutive_empty_frames == 10 ||
+        (state.consecutive_empty_frames > 10 &&
+         state.consecutive_empty_frames % 1000 == 0)) {
+      FML_LOG(IMPORTANT)
+          << "Animator: display " << state.display_id << " has "
+          << state.consecutive_empty_frames
+          << " consecutive empty frames (total_frames=" << state.total_frames
+          << ", empty_frames=" << state.empty_frames
+          << ", render_calls_total=" << render_calls_total_
+          << ", layer_trees_tasks_size=" << layer_trees_tasks_.size()
+          << ", view_ids=" << state.view_ids.size()
+          << ", rendered_this_frame=" << state.rendered_views_this_frame.size()
+          << ")";
+    }
   }
 
   // Reset frame state.
+  const bool request_next_frame = state.frame_scheduled;
   state.frame_in_progress = false;
   state.rendered_views_this_frame.clear();
   state.frame_timings_recorder = nullptr;
+  state.frame_regenerate_layer_trees = true;
 
-  // Immediately request the next vsync for this display so continuous
-  // animations keep rendering at the display's refresh rate.
-  if (!state.view_ids.empty()) {
-    RequestFrameForDisplay(state.display_id);
+  // Only request the next frame if a new request was latched while this
+  // display frame was in progress.
+  if (request_next_frame) {
+    state.frame_scheduled = false;
+    RequestFrameForDisplay(state.display_id,
+                           state.pending_regenerate_layer_trees);
   }
 }
 

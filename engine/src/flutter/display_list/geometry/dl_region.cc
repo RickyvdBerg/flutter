@@ -305,6 +305,7 @@ void DlRegion::setRects(const std::vector<DlIRect>& unsorted_rects) {
     while (next_rect < count) {
       const DlIRect* r = rects[next_rect];
       if (r->IsEmpty()) {
+        next_rect++;
         continue;
       }
       if (r->GetTop() > cur_y) {

@@ -11,6 +11,7 @@
 #include <mutex>
 #include <set>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 
 #include "flutter/assets/directory_asset_bundle.h"
@@ -502,6 +503,12 @@ class Shell final : public PlatformView::Delegate,
   // atomic.
   std::atomic<bool> needs_report_timings_{false};
 
+  // Runtime diagnostics watchdog lifecycle state.
+  std::shared_ptr<std::atomic<bool>> raster_watchdog_running_;
+  std::shared_ptr<std::atomic<uint64_t>> raster_heartbeat_seq_;
+  std::shared_ptr<std::atomic<int32_t>> raster_thread_tid_;
+  std::thread raster_watchdog_thread_;
+
   // Whether there's a task scheduled to report the timings to Dart through
   // ui.PlatformDispatcher.onReportTimings.
   bool frame_timings_report_scheduled_ = false;
@@ -582,6 +589,8 @@ class Shell final : public PlatformView::Delegate,
              std::unique_ptr<Engine> engine,
              std::unique_ptr<Rasterizer> rasterizer,
              const std::shared_ptr<ShellIOManager>& io_manager);
+
+  void StopRasterDiagnosticsWatchdog();
 
   void ReportTimings();
 

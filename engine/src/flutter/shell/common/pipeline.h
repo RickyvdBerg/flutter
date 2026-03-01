@@ -135,6 +135,10 @@ class Pipeline {
 
   bool IsValid() const { return empty_.IsValid() && available_.IsValid(); }
 
+  /// Returns the number of items currently in flight (produced but not yet
+  /// consumed).  Used for stall diagnostics.
+  int GetInflightCount() const { return inflight_.load(); }
+
   /// Creates a `ProducerContinuation` that a producer can use to add a
   /// resource to the queue.
   ///

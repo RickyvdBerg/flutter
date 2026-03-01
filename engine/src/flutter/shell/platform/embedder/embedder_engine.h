@@ -102,8 +102,12 @@ class EmbedderEngine {
   bool PostTaskOnEngineManagedNativeThreads(
       const std::function<void(FlutterNativeThreadType)>& closure) const;
 
-  bool ScheduleFrame();
-  bool ScheduleFrameForDisplay(int64_t display_id);
+  bool ScheduleFrame(bool regenerate_layer_trees);
+  bool ScheduleFrame() { return ScheduleFrame(true); }
+  bool ScheduleFrameForDisplay(int64_t display_id, bool regenerate_layer_trees);
+  bool ScheduleFrameForDisplay(int64_t display_id) {
+    return ScheduleFrameForDisplay(display_id, true);
+  }
 
   Shell& GetShell();
 

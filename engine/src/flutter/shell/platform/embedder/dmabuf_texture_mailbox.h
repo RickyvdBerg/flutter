@@ -5,21 +5,44 @@
 #ifndef FLUTTER_SHELL_PLATFORM_EMBEDDER_DMABUF_TEXTURE_MAILBOX_H_
 #define FLUTTER_SHELL_PLATFORM_EMBEDDER_DMABUF_TEXTURE_MAILBOX_H_
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
 #include "flutter/display_list/geometry/dl_geometry_types.h"
+#include "flutter/fml/file.h"
 #include "impeller/renderer/backend/vulkan/linux/dmabuf_texture_source_vk.h"
 
 namespace flutter {
 
+/// @brief      A mailbox-owned DMA-BUF descriptor with RAII fd ownership.
+struct OwnedDmabufDescriptor {
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint32_t drm_format = 0;
+  uint64_t drm_modifier = 0;
+  uint32_t num_planes = 0;
+  std::array<fml::UniqueFD, 4> plane_fds;
+  std::array<uint32_t, 4> offsets = {};
+  std::array<uint32_t, 4> strides = {};
+  fml::UniqueFD acquire_fence_fd;
+};
+
 /// @brief      A single entry in the DMA-BUF texture mailbox.
 struct DmabufMailboxEntry {
+  // Populated after raster-side materialization.
   std::shared_ptr<impeller::DmabufTextureSourceVK> texture_source;
+
+  // Populated by PublishDmabufTexture; consumed to create texture_source.
+  std::optional<OwnedDmabufDescriptor> pending_descriptor;
+
+  // Fired when an entry is dropped without being consumed, or chained onto
+  // texture_source so it runs when the source is finally destroyed.
   std::function<void()> release_callback;
   std::vector<DlIRect> damage_rects;  // empty = full frame
 };

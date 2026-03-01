@@ -822,9 +822,17 @@ class Engine final : public RuntimeDelegate, PointerDataDispatcher::Delegate {
   ///             This call only wakes the specified display's frame pipeline.
   ///             If the display is unknown, the request is ignored.
   ///
-  /// @param[in]  display_id  The display whose frame pipeline should run.
+  /// @param[in]  display_id               The display whose frame pipeline
+  ///                                      should run.
+  /// @param[in]  regenerate_layer_trees   Whether the frame should rebuild the
+  ///                                      layer trees or reuse the latest
+  ///                                      cached scene.
   ///
-  void ScheduleFrameForDisplay(int64_t display_id);
+  void ScheduleFrameForDisplay(int64_t display_id,
+                               bool regenerate_layer_trees);
+  void ScheduleFrameForDisplay(int64_t display_id) {
+    ScheduleFrameForDisplay(display_id, true);
+  }
 
   //----------------------------------------------------------------------------
   /// @brief      Notifies the engine that the embedder has sent it a message.

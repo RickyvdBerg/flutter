@@ -5,6 +5,7 @@
 #ifndef FLUTTER_LIB_UI_WINDOW_PLATFORM_CONFIGURATION_H_
 #define FLUTTER_LIB_UI_WINDOW_PLATFORM_CONFIGURATION_H_
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <set>
@@ -596,6 +597,8 @@ class PlatformConfiguration final {
  private:
   FML_FRIEND_TEST(testing::PlatformConfigurationTest, BeginFrameMonotonic);
 
+  void LogContainerHighWatermarks(const char* reason);
+
   PlatformConfigurationClient* client_;
   tonic::DartPersistentValue on_error_;
   tonic::DartPersistentValue add_view_;
@@ -616,6 +619,7 @@ class PlatformConfiguration final {
   tonic::DartPersistentValue begin_frame_;
   tonic::DartPersistentValue begin_frame_for_display_;
   tonic::DartPersistentValue draw_frame_;
+  tonic::DartPersistentValue draw_frame_for_display_;
   tonic::DartPersistentValue report_timings_;
 
   uint64_t last_frame_number_ = 0;
@@ -629,6 +633,10 @@ class PlatformConfiguration final {
   int next_response_id_ = 1;
   std::unordered_map<int, fml::RefPtr<PlatformMessageResponse>>
       pending_responses_;
+
+  size_t metrics_high_water_ = 0;
+  size_t last_microseconds_per_display_high_water_ = 0;
+  size_t pending_responses_high_water_ = 0;
 };
 
 //----------------------------------------------------------------------------

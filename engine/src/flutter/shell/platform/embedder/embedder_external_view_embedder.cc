@@ -16,6 +16,20 @@ namespace flutter {
 
 static const auto kRootViewIdentifier = EmbedderExternalView::ViewIdentifier{};
 
+namespace {
+
+constexpr int64_t kShellLayerBreakToUnderlay = -901001;
+constexpr int64_t kShellLayerBreakToOverlay = -901002;
+constexpr int64_t kShellLayerBreakToPerWindowChrome = -901003;
+
+bool IsShellLayerBoundaryMarker(int64_t view_id) {
+  return view_id == kShellLayerBreakToUnderlay ||
+         view_id == kShellLayerBreakToOverlay ||
+         view_id == kShellLayerBreakToPerWindowChrome;
+}
+
+}  // namespace
+
 EmbedderExternalViewEmbedder::EmbedderExternalViewEmbedder(
     bool avoid_backing_store_cache,
     const CreateRenderTargetCallback& create_render_target_callback,
@@ -49,6 +63,7 @@ DlMatrix EmbedderExternalViewEmbedder::GetSurfaceTransformation() const {
 void EmbedderExternalViewEmbedder::Reset() {
   pending_views_.clear();
   composition_order_.clear();
+  has_shell_layer_boundary_markers_ = false;
 }
 
 // |ExternalViewEmbedder|
@@ -76,10 +91,18 @@ void EmbedderExternalViewEmbedder::PrepareFlutterView(
   composition_order_.push_back(kRootViewIdentifier);
 }
 
+bool EmbedderExternalViewEmbedder::SupportsMetadataFrameDamageForCurrentFrame()
+    const {
+  return !has_shell_layer_boundary_markers_;
+}
+
 // |ExternalViewEmbedder|
 void EmbedderExternalViewEmbedder::PrerollCompositeEmbeddedView(
     int64_t view_id,
     std::unique_ptr<EmbeddedViewParams> params) {
+  if (IsShellLayerBoundaryMarker(view_id)) {
+    has_shell_layer_boundary_markers_ = true;
+  }
   auto vid = EmbedderExternalView::ViewIdentifier(view_id);
   FML_DCHECK(pending_views_.count(vid) == 0);
 

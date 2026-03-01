@@ -54,6 +54,9 @@ class EmbedderLayers {
   std::vector<FlutterLayer> presented_layers_;
   uint64_t presentation_time_;
   std::optional<DlRegion> frame_damage_;
+  FlutterShellLayerRole next_backing_store_role_ =
+      kFlutterShellLayerRoleBackground;
+  bool saw_shell_layer_boundary_ = false;
 
   FML_DISALLOW_COPY_AND_ASSIGN(EmbedderLayers);
 };

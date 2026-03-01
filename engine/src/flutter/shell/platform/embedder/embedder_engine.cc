@@ -8,8 +8,10 @@
 #include "flutter/shell/platform/embedder/vsync_waiter_embedder.h"
 
 #ifdef __linux__
-#include "impeller/renderer/backend/vulkan/context_vk.h"
-#include "impeller/renderer/backend/vulkan/linux/dmabuf_texture_source_vk.h"
+#include <set>
+#include <unistd.h>
+
+#include "flutter/fml/file.h"
 #endif
 
 namespace flutter {
@@ -25,6 +27,65 @@ struct ShellArgs {
         on_create_platform_view(std::move(p_on_create_platform_view)),
         on_create_rasterizer(std::move(p_on_create_rasterizer)) {}
 };
+
+#ifdef __linux__
+namespace {
+
+bool DuplicateDmabufDescriptorForMailbox(const impeller::DmabufDescriptor& desc,
+                                         OwnedDmabufDescriptor* out) {
+  if (!out || desc.num_planes == 0 || desc.num_planes > 4) {
+    return false;
+  }
+
+  OwnedDmabufDescriptor owned_desc;
+  owned_desc.width = desc.width;
+  owned_desc.height = desc.height;
+  owned_desc.drm_format = desc.drm_format;
+  owned_desc.drm_modifier = desc.drm_modifier;
+  owned_desc.num_planes = desc.num_planes;
+
+  for (uint32_t i = 0; i < desc.num_planes; i++) {
+    if (desc.planes[i].fd < 0) {
+      return false;
+    }
+    auto duplicated_fd = fml::Duplicate(desc.planes[i].fd);
+    if (!duplicated_fd.is_valid()) {
+      return false;
+    }
+    owned_desc.plane_fds[i] = std::move(duplicated_fd);
+    owned_desc.offsets[i] = desc.planes[i].offset;
+    owned_desc.strides[i] = desc.planes[i].stride;
+  }
+
+  if (desc.acquire_fence_fd >= 0) {
+    auto acquire_fence_fd = fml::Duplicate(desc.acquire_fence_fd);
+    if (!acquire_fence_fd.is_valid()) {
+      return false;
+    }
+    owned_desc.acquire_fence_fd = std::move(acquire_fence_fd);
+  }
+
+  *out = std::move(owned_desc);
+  return true;
+}
+
+void CloseTransferredDmabufFds(const impeller::DmabufDescriptor& desc) {
+  std::set<int> transferred_fds;
+  for (uint32_t i = 0; i < desc.num_planes && i < 4; i++) {
+    if (desc.planes[i].fd >= 0) {
+      transferred_fds.insert(desc.planes[i].fd);
+    }
+  }
+  if (desc.acquire_fence_fd >= 0) {
+    transferred_fds.insert(desc.acquire_fence_fd);
+  }
+  for (int fd : transferred_fds) {
+    close(fd);
+  }
+}
+
+}  // namespace
+#endif  // __linux__
 
 EmbedderEngine::EmbedderEngine(
     std::unique_ptr<EmbedderThreadHost> thread_host,
@@ -374,30 +435,43 @@ bool EmbedderEngine::PostTaskOnEngineManagedNativeThreads(
   return true;
 }
 
-bool EmbedderEngine::ScheduleFrame() {
+bool EmbedderEngine::ScheduleFrame(bool regenerate_layer_trees) {
   if (!IsValid()) {
     return false;
   }
 
-  auto platform_view = shell_->GetPlatformView();
-  if (!platform_view) {
-    return false;
+  auto ui_runner = shell_->GetTaskRunners().GetUITaskRunner();
+  auto schedule_frame = [engine = shell_->GetEngine(), regenerate_layer_trees]() {
+    if (engine) {
+      engine->ScheduleFrame(regenerate_layer_trees);
+    }
+  };
+  if (ui_runner->RunsTasksOnCurrentThread()) {
+    schedule_frame();
+  } else {
+    ui_runner->PostTask(std::move(schedule_frame));
   }
-  platform_view->ScheduleFrame();
   return true;
 }
 
-bool EmbedderEngine::ScheduleFrameForDisplay(int64_t display_id) {
+bool EmbedderEngine::ScheduleFrameForDisplay(int64_t display_id,
+                                             bool regenerate_layer_trees) {
   if (!IsValid()) {
     return false;
   }
 
-  shell_->GetTaskRunners().GetUITaskRunner()->PostTask(
-      [engine = shell_->GetEngine(), display_id]() {
-        if (engine) {
-          engine->ScheduleFrameForDisplay(display_id);
-        }
-      });
+  auto ui_runner = shell_->GetTaskRunners().GetUITaskRunner();
+  auto schedule_frame = [engine = shell_->GetEngine(), display_id,
+                         regenerate_layer_trees]() {
+    if (engine) {
+      engine->ScheduleFrameForDisplay(display_id, regenerate_layer_trees);
+    }
+  };
+  if (ui_runner->RunsTasksOnCurrentThread()) {
+    schedule_frame();
+  } else {
+    ui_runner->PostTask(std::move(schedule_frame));
+  }
   return true;
 }
 
@@ -421,29 +495,63 @@ bool EmbedderEngine::PublishDmabufTexture(
     return false;
   }
 
-  auto context = platform_view->GetImpellerContext();
-  if (!context) {
+  if (!platform_view->GetImpellerContext()) {
     return false;
   }
 
-  auto texture_source =
-      std::make_shared<impeller::DmabufTextureSourceVK>(context, desc);
-  if (!texture_source->IsValid()) {
+  OwnedDmabufDescriptor owned_desc;
+  if (!DuplicateDmabufDescriptorForMailbox(desc, &owned_desc)) {
     return false;
   }
-  texture_source->SetReleaseCallback(std::move(release_callback));
 
   DmabufMailboxEntry entry;
-  entry.texture_source = std::move(texture_source);
+  entry.pending_descriptor = std::move(owned_desc);
+  entry.release_callback = std::move(release_callback);
   for (const auto& r : desc.damage_rects) {
     entry.damage_rects.push_back(
         DlIRect::MakeLTRB(r.left, r.top, r.right, r.bottom));
   }
 
   dmabuf_mailbox_->Store(texture_id, std::move(entry));
+  CloseTransferredDmabufFds(desc);
 
-  // Poke the compositor to trigger a re-render.
-  MarkTextureFrameAvailable(texture_id);
+  // Mark only the texture's dirty flag on the raster thread.
+  //
+  // The embedder is responsible for frame pacing (often per-display), so we do
+  // not invoke PlatformView::MarkTextureFrameAvailable here because that helper
+  // also schedules a global engine frame. We still need deterministic ordering:
+  // the texture dirty bit must be visible before the embedder's subsequent
+  // display-scoped ScheduleFrame call, otherwise the engine can produce a
+  // zero-damage frame that appears "stuck" until an unrelated event (for
+  // example cursor motion) triggers another frame.
+  auto raster_runner = shell_->GetTaskRunners().GetRasterTaskRunner();
+  auto mark_texture = [rasterizer = shell_->GetRasterizer(), texture_id]() {
+    if (!rasterizer) {
+      return;
+    }
+    auto registry = rasterizer->GetTextureRegistry();
+    if (!registry) {
+      return;
+    }
+    auto texture = registry->GetTexture(texture_id);
+    if (!texture) {
+      return;
+    }
+    texture->MarkNewFrameAvailable();
+  };
+
+  if (raster_runner->RunsTasksOnCurrentThread()) {
+    mark_texture();
+    return true;
+  }
+
+  fml::AutoResetWaitableEvent mark_complete;
+  raster_runner->PostTask([mark_texture = std::move(mark_texture),
+                           &mark_complete]() mutable {
+    mark_texture();
+    mark_complete.Signal();
+  });
+  mark_complete.Wait();
   return true;
 }
 

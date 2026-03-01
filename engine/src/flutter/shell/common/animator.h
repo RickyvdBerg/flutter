@@ -5,6 +5,7 @@
 #ifndef FLUTTER_SHELL_COMMON_ANIMATOR_H_
 #define FLUTTER_SHELL_COMMON_ANIMATOR_H_
 
+#include <cstddef>
 #include <deque>
 #include <set>
 #include <unordered_map>
@@ -110,9 +111,24 @@ class Animator final {
     std::set<int64_t> rendered_views_this_frame;
     bool frame_scheduled = false;
     bool frame_in_progress = false;
+    // Latch the strongest mode for the next scheduled vsync. A full rebuild
+    // dominates texture-only requests so scene mutations are never dropped.
+    bool pending_regenerate_layer_trees = false;
+    // Tracks whether the current display frame must rebuild layer trees.
+    bool frame_regenerate_layer_trees = true;
     std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder;
     FramePipeline::ProducerContinuation producer_continuation;
+    // All displays share the engine's single raster pipeline. Display-scoped
+    // scheduling stays independent, but downstream raster backpressure and
+    // resubmission logic remain coherent because frame items drain through one
+    // queue.
     std::shared_ptr<FramePipeline> pipeline;
+
+    // Frame-flow stall diagnostics.
+    uint64_t total_frames = 0;
+    uint64_t empty_frames = 0;
+    uint64_t consecutive_empty_frames = 0;
+    uint64_t pipeline_full_count = 0;
   };
 
   /// Registers a display with the given refresh rate.
@@ -128,8 +144,12 @@ class Animator final {
   /// Assigns a view to a display for per-display vsync rendering.
   void SetViewDisplay(int64_t view_id, int64_t display_id);
 
+  /// Removes a view from all per-display tracking state.
+  void RemoveView(int64_t view_id);
+
   /// Requests a frame for a specific display on its next vsync.
-  void RequestFrameForDisplay(int64_t display_id);
+  void RequestFrameForDisplay(int64_t display_id,
+                              bool regenerate_layer_trees = true);
 
   /// Returns true if per-display mode is active.
   bool IsPerDisplayMode() const;
@@ -184,6 +204,8 @@ class Animator final {
 
   void DrawLastLayerTrees(
       std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder);
+  void DrawLastLayerTreesForDisplay(
+      std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder);
 
   void AwaitVSync();
 
@@ -211,6 +233,9 @@ class Animator final {
 
   /// Returns the display ID for the given view.
   int64_t GetDisplayForView(int64_t view_id) const;
+
+  size_t TotalTrackedDisplayViews() const;
+  void LogStateHighWatermarks(const char* reason);
 
   Delegate& delegate_;
   TaskRunners task_runners_;
@@ -251,6 +276,14 @@ class Animator final {
 
   /// Fallback state used when no displays are registered.
   DisplayFrameState default_state_;
+
+  // Total Render() calls across all views (frame-flow stall diagnostic).
+  uint64_t render_calls_total_ = 0;
+  size_t layer_trees_tasks_high_water_ = 0;
+  size_t display_states_high_water_ = 0;
+  size_t view_to_display_high_water_ = 0;
+  size_t default_view_ids_high_water_ = 0;
+  size_t display_view_ids_high_water_ = 0;
 
   fml::TaskRunnerAffineWeakPtrFactory<Animator> weak_factory_;
 

@@ -2169,6 +2169,20 @@ typedef enum {
   kFlutterLayerContentTypePlatformView,
 } FlutterLayerContentType;
 
+/// The logical compositor role of Flutter-produced content.
+///
+/// In the current transitional contract, the primary Flutter backing store is
+/// explicitly treated as the shell overlay layer instead of an implicit
+/// "everything layer".
+typedef enum {
+  kFlutterShellLayerRoleUnknown,
+  kFlutterShellLayerRoleBackground,
+  kFlutterShellLayerRoleUnderlay,
+  kFlutterShellLayerRoleOverlay,
+  kFlutterShellLayerRolePerWindowChrome,
+  kFlutterShellLayerRoleEmbeddedContent,
+} FlutterShellLayerRole;
+
 /// A region represented by a collection of non-overlapping rectangles.
 typedef struct {
   /// The size of this struct. Must be sizeof(FlutterRegion).
@@ -2227,6 +2241,10 @@ typedef struct {
   // Time in nanoseconds at which this frame is scheduled to be presented. 0 if
   // not known. See FlutterEngineGetCurrentTime().
   uint64_t presentation_time;
+
+  /// The logical compositor role of this layer.
+  FlutterShellLayerRole shell_layer_role;
+
 } FlutterLayer;
 
 typedef struct {
@@ -2245,6 +2263,32 @@ typedef struct {
 
   /// The |FlutterCompositor.user_data|.
   void* user_data;
+
+  /// The logical role of the shell frame bundle carried by this present
+  /// callback.
+  FlutterShellLayerRole shell_layer_role;
+
+  /// The number of Flutter backing-store layers in this callback.
+  size_t shell_backing_store_count;
+
+  /// A monotonic present-callback sequence number for this shell bundle.
+  ///
+  /// This preserves callback ordering only. Exact shell-layer generations
+  /// remain layer-local (for example, the transitional single-layer path uses
+  /// the backing-store generation as the exact shell generation).
+  uint64_t shell_present_sequence;
+
+  /// The explicit shell background layer, or NULL if absent.
+  const FlutterLayer* shell_background_layer;
+
+  /// The explicit shell underlay layer, or NULL if absent.
+  const FlutterLayer* shell_underlay_layer;
+
+  /// The explicit shell overlay layer, or NULL if absent.
+  const FlutterLayer* shell_overlay_layer;
+
+  /// The explicit per-window chrome layer, or NULL if absent.
+  const FlutterLayer* shell_per_window_chrome_layer;
 } FlutterPresentViewInfo;
 
 typedef bool (*FlutterBackingStoreCreateCallback)(
@@ -3791,7 +3835,25 @@ FlutterEngineResult FlutterEngineNotifyDisplayUpdate(
     size_t display_count);
 
 //------------------------------------------------------------------------------
+/// @brief      Intent for compositor-driven shell frame requests.
+///
+///             This is the narrow ABI seam between the compositor and the
+///             engine. All request kinds are compositor-directed; the engine
+///             only executes the requested shell work.
+typedef enum {
+  /// Build a fresh shell scene and rasterize it.
+  kFlutterEngineFrameRequestKindRebuild = 0,
+  /// Reuse the latest shell scene and rasterize it again.
+  kFlutterEngineFrameRequestKindReuseLatest = 1,
+  /// Reuse the latest shell scene after shell-owned texture invalidation.
+  kFlutterEngineFrameRequestKindTextureOnlyInvalidation = 2,
+} FlutterEngineFrameRequestKind;
+
+//------------------------------------------------------------------------------
 /// @brief      Schedule a new frame to redraw the content.
+///
+///             Equivalent to `FlutterEngineScheduleFrameWithRequestKind` with
+///             `kFlutterEngineFrameRequestKindRebuild`.
 ///
 /// @param[in]  engine     A running engine instance.
 ///
@@ -3802,11 +3864,28 @@ FlutterEngineResult FlutterEngineScheduleFrame(FLUTTER_API_SYMBOL(FlutterEngine)
                                                    engine);
 
 //------------------------------------------------------------------------------
+/// @brief      Schedule a new frame with an explicit compositor-directed
+///             request kind.
+///
+/// @param[in]  engine        A running engine instance.
+/// @param[in]  request_kind  The shell work the compositor wants the engine to
+///                           perform.
+///
+/// @return the result of the call made to the engine.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineScheduleFrameWithRequestKind(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineFrameRequestKind request_kind);
+
+//------------------------------------------------------------------------------
 /// @brief      Schedule a new frame for a specific display.
 ///
 ///             This is the per-display variant of
 ///             `FlutterEngineScheduleFrame` and only wakes the specified
-///             display pipeline in per-display mode.
+///             display pipeline in per-display mode. This is equivalent to
+///             `FlutterEngineScheduleFrameForDisplayWithRequestKind` with
+///             `kFlutterEngineFrameRequestKindRebuild`.
 ///
 /// @param[in]  engine      A running engine instance.
 /// @param[in]  display_id  Display to schedule.
@@ -3817,6 +3896,23 @@ FLUTTER_EXPORT
 FlutterEngineResult FlutterEngineScheduleFrameForDisplay(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     FlutterEngineDisplayId display_id);
+
+//------------------------------------------------------------------------------
+/// @brief      Schedule a new frame for a specific display with an explicit
+///             compositor-directed request kind.
+///
+/// @param[in]  engine        A running engine instance.
+/// @param[in]  display_id    Display to schedule.
+/// @param[in]  request_kind  The shell work the compositor wants the engine to
+///                           perform.
+///
+/// @return the result of the call made to the engine.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineScheduleFrameForDisplayWithRequestKind(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id,
+    FlutterEngineFrameRequestKind request_kind);
 
 //------------------------------------------------------------------------------
 /// @brief      Schedule a callback to be called after the next frame is drawn.
@@ -3969,9 +4065,17 @@ typedef FlutterEngineResult (*FlutterEngineNotifyDisplayUpdateFnPtr)(
     size_t display_count);
 typedef FlutterEngineResult (*FlutterEngineScheduleFrameFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine);
+typedef FlutterEngineResult (*FlutterEngineScheduleFrameWithRequestKindFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineFrameRequestKind request_kind);
 typedef FlutterEngineResult (*FlutterEngineScheduleFrameForDisplayFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     FlutterEngineDisplayId display_id);
+typedef FlutterEngineResult (
+    *FlutterEngineScheduleFrameForDisplayWithRequestKindFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id,
+    FlutterEngineFrameRequestKind request_kind);
 typedef FlutterEngineResult (*FlutterEngineSetNextFrameCallbackFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     VoidCallback callback,
@@ -4050,6 +4154,9 @@ typedef struct {
   FlutterEnginePublishDmabufTextureFnPtr PublishDmabufTexture;
 #endif  // __linux__
   FlutterEngineScheduleFrameForDisplayFnPtr ScheduleFrameForDisplay;
+  FlutterEngineScheduleFrameWithRequestKindFnPtr ScheduleFrameWithRequestKind;
+  FlutterEngineScheduleFrameForDisplayWithRequestKindFnPtr
+      ScheduleFrameForDisplayWithRequestKind;
 } FlutterEngineProcTable;
 
 //------------------------------------------------------------------------------

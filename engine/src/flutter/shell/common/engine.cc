@@ -344,7 +344,9 @@ void Engine::AddView(int64_t view_id,
 }
 
 bool Engine::RemoveView(int64_t view_id) {
-  return runtime_controller_->RemoveView(view_id);
+  const bool removed = runtime_controller_->RemoveView(view_id);
+  animator_->RemoveView(view_id);
+  return removed;
 }
 
 bool Engine::SendViewFocusEvent(const ViewFocusEvent& event) {
@@ -691,6 +693,18 @@ const std::weak_ptr<VsyncWaiter> Engine::GetVsyncWaiter() const {
 
 void Engine::SetDisplays(const std::vector<DisplayData>& displays) {
   runtime_controller_->SetDisplays(displays);
+
+  std::set<int64_t> incoming_display_ids;
+  incoming_display_ids.clear();
+  for (const auto& display : displays) {
+    incoming_display_ids.insert(display.id);
+  }
+
+  animator_->RemoveStaleDisplays(incoming_display_ids);
+  for (const auto& display : displays) {
+    animator_->AddDisplay(display.id, display.refresh_rate);
+  }
+
   ScheduleFrame();
 }
 
@@ -698,8 +712,13 @@ void Engine::SetViewDisplay(int64_t view_id, int64_t display_id) {
   animator_->SetViewDisplay(view_id, display_id);
 }
 
-void Engine::ScheduleFrameForDisplay(int64_t display_id) {
-  animator_->RequestFrameForDisplay(display_id);
+void Engine::ScheduleFrameForDisplay(int64_t display_id,
+                                     bool regenerate_layer_trees) {
+  if (animator_->IsPerDisplayMode()) {
+    animator_->RequestFrameForDisplay(display_id, regenerate_layer_trees);
+  } else {
+    ScheduleFrame(regenerate_layer_trees);
+  }
 }
 
 void Engine::ShutdownPlatformIsolates() {

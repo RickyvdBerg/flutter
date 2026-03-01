@@ -94,6 +94,9 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
                           double device_pixel_ratio) override;
 
   // |ExternalViewEmbedder|
+  bool SupportsMetadataFrameDamageForCurrentFrame() const override;
+
+  // |ExternalViewEmbedder|
   void PrerollCompositeEmbeddedView(
       int64_t view_id,
       std::unique_ptr<EmbeddedViewParams> params) override;
@@ -119,6 +122,7 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
   DlISize pending_frame_size_;
   double pending_device_pixel_ratio_ = 1.0;
   DlMatrix pending_surface_transformation_;
+  bool has_shell_layer_boundary_markers_ = false;
   EmbedderExternalView::PendingViews pending_views_;
   std::vector<EmbedderExternalView::ViewIdentifier> composition_order_;
   // The render target caches for views. Each key is a view ID.

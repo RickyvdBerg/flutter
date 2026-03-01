@@ -801,26 +801,24 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
         // clears the backing store, so partial repaint would cause visual
         // corruption.
         //
-        // Keep computing frame damage for metadata/reporting, but do not
-        // short-circuit the frame here. Compositor-authoritative embedders
-        // rely on the present callback path to keep generation and frame-flow
-        // state consistent.
-        auto existing_damage = frame->framebuffer_info().existing_damage;
-        if (existing_damage.has_value()) {
-          FrameDamage zero_check;
-          zero_check.SetPreviousLayerTree(GetLastLayerTree(view_id));
-          zero_check.AddAdditionalDamage(existing_damage.value());
-          zero_check.SetClipAlignment(
-              frame->framebuffer_info().horizontal_clip_alignment,
-              frame->framebuffer_info().vertical_clip_alignment);
-
-          auto* gr_context = surface_->GetContext();
-          zero_check.ComputeClipRects(
-              layer_tree, surface_->EnableRasterCache(), !gr_context,
-              compositor_context_->texture_registry().get());
-
-          eve_frame_damage = zero_check.GetFrameDamage();
-        }
+        // DEBUG-ONLY CRASH TRIAGE: do not commit this as the final fix.
+        //
+        // The metadata-only damage diff below runs before the current frame has
+        // been prerolled. At this point the embedder has not yet seen any
+        // PlatformViewLayer instances for the frame, so
+        // SupportsMetadataFrameDamageForCurrentFrame() cannot reliably detect
+        // shell layer break markers or other platform-view content.
+        //
+        // That makes this path unsafe for our embedder: FrameDamage diffs trees
+        // that can contain PlatformViewLayer nodes, but PlatformViewLayer does
+        // not participate in PaintRegion tracking. When the diff sees an
+        // unmatched old platform-view subtree, ContainerLayer::DiffChildren()
+        // can pass an invalid PaintRegion into DiffContext::AddDamage(), which
+        // is the exact SEGV path seen in the latest KMS/DRM crash.
+        //
+        // Skip metadata-only diffing for all external-view frames while
+        // debugging the startup crash. The frame still renders as a full
+        // repaint, which is what this path already relied on for correctness.
         // Non-zero damage: leave damage as nullptr so Raster() does a full
         // repaint (PaintLayerTreeImpeller treats empty clip_bounds as
         // "no clip = full repaint").

@@ -8,6 +8,35 @@
 
 namespace flutter {
 
+namespace {
+
+constexpr FlutterPlatformViewIdentifier kShellLayerBreakToUnderlay = -901001;
+constexpr FlutterPlatformViewIdentifier kShellLayerBreakToOverlay = -901002;
+constexpr FlutterPlatformViewIdentifier kShellLayerBreakToPerWindowChrome =
+    -901003;
+
+bool ApplyShellLayerBoundaryMarker(FlutterPlatformViewIdentifier identifier,
+                                   FlutterShellLayerRole* role) {
+  if (role == nullptr) {
+    return false;
+  }
+  switch (identifier) {
+    case kShellLayerBreakToUnderlay:
+      *role = kFlutterShellLayerRoleUnderlay;
+      return true;
+    case kShellLayerBreakToOverlay:
+      *role = kFlutterShellLayerRoleOverlay;
+      return true;
+    case kShellLayerBreakToPerWindowChrome:
+      *role = kFlutterShellLayerRolePerWindowChrome;
+      return true;
+    default:
+      return false;
+  }
+}
+
+}  // namespace
+
 EmbedderLayers::EmbedderLayers(DlISize frame_size,
                                double device_pixel_ratio,
                                DlMatrix root_surface_transformation,
@@ -93,6 +122,7 @@ void EmbedderLayers::PushBackingStoreLayer(
   regions_referenced_.push_back(std::move(paint_region));
   layer.backing_store_present_info = present_info.get();
   layer.presentation_time = presentation_time_;
+  layer.shell_layer_role = next_backing_store_role_;
 
   present_info_referenced_.push_back(std::move(present_info));
   presented_layers_.push_back(layer);
@@ -164,6 +194,11 @@ static std::unique_ptr<FlutterPlatformViewMutation> ConvertMutation(
 void EmbedderLayers::PushPlatformViewLayer(
     FlutterPlatformViewIdentifier identifier,
     const EmbeddedViewParams& params) {
+  if (ApplyShellLayerBoundaryMarker(identifier, &next_backing_store_role_)) {
+    saw_shell_layer_boundary_ = true;
+    return;
+  }
+
   {
     FlutterPlatformView view = {};
     view.struct_size = sizeof(FlutterPlatformView);
@@ -268,6 +303,7 @@ void EmbedderLayers::PushPlatformViewLayer(
   layer.size.height = transformed_layer_bounds.GetHeight();
 
   layer.presentation_time = presentation_time_;
+  layer.shell_layer_role = kFlutterShellLayerRoleEmbeddedContent;
 
   presented_layers_.push_back(layer);
 }
@@ -275,9 +311,18 @@ void EmbedderLayers::PushPlatformViewLayer(
 void EmbedderLayers::InvokePresentCallback(
     FlutterViewId view_id,
     const PresentCallback& callback) const {
+  auto presented_layers = presented_layers_;
+  if (!saw_shell_layer_boundary_) {
+    for (auto& layer : presented_layers) {
+      if (layer.type == kFlutterLayerContentTypeBackingStore) {
+        layer.shell_layer_role = kFlutterShellLayerRoleOverlay;
+      }
+    }
+  }
+
   std::vector<const FlutterLayer*> presented_layers_pointers;
-  presented_layers_pointers.reserve(presented_layers_.size());
-  for (const auto& layer : presented_layers_) {
+  presented_layers_pointers.reserve(presented_layers.size());
+  for (const auto& layer : presented_layers) {
     presented_layers_pointers.push_back(&layer);
   }
   callback(view_id, presented_layers_pointers);

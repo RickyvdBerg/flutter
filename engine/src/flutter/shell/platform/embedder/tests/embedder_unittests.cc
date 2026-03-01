@@ -24,6 +24,7 @@
 #include "flutter/fml/time/time_delta.h"
 #include "flutter/fml/time/time_point.h"
 #include "flutter/runtime/dart_vm.h"
+#include "flutter/shell/platform/embedder/dmabuf_texture_mailbox.h"
 #include "flutter/shell/platform/embedder/tests/embedder_assertions.h"
 #include "flutter/shell/platform/embedder/tests/embedder_config_builder.h"
 #include "flutter/shell/platform/embedder/tests/embedder_test.h"
@@ -55,6 +56,74 @@ namespace flutter {
 namespace testing {
 
 using EmbedderTest = testing::EmbedderTest;
+
+#ifdef __linux__
+
+TEST(EmbedderDmabufMailboxTest, ReplacingUnconsumedEntryFiresReleaseCallback) {
+  DmabufTextureMailbox mailbox;
+  int release_count = 0;
+
+  DmabufMailboxEntry first;
+  first.release_callback = [&]() { release_count++; };
+  mailbox.Store(/*texture_id=*/1, std::move(first));
+
+  DmabufMailboxEntry second;
+  mailbox.Store(/*texture_id=*/1, std::move(second));
+
+  EXPECT_EQ(release_count, 1);
+}
+
+TEST(EmbedderDmabufMailboxTest, RemoveFiresReleaseCallback) {
+  DmabufTextureMailbox mailbox;
+  int release_count = 0;
+
+  DmabufMailboxEntry entry;
+  entry.release_callback = [&]() { release_count++; };
+  mailbox.Store(/*texture_id=*/11, std::move(entry));
+
+  mailbox.Remove(/*texture_id=*/11);
+
+  EXPECT_EQ(release_count, 1);
+}
+
+TEST(EmbedderDmabufMailboxTest, ConsumeTransfersPendingDescriptor) {
+  DmabufTextureMailbox mailbox;
+
+  DmabufMailboxEntry entry;
+  OwnedDmabufDescriptor descriptor;
+  descriptor.width = 1920;
+  descriptor.height = 1080;
+  descriptor.drm_format = 0x34325258;  // DRM_FORMAT_XRGB8888
+  descriptor.num_planes = 1;
+  descriptor.offsets[0] = 64;
+  descriptor.strides[0] = 7680;
+  entry.pending_descriptor = std::move(descriptor);
+
+  mailbox.Store(/*texture_id=*/7, std::move(entry));
+  auto consumed = mailbox.Consume(/*texture_id=*/7);
+  ASSERT_NE(consumed, nullptr);
+  ASSERT_TRUE(consumed->pending_descriptor.has_value());
+  EXPECT_EQ(consumed->pending_descriptor->width, 1920u);
+  EXPECT_EQ(consumed->pending_descriptor->height, 1080u);
+  EXPECT_EQ(consumed->pending_descriptor->drm_format, 0x34325258u);
+  EXPECT_EQ(consumed->pending_descriptor->num_planes, 1u);
+  EXPECT_EQ(consumed->pending_descriptor->offsets[0], 64u);
+  EXPECT_EQ(consumed->pending_descriptor->strides[0], 7680u);
+}
+
+TEST(EmbedderDmabufMailboxTest, DestructorFiresOutstandingReleaseCallbacks) {
+  int release_count = 0;
+  {
+    DmabufTextureMailbox mailbox;
+    DmabufMailboxEntry entry;
+    entry.release_callback = [&]() { release_count++; };
+    mailbox.Store(/*texture_id=*/42, std::move(entry));
+  }
+
+  EXPECT_EQ(release_count, 1);
+}
+
+#endif  // __linux__
 
 TEST(EmbedderTestNoFixture, MustNotRunWithInvalidArgs) {
   EmbedderTestContextSoftware context;

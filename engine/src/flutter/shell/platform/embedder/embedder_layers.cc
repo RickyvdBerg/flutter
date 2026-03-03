@@ -6,6 +6,8 @@
 
 #include <algorithm>
 
+#include "flutter/fml/logging.h"
+
 namespace flutter {
 
 namespace {
@@ -33,6 +35,22 @@ bool ApplyShellLayerBoundaryMarker(FlutterPlatformViewIdentifier identifier,
     default:
       return false;
   }
+}
+
+void ApplyShellSourceRect(FlutterLayer* layer,
+                          const FlutterShellSourceInfo* source) {
+  if (layer == nullptr || source == nullptr) {
+    return;
+  }
+  const auto width = source->source_rect.right - source->source_rect.left;
+  const auto height = source->source_rect.bottom - source->source_rect.top;
+  if (width <= 0.0 || height <= 0.0) {
+    return;
+  }
+  layer->offset.x = source->source_rect.left;
+  layer->offset.y = source->source_rect.top;
+  layer->size.width = width;
+  layer->size.height = height;
 }
 
 }  // namespace
@@ -123,6 +141,8 @@ void EmbedderLayers::PushBackingStoreLayer(
   layer.backing_store_present_info = present_info.get();
   layer.presentation_time = presentation_time_;
   layer.shell_layer_role = next_backing_store_role_;
+  layer.shell_visual_identifier = 0;
+  layer.shell_visual_generation = 0;
 
   present_info_referenced_.push_back(std::move(present_info));
   presented_layers_.push_back(layer);
@@ -304,13 +324,19 @@ void EmbedderLayers::PushPlatformViewLayer(
 
   layer.presentation_time = presentation_time_;
   layer.shell_layer_role = kFlutterShellLayerRoleEmbeddedContent;
+  layer.shell_visual_identifier = 0;
+  layer.shell_visual_generation = 0;
 
   presented_layers_.push_back(layer);
 }
 
 void EmbedderLayers::InvokePresentCallback(
     FlutterViewId view_id,
-    const PresentCallback& callback) const {
+    std::shared_ptr<const EmbedderLayers> retained_layers,
+    const GetShellVisualsCallback* get_shell_visuals_callback,
+    const GetShellSourcesCallback* get_shell_sources_callback,
+    const PresentCallback& callback) {
+  (void)retained_layers;
   auto presented_layers = presented_layers_;
   if (!saw_shell_layer_boundary_) {
     for (auto& layer : presented_layers) {
@@ -320,9 +346,186 @@ void EmbedderLayers::InvokePresentCallback(
     }
   }
 
+  auto is_anonymous_per_window_chrome = [](const FlutterLayer& layer) {
+    return layer.type == kFlutterLayerContentTypeBackingStore &&
+           layer.shell_layer_role == kFlutterShellLayerRolePerWindowChrome &&
+           layer.shell_visual_identifier == 0;
+  };
+  auto is_anonymous_overlay = [](const FlutterLayer& layer) {
+    return layer.type == kFlutterLayerContentTypeBackingStore &&
+           layer.shell_layer_role == kFlutterShellLayerRoleOverlay &&
+           layer.shell_visual_identifier == 0;
+  };
+
+  std::vector<FlutterShellSourceInfo> shell_sources;
+  if (get_shell_sources_callback != nullptr && *get_shell_sources_callback) {
+    shell_sources = (*get_shell_sources_callback)(view_id);
+  }
+
+  auto source_for_role = [&shell_sources](FlutterShellLayerRole role)
+      -> const FlutterShellSourceInfo* {
+    for (const auto& source : shell_sources) {
+      const auto width = source.source_rect.right - source.source_rect.left;
+      const auto height = source.source_rect.bottom - source.source_rect.top;
+      if (source.shell_layer_role == role && width > 0.0 && height > 0.0) {
+        return &source;
+      }
+    }
+    return nullptr;
+  };
+
+  const auto* overlay_source =
+      source_for_role(kFlutterShellLayerRoleOverlay);
+  const auto* per_window_chrome_source =
+      source_for_role(kFlutterShellLayerRolePerWindowChrome);
+
+  for (auto& layer : presented_layers) {
+    if (is_anonymous_overlay(layer) && overlay_source != nullptr) {
+      ApplyShellSourceRect(&layer, overlay_source);
+    }
+    if (is_anonymous_per_window_chrome(layer) &&
+        per_window_chrome_source != nullptr) {
+      ApplyShellSourceRect(&layer, per_window_chrome_source);
+    }
+  }
+
+  if (get_shell_visuals_callback != nullptr && *get_shell_visuals_callback) {
+    const auto shell_visuals = (*get_shell_visuals_callback)(view_id);
+    if (!shell_visuals.empty()) {
+      std::vector<const FlutterShellVisualInfo*> overlay_visuals;
+      std::vector<const FlutterShellVisualInfo*> per_window_chrome_visuals;
+      overlay_visuals.reserve(shell_visuals.size());
+      per_window_chrome_visuals.reserve(shell_visuals.size());
+      for (const auto& visual : shell_visuals) {
+        const auto width = visual.source_rect.right - visual.source_rect.left;
+        const auto height = visual.source_rect.bottom - visual.source_rect.top;
+        if (visual.shell_visual_identifier == 0 || width <= 0.0 || height <= 0.0) {
+          continue;
+        }
+        if (visual.shell_layer_role == kFlutterShellLayerRoleOverlay) {
+          overlay_visuals.push_back(&visual);
+        } else if (visual.shell_layer_role == kFlutterShellLayerRolePerWindowChrome) {
+          per_window_chrome_visuals.push_back(&visual);
+        }
+      }
+
+      size_t next_overlay_visual_index = 0;
+      size_t matched_overlay_visuals = 0;
+      size_t overlay_layers_without_visual = 0;
+      size_t matched_visuals = 0;
+
+      std::vector<FlutterLayer> resolved_layers;
+      resolved_layers.reserve(presented_layers.size());
+      std::optional<FlutterLayer> overlay_source_layer;
+      std::optional<FlutterLayer> per_window_chrome_source_layer;
+      for (auto layer : presented_layers) {
+        if (is_anonymous_overlay(layer)) {
+          if (!overlay_source_layer.has_value()) {
+            overlay_source_layer = layer;
+          }
+          if (next_overlay_visual_index < overlay_visuals.size()) {
+            const auto* visual = overlay_visuals[next_overlay_visual_index++];
+            const auto width = visual->source_rect.right - visual->source_rect.left;
+            const auto height = visual->source_rect.bottom - visual->source_rect.top;
+            layer.offset.x = visual->source_rect.left;
+            layer.offset.y = visual->source_rect.top;
+            layer.size.width = width;
+            layer.size.height = height;
+            layer.shell_visual_identifier = visual->shell_visual_identifier;
+            layer.shell_visual_generation = visual->shell_visual_generation;
+            matched_overlay_visuals++;
+          } else {
+            overlay_layers_without_visual++;
+          }
+          resolved_layers.push_back(layer);
+          continue;
+        }
+
+        if (is_anonymous_per_window_chrome(layer)) {
+          if (!per_window_chrome_source_layer.has_value()) {
+            per_window_chrome_source_layer = layer;
+          }
+          continue;
+        }
+
+        if (!is_anonymous_per_window_chrome(layer)) {
+          resolved_layers.push_back(layer);
+        }
+      }
+
+      const size_t unused_overlay_visuals =
+          overlay_visuals.size() - next_overlay_visual_index;
+      size_t unused_visuals = 0;
+      const bool has_overlay_source = overlay_source != nullptr;
+      const bool has_per_window_chrome_source =
+          per_window_chrome_source != nullptr;
+      if (!per_window_chrome_visuals.empty()) {
+        if (!per_window_chrome_source_layer.has_value()) {
+          unused_visuals = per_window_chrome_visuals.size();
+        } else {
+          const FlutterLayer source_layer = *per_window_chrome_source_layer;
+          for (const auto* visual : per_window_chrome_visuals) {
+            auto layer = source_layer;
+            layer.shell_layer_role = kFlutterShellLayerRolePerWindowChrome;
+            const auto width = visual->source_rect.right - visual->source_rect.left;
+            const auto height = visual->source_rect.bottom - visual->source_rect.top;
+            layer.offset.x = visual->source_rect.left;
+            layer.offset.y = visual->source_rect.top;
+            layer.size.width = width;
+            layer.size.height = height;
+            layer.shell_visual_identifier = visual->shell_visual_identifier;
+            layer.shell_visual_generation = visual->shell_visual_generation;
+            resolved_layers.push_back(layer);
+            matched_visuals++;
+          }
+        }
+      }
+
+      if (!per_window_chrome_visuals.empty() && matched_visuals == 0 &&
+          has_per_window_chrome_source) {
+        FML_LOG(WARNING)
+            << "Shell visuals were provided for view " << view_id
+            << " but no anonymous per-window chrome source layer was available";
+      } else if (unused_visuals > 0) {
+        FML_LOG(WARNING)
+            << "Per-window chrome layer/visual count mismatch for view " << view_id
+            << " (matched=" << matched_visuals
+            << ", source_available="
+            << (per_window_chrome_source_layer.has_value() ? 1 : 0)
+            << ", unused_visuals=" << unused_visuals << ")";
+      }
+      if (!overlay_visuals.empty() && !has_overlay_source) {
+        FML_LOG(WARNING)
+            << "Overlay visuals were provided for view " << view_id
+            << " but no explicit overlay source channel was available";
+      } else if (!overlay_visuals.empty() && matched_overlay_visuals == 0) {
+        FML_LOG(WARNING)
+            << "Overlay visuals were provided for view " << view_id
+            << " but no anonymous overlay layers were available to annotate";
+      } else if (overlay_layers_without_visual > 0 || unused_overlay_visuals > 0) {
+        FML_LOG(WARNING)
+            << "Overlay layer/visual count mismatch for view " << view_id
+            << " (matched=" << matched_overlay_visuals
+            << ", unmatched_overlay_layers=" << overlay_layers_without_visual
+            << ", unused_overlay_visuals=" << unused_overlay_visuals << ")";
+      }
+
+      presented_layers = std::move(resolved_layers);
+    } else {
+      presented_layers.erase(
+          std::remove_if(
+              presented_layers.begin(), presented_layers.end(),
+              is_anonymous_per_window_chrome),
+          presented_layers.end());
+    }
+  }
+
+  retained_layers_dependency_.reset();
+  presented_layers_ = std::move(presented_layers);
+
   std::vector<const FlutterLayer*> presented_layers_pointers;
-  presented_layers_pointers.reserve(presented_layers.size());
-  for (const auto& layer : presented_layers) {
+  presented_layers_pointers.reserve(presented_layers_.size());
+  for (const auto& layer : presented_layers_) {
     presented_layers_pointers.push_back(&layer);
   }
   callback(view_id, presented_layers_pointers);

@@ -18,6 +18,11 @@ namespace flutter {
 
 class EmbedderLayers {
  public:
+  using GetShellVisualsCallback =
+      std::function<std::vector<FlutterShellVisualInfo>(FlutterViewId view_id)>;
+  using GetShellSourcesCallback =
+      std::function<std::vector<FlutterShellSourceInfo>(FlutterViewId view_id)>;
+
   EmbedderLayers(DlISize frame_size,
                  double device_pixel_ratio,
                  DlMatrix root_surface_transformation,
@@ -36,7 +41,10 @@ class EmbedderLayers {
       std::function<bool(FlutterViewId view_id,
                          const std::vector<const FlutterLayer*>& layers)>;
   void InvokePresentCallback(FlutterViewId view_id,
-                             const PresentCallback& callback) const;
+                             std::shared_ptr<const EmbedderLayers> retained_layers,
+                             const GetShellVisualsCallback* get_shell_visuals_callback,
+                             const GetShellSourcesCallback* get_shell_sources_callback,
+                             const PresentCallback& callback);
 
  private:
   const DlISize frame_size_;
@@ -52,6 +60,7 @@ class EmbedderLayers {
   std::vector<std::unique_ptr<FlutterRegion>> regions_referenced_;
   std::vector<std::unique_ptr<std::vector<FlutterRect>>> rects_referenced_;
   std::vector<FlutterLayer> presented_layers_;
+  std::shared_ptr<const EmbedderLayers> retained_layers_dependency_;
   uint64_t presentation_time_;
   std::optional<DlRegion> frame_damage_;
   FlutterShellLayerRole next_backing_store_role_ =

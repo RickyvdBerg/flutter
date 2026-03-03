@@ -2245,7 +2245,69 @@ typedef struct {
   /// The logical compositor role of this layer.
   FlutterShellLayerRole shell_layer_role;
 
+  /// Stable compositor-provided identifier for shell visuals carried by this
+  /// layer. Zero when the layer has no explicit visual identity.
+  uint64_t shell_visual_identifier;
+
+  /// Compositor-provided visual generation for shell visuals carried by this
+  /// layer. Zero when no explicit visual generation is attached.
+  uint64_t shell_visual_generation;
+
 } FlutterLayer;
+
+typedef struct {
+  /// This size of this struct. Must be sizeof(FlutterShellVisualInfo).
+  size_t struct_size;
+
+  /// The logical shell role represented by this visual.
+  FlutterShellLayerRole shell_layer_role;
+
+  /// Stable compositor-provided identifier for this shell visual.
+  uint64_t shell_visual_identifier;
+
+  /// Monotonic compositor-provided visual generation for this shell visual.
+  uint64_t shell_visual_generation;
+
+  /// The exact visual rect inside the shell backing store. For per-window
+  /// chrome this is the titlebar source rect that should be cropped out of the
+  /// backing store before compositor placement.
+  FlutterRect source_rect;
+} FlutterShellVisualInfo;
+
+typedef struct {
+  /// This size of this struct. Must be sizeof(FlutterShellVisuals).
+  size_t struct_size;
+
+  /// Borrowed array of shell visual descriptors valid for the duration of the
+  /// callback.
+  const FlutterShellVisualInfo* shell_visuals;
+
+  /// The count of `shell_visuals`.
+  size_t shell_visuals_count;
+} FlutterShellVisuals;
+
+typedef struct {
+  /// This size of this struct. Must be sizeof(FlutterShellSourceInfo).
+  size_t struct_size;
+
+  /// The logical shell role for this source channel.
+  FlutterShellLayerRole shell_layer_role;
+
+  /// The exact source rect for this channel inside the backing store.
+  FlutterRect source_rect;
+} FlutterShellSourceInfo;
+
+typedef struct {
+  /// This size of this struct. Must be sizeof(FlutterShellSources).
+  size_t struct_size;
+
+  /// Borrowed array of shell source descriptors valid for the duration of the
+  /// callback.
+  const FlutterShellSourceInfo* shell_sources;
+
+  /// The count of `shell_sources`.
+  size_t shell_sources_count;
+} FlutterShellSources;
 
 typedef struct {
   /// The size of this struct.
@@ -2310,6 +2372,22 @@ typedef bool (*FlutterLayersPresentCallback)(const FlutterLayer** layers,
 typedef bool (*FlutterPresentViewCallback)(
     const FlutterPresentViewInfo* /* present info */);
 
+/// Callback invoked by the engine to query explicit shell visual metadata for a
+/// specific view. The returned pointers only need to remain valid until the
+/// callback returns.
+typedef bool (*FlutterShellVisualsCallback)(
+    FlutterViewId view_id,
+    FlutterShellVisuals* shell_visuals_out,
+    void* user_data);
+
+/// Callback invoked by the engine to query explicit shell source-channel
+/// metadata for a specific view. The returned pointers only need to remain
+/// valid until the callback returns.
+typedef bool (*FlutterShellSourcesCallback)(
+    FlutterViewId view_id,
+    FlutterShellSources* shell_sources_out,
+    void* user_data);
+
 typedef struct {
   /// This size of this struct. Must be sizeof(FlutterCompositor).
   size_t struct_size;
@@ -2366,6 +2444,18 @@ typedef struct {
   ///
   /// The callback should return true if the operation was successful.
   FlutterPresentViewCallback present_view_callback;
+
+  /// Callback invoked by the engine to query explicit shell visual metadata for
+  /// a specific view. This is used to expose structured shell visuals such as
+  /// per-window chrome without smuggling identity through platform-view marker
+  /// IDs.
+  FlutterShellVisualsCallback get_shell_visuals_callback;
+
+  /// Callback invoked by the engine to query explicit shell source-channel
+  /// metadata for a specific view. This makes the source-channel contract
+  /// explicit even when the current raster path still uses internal split
+  /// markers to produce separate backing stores.
+  FlutterShellSourcesCallback get_shell_sources_callback;
 } FlutterCompositor;
 
 typedef struct {

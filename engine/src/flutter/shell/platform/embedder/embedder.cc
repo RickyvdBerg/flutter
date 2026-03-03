@@ -1746,6 +1746,10 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
       SAFE_ACCESS(compositor, present_layers_callback, nullptr);
   auto c_present_view_callback =
       SAFE_ACCESS(compositor, present_view_callback, nullptr);
+  auto c_get_shell_visuals_callback =
+      SAFE_ACCESS(compositor, get_shell_visuals_callback, nullptr);
+  auto c_get_shell_sources_callback =
+      SAFE_ACCESS(compositor, get_shell_sources_callback, nullptr);
   bool avoid_backing_store_cache =
       SAFE_ACCESS(compositor, avoid_backing_store_cache, false);
 
@@ -1776,6 +1780,49 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
           };
 
   flutter::EmbedderExternalViewEmbedder::PresentCallback present_callback;
+  flutter::EmbedderExternalViewEmbedder::GetShellVisualsCallback
+      get_shell_visuals_callback;
+  flutter::EmbedderExternalViewEmbedder::GetShellSourcesCallback
+      get_shell_sources_callback;
+  if (c_get_shell_visuals_callback) {
+    get_shell_visuals_callback =
+        [c_get_shell_visuals_callback, user_data = compositor->user_data](
+            FlutterViewId view_id) {
+          FlutterShellVisuals shell_visuals = {
+              .struct_size = sizeof(FlutterShellVisuals),
+              .shell_visuals = nullptr,
+              .shell_visuals_count = 0,
+          };
+          if (!c_get_shell_visuals_callback(view_id, &shell_visuals, user_data) ||
+              shell_visuals.shell_visuals == nullptr ||
+              shell_visuals.shell_visuals_count == 0) {
+            return std::vector<FlutterShellVisualInfo>{};
+          }
+          return std::vector<FlutterShellVisualInfo>(
+              shell_visuals.shell_visuals,
+              shell_visuals.shell_visuals + shell_visuals.shell_visuals_count);
+        };
+  }
+  if (c_get_shell_sources_callback) {
+    get_shell_sources_callback =
+        [c_get_shell_sources_callback, user_data = compositor->user_data](
+            FlutterViewId view_id) {
+          FlutterShellSources shell_sources = {
+              .struct_size = sizeof(FlutterShellSources),
+              .shell_sources = nullptr,
+              .shell_sources_count = 0,
+          };
+          if (!c_get_shell_sources_callback(view_id, &shell_sources, user_data) ||
+              shell_sources.shell_sources == nullptr ||
+              shell_sources.shell_sources_count == 0) {
+            return std::vector<FlutterShellSourceInfo>{};
+          }
+          return std::vector<FlutterShellSourceInfo>(
+              shell_sources.shell_sources,
+              shell_sources.shell_sources + shell_sources.shell_sources_count);
+        };
+  }
+
   if (c_present_callback) {
     present_callback = [c_present_callback, user_data = compositor->user_data](
                            FlutterViewId view_id, const auto& layers) {
@@ -1862,7 +1909,7 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
 
   return std::make_unique<flutter::EmbedderExternalViewEmbedder>(
       avoid_backing_store_cache, create_render_target_callback,
-      present_callback);
+      present_callback, get_shell_visuals_callback, get_shell_sources_callback);
 }
 
 // Translates embedder metrics to engine metrics, or returns a string on error.

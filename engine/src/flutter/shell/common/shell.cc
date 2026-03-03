@@ -2065,7 +2065,9 @@ bool Shell::WaitForResizeFrame(uint64_t configure_serial, uint32_t timeout_ms) {
         return true;
       }
     }
-    fml::MessageLoop::GetCurrent().RunExpiredTasksNow();
+    if (fml::MessageLoop::IsInitializedForCurrentThread()) {
+      fml::MessageLoop::GetCurrent().RunExpiredTasksNow();
+    }
   }
 
   std::scoped_lock lock(resize_sync_mutex_);

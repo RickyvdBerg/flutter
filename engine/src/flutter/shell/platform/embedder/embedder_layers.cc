@@ -389,6 +389,27 @@ void EmbedderLayers::InvokePresentCallback(
     }
   }
 
+  // Diagnostic: count anonymous per-window chrome layers BEFORE fan-out.
+  {
+    size_t anon_chrome_count = 0;
+    for (const auto& layer : presented_layers) {
+      if (is_anonymous_per_window_chrome(layer)) {
+        anon_chrome_count++;
+      }
+    }
+    static int64_t diag_last_view_id = -1;
+    static size_t diag_last_anon_chrome = SIZE_MAX;
+    if (anon_chrome_count != diag_last_anon_chrome || view_id != diag_last_view_id) {
+      FML_LOG(IMPORTANT)
+          << "EmbedderLayers fan-out input: view=" << view_id
+          << " anon_chrome_layers=" << anon_chrome_count
+          << " total_layers=" << presented_layers.size()
+          << " saw_boundary=" << saw_shell_layer_boundary_;
+      diag_last_view_id = view_id;
+      diag_last_anon_chrome = anon_chrome_count;
+    }
+  }
+
   if (get_shell_visuals_callback != nullptr && *get_shell_visuals_callback) {
     const auto shell_visuals = (*get_shell_visuals_callback)(view_id);
     if (!shell_visuals.empty()) {
@@ -483,16 +504,21 @@ void EmbedderLayers::InvokePresentCallback(
 
       if (!per_window_chrome_visuals.empty() && matched_visuals == 0 &&
           has_per_window_chrome_source) {
-        FML_LOG(WARNING)
+        FML_LOG(IMPORTANT)
             << "Shell visuals were provided for view " << view_id
-            << " but no anonymous per-window chrome source layer was available";
+            << " but no anonymous per-window chrome source layer was available"
+            << " (chrome_visuals=" << per_window_chrome_visuals.size()
+            << ", input_layers=" << presented_layers.size()
+            << ", saw_boundary=" << saw_shell_layer_boundary_ << ")";
       } else if (unused_visuals > 0) {
-        FML_LOG(WARNING)
+        FML_LOG(IMPORTANT)
             << "Per-window chrome layer/visual count mismatch for view " << view_id
             << " (matched=" << matched_visuals
             << ", source_available="
             << (per_window_chrome_source_layer.has_value() ? 1 : 0)
-            << ", unused_visuals=" << unused_visuals << ")";
+            << ", unused_visuals=" << unused_visuals
+            << ", input_layers=" << presented_layers.size()
+            << ", saw_boundary=" << saw_shell_layer_boundary_ << ")";
       }
       if (!overlay_visuals.empty() && !has_overlay_source) {
         FML_LOG(WARNING)
@@ -517,6 +543,59 @@ void EmbedderLayers::InvokePresentCallback(
               presented_layers.begin(), presented_layers.end(),
               is_anonymous_per_window_chrome),
           presented_layers.end());
+    }
+  }
+
+  // Diagnostic: count layers by role in the final presented set.
+  {
+    size_t bs_total = 0, bs_background = 0, bs_underlay = 0, bs_overlay = 0;
+    size_t bs_per_window_chrome = 0, bs_embedded = 0, bs_unknown = 0;
+    size_t platform_view_total = 0;
+    for (const auto& layer : presented_layers) {
+      if (layer.type == kFlutterLayerContentTypeBackingStore) {
+        bs_total++;
+        switch (layer.shell_layer_role) {
+          case kFlutterShellLayerRoleBackground: bs_background++; break;
+          case kFlutterShellLayerRoleUnderlay: bs_underlay++; break;
+          case kFlutterShellLayerRoleOverlay: bs_overlay++; break;
+          case kFlutterShellLayerRolePerWindowChrome: bs_per_window_chrome++; break;
+          case kFlutterShellLayerRoleEmbeddedContent: bs_embedded++; break;
+          default: bs_unknown++; break;
+        }
+      } else if (layer.type == kFlutterLayerContentTypePlatformView) {
+        platform_view_total++;
+      }
+    }
+    // Build a comma-separated list of chrome visual identifiers.
+    std::string chrome_ids;
+    for (const auto& layer : presented_layers) {
+      if (layer.type == kFlutterLayerContentTypeBackingStore &&
+          layer.shell_layer_role == kFlutterShellLayerRolePerWindowChrome &&
+          layer.shell_visual_identifier != 0) {
+        if (!chrome_ids.empty()) chrome_ids += ",";
+        chrome_ids += std::to_string(layer.shell_visual_identifier);
+      }
+    }
+    static int64_t last_view_id = -1;
+    static size_t last_chrome_count = SIZE_MAX;
+    static std::string last_chrome_ids;
+    if (bs_per_window_chrome != last_chrome_count ||
+        chrome_ids != last_chrome_ids ||
+        view_id != last_view_id) {
+      FML_LOG(IMPORTANT)
+          << "EmbedderLayers::InvokePresentCallback view=" << view_id
+          << " saw_boundary=" << saw_shell_layer_boundary_
+          << " bs_total=" << bs_total
+          << " bg=" << bs_background
+          << " underlay=" << bs_underlay
+          << " overlay=" << bs_overlay
+          << " chrome=" << bs_per_window_chrome
+          << " embedded=" << bs_embedded
+          << " pv=" << platform_view_total
+          << " chrome_ids=[" << chrome_ids << "]";
+      last_view_id = view_id;
+      last_chrome_count = bs_per_window_chrome;
+      last_chrome_ids = chrome_ids;
     }
   }
 

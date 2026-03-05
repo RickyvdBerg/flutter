@@ -4,16 +4,38 @@
 
 #include "impeller/renderer/backend/vulkan/fence_waiter_vk.h"
 
+#include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <utility>
 
 #include "flutter/fml/cpu_affinity.h"
+#include "flutter/fml/logging.h"
 #include "flutter/fml/thread.h"
 #include "flutter/fml/trace_event.h"
 #include "impeller/base/validation.h"
 
 namespace impeller {
+
+namespace {
+
+std::atomic<uint64_t> g_wait_set_added_total = 0u;
+std::atomic<uint64_t> g_wait_set_signaled_total = 0u;
+std::atomic<uint64_t> g_wait_set_timeout_total = 0u;
+std::atomic<uint64_t> g_wait_set_error_total = 0u;
+std::atomic<uint64_t> g_wait_set_high_water = 0u;
+
+constexpr uint64_t kFenceWaiterLogEverySignals = 1024u;
+
+void UpdateMax(std::atomic<uint64_t>& target, uint64_t value) {
+  uint64_t observed = target.load(std::memory_order_relaxed);
+  while (value > observed &&
+         !target.compare_exchange_weak(observed, value,
+                                       std::memory_order_relaxed)) {
+  }
+}
+
+}  // namespace
 
 class WaitSetEntry {
  public:
@@ -73,7 +95,9 @@ bool FenceWaiterVK::AddFence(vk::UniqueFence fence,
       return false;
     }
     wait_set_.emplace_back(WaitSetEntry::Create(std::move(fence), callback));
+    UpdateMax(g_wait_set_high_water, static_cast<uint64_t>(wait_set_.size()));
   }
+  g_wait_set_added_total.fetch_add(1u, std::memory_order_relaxed);
   wait_set_cv_.notify_one();
   return true;
 }
@@ -160,7 +184,10 @@ bool FenceWaiterVK::Wait() {
       /*pFences=*/fences.data(),
       /*waitAll=*/false,
       /*timeout=*/std::chrono::nanoseconds{100ms}.count());
-  if (!(result == vk::Result::eSuccess || result == vk::Result::eTimeout)) {
+  if (result == vk::Result::eTimeout) {
+    g_wait_set_timeout_total.fetch_add(1u, std::memory_order_relaxed);
+  } else if (result != vk::Result::eSuccess) {
+    g_wait_set_error_total.fetch_add(1u, std::memory_order_relaxed);
     VALIDATION_LOG << "Fence waiter encountered an unexpected error. Tearing "
                       "down the waiter thread.";
     return false;
@@ -180,6 +207,7 @@ bool FenceWaiterVK::Wait() {
   // the mutex is unlocked before calling the destructors of the erased
   // entries. These might touch allocators.
   WaitSet erased_entries;
+  size_t pending_after_erase = 0u;
   {
     static constexpr auto is_signalled = [](const auto& entry) {
       return entry->IsSignalled();
@@ -192,11 +220,30 @@ bool FenceWaiterVK::Wait() {
     wait_set_.erase(
         std::remove_if(wait_set_.begin(), wait_set_.end(), is_signalled),
         wait_set_.end());
+    pending_after_erase = wait_set_.size();
   }
 
   {
     TRACE_EVENT0("impeller", "ClearSignaledFences");
     // Erase the erased entries which will invoke callbacks.
+    if (!erased_entries.empty()) {
+      const auto signaled_count = static_cast<uint64_t>(erased_entries.size());
+      const auto signaled_total =
+          g_wait_set_signaled_total.fetch_add(signaled_count, std::memory_order_relaxed) +
+          signaled_count;
+      if ((signaled_total % kFenceWaiterLogEverySignals) < signaled_count) {
+        FML_LOG(INFO) << "Impeller Vulkan fence waiter diagnostics: added_total="
+                      << g_wait_set_added_total.load(std::memory_order_relaxed)
+                      << " signaled_total=" << signaled_total
+                      << " timeout_total="
+                      << g_wait_set_timeout_total.load(std::memory_order_relaxed)
+                      << " error_total="
+                      << g_wait_set_error_total.load(std::memory_order_relaxed)
+                      << " high_water="
+                      << g_wait_set_high_water.load(std::memory_order_relaxed)
+                      << " pending=" << pending_after_erase;
+      }
+    }
     erased_entries.clear();  // Bit redundant because of scope but hey.
   }
 

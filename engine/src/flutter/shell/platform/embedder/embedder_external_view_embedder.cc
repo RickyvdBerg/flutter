@@ -20,10 +20,12 @@ namespace {
 
 constexpr int64_t kShellLayerBreakToUnderlay = -901001;
 constexpr int64_t kShellLayerBreakToOverlay = -901002;
+constexpr int64_t kShellLayerBreakToPerWindowChrome = -901003;
 
 bool IsShellLayerBoundaryMarker(int64_t view_id) {
   return view_id == kShellLayerBreakToUnderlay ||
-         view_id == kShellLayerBreakToOverlay;
+         view_id == kShellLayerBreakToOverlay ||
+         view_id == kShellLayerBreakToPerWindowChrome;
 }
 
 }  // namespace

@@ -1940,6 +1940,13 @@ typedef struct {
   ///
   /// @attention     This field is required.
   FlutterTaskRunnerPostTaskCallback post_task_callback;
+  /// May be called from any thread while the engine is blocked waiting for an
+  /// immediate frame and needs the embedder to make queued engine tasks on this
+  /// runner progress synchronously. Embedders with custom task runners can
+  /// implement this to drain only the tasks already posted by the engine.
+  ///
+  /// @attention     This field is optional.
+  VoidCallback drain_tasks_now_callback;
   /// A unique identifier for the task runner. If multiple task runners service
   /// tasks on the same thread, their identifiers must match.
   size_t identifier;

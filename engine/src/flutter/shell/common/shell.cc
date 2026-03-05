@@ -56,6 +56,7 @@ static void RasterStallSigHandler(int /*sig*/) {
 #include "flutter/runtime/dart_vm.h"
 #include "flutter/shell/common/base64.h"
 #include "flutter/shell/common/engine.h"
+#include "flutter/shell/platform/embedder/embedder_task_runner.h"
 #include "flutter/shell/common/skia_event_tracer_impl.h"
 #include "flutter/shell/common/switches.h"
 #include "flutter/shell/common/vsync_waiter.h"
@@ -1909,6 +1910,8 @@ bool Shell::WaitForResizeFrame(uint64_t configure_serial, uint32_t timeout_ms) {
     }
     if (fml::MessageLoop::IsInitializedForCurrentThread()) {
       fml::MessageLoop::GetCurrent().RunExpiredTasksNow();
+    } else {
+      EmbedderTaskRunner::DrainTasksNowFor(task_runners_.GetPlatformTaskRunner());
     }
   }
 

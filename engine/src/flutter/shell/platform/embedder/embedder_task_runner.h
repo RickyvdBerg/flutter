@@ -7,6 +7,7 @@
 
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "flutter/fml/macros.h"
 #include "flutter/fml/task_runner.h"
@@ -39,6 +40,13 @@ class EmbedderTaskRunner final : public fml::TaskRunner {
     /// thread.
     ///
     std::function<bool(void)> runs_task_on_current_thread_callback;
+
+    //--------------------------------------------------------------------------
+    /// Allows the embedder to synchronously drain engine-posted tasks that are
+    /// already queued on this task runner. This is used by synchronous render
+    /// APIs that must make forward progress while blocked on the current
+    /// thread. Optional for embedders that use the default FML message loop.
+    std::function<void(void)> drain_tasks_now_callback;
 
     //--------------------------------------------------------------------------
     /// Performs user-designated cleanup on destruction.
@@ -75,6 +83,10 @@ class EmbedderTaskRunner final : public fml::TaskRunner {
 
   bool PostTask(uint64_t baton);
 
+  bool DrainTasksNow();
+
+  static bool DrainTasksNowFor(const fml::RefPtr<fml::TaskRunner>& task_runner);
+
   intptr_t unique_id() const { return unique_id_; }
 
  private:
@@ -87,6 +99,8 @@ class EmbedderTaskRunner final : public fml::TaskRunner {
   intptr_t unique_id_;
 
   static std::atomic_intptr_t next_unique_id_;
+  static std::mutex active_runners_mutex_;
+  static std::unordered_set<const fml::TaskRunner*> active_runners_;
 
   // |fml::TaskRunner|
   void PostTask(const fml::closure& task) override;

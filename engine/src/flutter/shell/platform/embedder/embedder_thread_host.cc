@@ -63,6 +63,11 @@ CreateEmbedderTaskRunner(const FlutterTaskRunnerDescription* description) {
     destruction_callback_c = description->destruction_callback;
   }
 
+  VoidCallback drain_tasks_now_callback_c = nullptr;
+  if (SAFE_ACCESS(description, drain_tasks_now_callback, nullptr) != nullptr) {
+    drain_tasks_now_callback_c = description->drain_tasks_now_callback;
+  }
+
   EmbedderTaskRunner::DispatchTable task_runner_dispatch_table = {
       .post_task_callback = [post_task_callback_c, user_data](
                                 EmbedderTaskRunner* task_runner,
@@ -81,6 +86,12 @@ CreateEmbedderTaskRunner(const FlutterTaskRunnerDescription* description) {
           [runs_task_on_current_thread_callback_c, user_data]() -> bool {
         return runs_task_on_current_thread_callback_c(user_data);
       },
+      .drain_tasks_now_callback =
+          drain_tasks_now_callback_c == nullptr
+              ? std::function<void()>{}
+              : [drain_tasks_now_callback_c, user_data]() {
+                  drain_tasks_now_callback_c(user_data);
+                },
       .destruction_callback =
           [destruction_callback_c, user_data]() {
             destruction_callback_c(user_data);

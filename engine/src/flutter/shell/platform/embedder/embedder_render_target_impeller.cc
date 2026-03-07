@@ -14,12 +14,15 @@ EmbedderRenderTargetImpeller::EmbedderRenderTargetImpeller(
     std::shared_ptr<impeller::AiksContext> aiks_context,
     std::unique_ptr<impeller::RenderTarget> impeller_target,
     fml::closure on_release,
-    fml::closure framebuffer_destruction_callback)
+    fml::closure framebuffer_destruction_callback,
+    TakeRenderCompleteSyncFDCallback take_render_complete_sync_fd_callback)
     : EmbedderRenderTarget(backing_store, std::move(on_release)),
       aiks_context_(std::move(aiks_context)),
       impeller_target_(std::move(impeller_target)),
       framebuffer_destruction_callback_(
-          std::move(framebuffer_destruction_callback)) {
+          std::move(framebuffer_destruction_callback)),
+      take_render_complete_sync_fd_callback_(
+          std::move(take_render_complete_sync_fd_callback)) {
   FML_DCHECK(aiks_context_);
   FML_DCHECK(impeller_target_);
 }
@@ -47,6 +50,13 @@ EmbedderRenderTargetImpeller::GetAiksContext() const {
 DlISize EmbedderRenderTargetImpeller::GetRenderTargetSize() const {
   auto size = impeller_target_->GetRenderTargetSize();
   return DlISize(size);
+}
+
+fml::UniqueFD EmbedderRenderTargetImpeller::TakeRenderCompleteSyncFD() {
+  if (!take_render_complete_sync_fd_callback_) {
+    return {};
+  }
+  return take_render_complete_sync_fd_callback_();
 }
 
 }  // namespace flutter

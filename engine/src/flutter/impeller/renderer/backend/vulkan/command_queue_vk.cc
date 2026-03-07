@@ -11,6 +11,7 @@
 #include "impeller/renderer/backend/vulkan/command_buffer_vk.h"
 #include "impeller/renderer/backend/vulkan/context_vk.h"
 #include "impeller/renderer/backend/vulkan/fence_waiter_vk.h"
+#include "impeller/renderer/backend/vulkan/swapchain/ahb/external_semaphore_vk.h"
 #include "impeller/renderer/backend/vulkan/tracked_objects_vk.h"
 #include "impeller/renderer/command_buffer.h"
 
@@ -74,16 +75,35 @@ fml::Status CommandQueueVK::Submit(
     }
   }
 
+  std::vector<TrackedObjectsVK::PendingSignalSemaphoreVK>
+      signal_semaphores_storage;
+  std::vector<vk::Semaphore> signal_semaphore_handles;
+  for (auto& objs : tracked_objects) {
+    auto signals = objs->CreateSignalSemaphores(context);
+    signal_semaphore_handles.reserve(signal_semaphore_handles.size() +
+                                     signals.size());
+    signal_semaphores_storage.reserve(signal_semaphores_storage.size() +
+                                      signals.size());
+    for (auto& signal : signals) {
+      signal_semaphore_handles.push_back(signal.semaphore->GetHandle());
+      signal_semaphores_storage.push_back(std::move(signal));
+    }
+  }
+
   // FenceWaiterVK invokes this synchronously while the vectors above remain
   // alive. Queue submission and fence registration therefore form one
   // operation, while the owned semaphore wrappers remain retained below.
   auto submit_callback = [&context, &vk_buffers, &wait_semaphore_handles,
-                          &wait_stage_masks](vk::Fence submit_fence) {
+                          &wait_stage_masks, &signal_semaphore_handles,
+                          &signal_semaphores_storage](vk::Fence submit_fence) {
     vk::SubmitInfo submit_info;
     submit_info.setCommandBuffers(vk_buffers);
     if (!wait_semaphore_handles.empty()) {
       submit_info.setWaitSemaphores(wait_semaphore_handles);
       submit_info.setWaitDstStageMask(wait_stage_masks);
+    }
+    if (!signal_semaphore_handles.empty()) {
+      submit_info.setSignalSemaphores(signal_semaphore_handles);
     }
     auto status =
         context->GetGraphicsQueue()->Submit(submit_info, submit_fence);
@@ -92,6 +112,10 @@ fml::Status CommandQueueVK::Submit(
           "Failed to submit command: " + vk::to_string(status);
       VALIDATION_LOG << submit_error;
       return fml::Status(fml::StatusCode::kCancelled, submit_error);
+    }
+
+    for (const auto& signal : signal_semaphores_storage) {
+      signal.texture->SetRenderCompleteSyncFD(signal.semaphore->CreateFD());
     }
     return fml::Status();
   };
@@ -104,9 +128,11 @@ fml::Status CommandQueueVK::Submit(
   auto fence_complete_callback =
       [completion_callback, tracker, submission_id,
        tracked_objects = std::move(tracked_objects),
+       signal_semaphores_storage = std::move(signal_semaphores_storage),
        wait_semaphores_storage = std::move(wait_semaphores_storage)]() mutable {
         // Ensure tracked objects and semaphores are destructed before calling
         // any final callbacks.
+        signal_semaphores_storage.clear();
         wait_semaphores_storage.clear();
         tracked_objects.clear();
         tracker->RecordCompletion(submission_id);

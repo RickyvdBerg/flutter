@@ -70,6 +70,7 @@ EmbedderLayers::~EmbedderLayers() = default;
 
 void EmbedderLayers::PushBackingStoreLayer(
     const FlutterBackingStore* store,
+    fml::UniqueFD render_complete_sync_fd,
     const std::vector<DlIRect>& paint_region_vec) {
   FlutterLayer layer = {};
 
@@ -136,6 +137,16 @@ void EmbedderLayers::PushBackingStoreLayer(
   } else {
     present_info->frame_damage = nullptr;
   }
+
+  present_info->render_complete_sync_fd = -1;
+#if !FML_OS_WIN
+  if (render_complete_sync_fd.is_valid()) {
+    present_info->render_complete_sync_fd = render_complete_sync_fd.get();
+    render_complete_sync_fds_.push_back(std::move(render_complete_sync_fd));
+  }
+#else
+  (void)render_complete_sync_fd;
+#endif
 
   regions_referenced_.push_back(std::move(paint_region));
   layer.backing_store_present_info = present_info.get();

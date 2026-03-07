@@ -2236,6 +2236,10 @@ typedef struct {
   /// EGL_KHR_swap_buffers_with_damage). It is metadata for composition
   /// decisions and does not imply partial rasterization.
   FlutterRegion* frame_damage;
+
+  /// A sync_file fd that signals when rendering into this backing store has
+  /// completed. Set to -1 when unavailable.
+  int render_complete_sync_fd;
 } FlutterBackingStorePresentInfo;
 
 typedef struct {

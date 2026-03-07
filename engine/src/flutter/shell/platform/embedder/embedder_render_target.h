@@ -9,6 +9,7 @@
 #include "flutter/display_list/geometry/dl_geometry_types.h"
 #include "flutter/fml/closure.h"
 #include "flutter/fml/macros.h"
+#include "flutter/fml/unique_fd.h"
 #include "flutter/shell/platform/embedder/embedder.h"
 #include "third_party/skia/include/core/SkSurface.h"
 
@@ -90,6 +91,8 @@ class EmbedderRenderTarget {
   /// @return     The backing store.
   ///
   const FlutterBackingStore* GetBackingStore() const;
+
+  virtual fml::UniqueFD TakeRenderCompleteSyncFD() { return {}; }
 
   //----------------------------------------------------------------------------
   /// @brief      Make the render target current.

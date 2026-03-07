@@ -172,6 +172,8 @@ impeller_component("vulkan") {
     sources += [
       "linux/dmabuf_texture_source_vk.cc",
       "linux/dmabuf_texture_source_vk.h",
+      "swapchain/ahb/external_semaphore_vk.cc",
+      "swapchain/ahb/external_semaphore_vk.h",
     ]
   }
 

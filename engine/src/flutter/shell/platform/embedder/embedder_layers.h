@@ -11,6 +11,7 @@
 
 #include "flutter/flow/embedded_views.h"
 #include "flutter/fml/macros.h"
+#include "flutter/fml/unique_fd.h"
 #include "flutter/shell/platform/embedder/embedder.h"
 #include "third_party/skia/include/core/SkMatrix.h"
 #include "third_party/skia/include/core/SkSize.h"
@@ -33,6 +34,7 @@ class EmbedderLayers {
   ~EmbedderLayers();
 
   void PushBackingStoreLayer(const FlutterBackingStore* store,
+                             fml::UniqueFD render_complete_sync_fd,
                              const std::vector<DlIRect>& drawn_region);
 
   void PushPlatformViewLayer(FlutterPlatformViewIdentifier identifier,
@@ -58,6 +60,7 @@ class EmbedderLayers {
       mutations_arrays_referenced_;
   std::vector<std::unique_ptr<FlutterBackingStorePresentInfo>>
       present_info_referenced_;
+  std::vector<fml::UniqueFD> render_complete_sync_fds_;
   std::vector<std::unique_ptr<FlutterRegion>> regions_referenced_;
   std::vector<std::unique_ptr<std::vector<FlutterRect>>> rects_referenced_;
   std::vector<FlutterLayer> presented_layers_;

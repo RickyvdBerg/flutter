@@ -149,7 +149,8 @@ inline bool operator==(const FlutterBackingStorePresentInfo& a,
   };
   return a.struct_size == b.struct_size &&
          region_eq(a.paint_region, b.paint_region) &&
-         region_eq(a.frame_damage, b.frame_damage);
+         region_eq(a.frame_damage, b.frame_damage) &&
+         a.render_complete_sync_fd == b.render_complete_sync_fd;
 }
 
 inline bool operator==(const FlutterBackingStore& a,

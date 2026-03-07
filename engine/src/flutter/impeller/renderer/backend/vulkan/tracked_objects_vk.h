@@ -18,6 +18,11 @@ namespace impeller {
 ///        command buffers and descriptor sets.
 class TrackedObjectsVK {
  public:
+  struct PendingSignalSemaphoreVK {
+    std::shared_ptr<const TextureSourceVK> texture;
+    std::shared_ptr<ExternalSemaphoreVK> semaphore;
+  };
+
   explicit TrackedObjectsVK(const std::weak_ptr<const ContextVK>& context,
                             const std::shared_ptr<CommandPoolVK>& pool,
                             std::shared_ptr<DescriptorPoolVK> descriptor_pool,
@@ -40,6 +45,9 @@ class TrackedObjectsVK {
   GPUProbe& GetGPUProbe() const;
 
   std::vector<WaitSemaphore> TakeWaitSemaphores();
+
+  std::vector<PendingSignalSemaphoreVK> CreateSignalSemaphores(
+      const std::shared_ptr<Context>& context);
 
  private:
   std::shared_ptr<DescriptorPoolVK> desc_pool_;

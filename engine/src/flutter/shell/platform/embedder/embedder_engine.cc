@@ -515,15 +515,16 @@ bool EmbedderEngine::PublishDmabufTexture(
   dmabuf_mailbox_->Store(texture_id, std::move(entry));
   CloseTransferredDmabufFds(desc);
 
-  // Mark only the texture's dirty flag on the raster thread.
+  // Mark the texture's dirty flag on the raster thread (non-blocking).
   //
   // The embedder is responsible for frame pacing (often per-display), so we do
   // not invoke PlatformView::MarkTextureFrameAvailable here because that helper
-  // also schedules a global engine frame. We still need deterministic ordering:
-  // the texture dirty bit must be visible before the embedder's subsequent
-  // display-scoped ScheduleFrame call, otherwise the engine can produce a
-  // zero-damage frame that appears "stuck" until an unrelated event (for
-  // example cursor motion) triggers another frame.
+  // also schedules a global engine frame.
+  //
+  // Ordering guarantee: mark_texture is posted to the raster thread before any
+  // subsequent ScheduleFrame-triggered pipeline task reaches the same thread.
+  // FIFO task ordering on the raster thread ensures the dirty flag is set
+  // before the frame that needs it renders.
   auto raster_runner = shell_->GetTaskRunners().GetRasterTaskRunner();
   auto mark_texture = [rasterizer = shell_->GetRasterizer(), texture_id]() {
     if (!rasterizer) {
@@ -542,16 +543,9 @@ bool EmbedderEngine::PublishDmabufTexture(
 
   if (raster_runner->RunsTasksOnCurrentThread()) {
     mark_texture();
-    return true;
+  } else {
+    raster_runner->PostTask(std::move(mark_texture));
   }
-
-  fml::AutoResetWaitableEvent mark_complete;
-  raster_runner->PostTask([mark_texture = std::move(mark_texture),
-                           &mark_complete]() mutable {
-    mark_texture();
-    mark_complete.Signal();
-  });
-  mark_complete.Wait();
   return true;
 }
 

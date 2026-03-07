@@ -5,8 +5,10 @@
 #ifndef FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_TEXTURE_SOURCE_VK_H_
 #define FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_TEXTURE_SOURCE_VK_H_
 
+#include <memory>
 #include <optional>
 
+#include "flutter/fml/unique_fd.h"
 #include "flutter/fml/status.h"
 #include "impeller/core/formats.h"
 #include "impeller/core/texture_descriptor.h"
@@ -23,6 +25,9 @@ struct FramebufferAndRenderPass {
   SharedHandleVK<vk::Framebuffer> framebuffer = nullptr;
   SharedHandleVK<vk::RenderPass> render_pass = nullptr;
 };
+
+class Context;
+class ExternalSemaphoreVK;
 
 /// @brief      Describes a VkSemaphore that a queue submission must wait on
 ///             before executing commands that reference the associated texture.
@@ -140,6 +145,14 @@ class TextureSourceVK {
   virtual bool IsSwapchainImage() const = 0;
 
   virtual std::optional<WaitSemaphore> ConsumeAcquireSemaphore() const;
+
+  virtual std::shared_ptr<ExternalSemaphoreVK>
+  CreateRenderCompleteSignalSemaphore(
+      const std::shared_ptr<Context>& context) const;
+
+  virtual void SetRenderCompleteSyncFD(fml::UniqueFD sync_fd) const;
+
+  virtual fml::UniqueFD TakeRenderCompleteSyncFD() const;
 
   // These methods should only be used by render_pass_vk.h
 

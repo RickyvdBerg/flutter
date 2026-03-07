@@ -116,6 +116,7 @@ extern const intptr_t kPlatformStrongDillSize;
 #include "impeller/core/texture.h"                                  // nogncheck
 #include "impeller/renderer/backend/vulkan/context_vk.h"            // nogncheck
 #include "impeller/renderer/backend/vulkan/formats_vk.h"            // nogncheck
+#include "impeller/renderer/backend/vulkan/swapchain/ahb/external_semaphore_vk.h"  // nogncheck
 #include "impeller/renderer/backend/vulkan/swapchain/surface_vk.h"  // nogncheck
 #include "impeller/renderer/backend/vulkan/swapchain/swapchain_transients_vk.h"  // nogncheck
 #include "impeller/renderer/backend/vulkan/texture_source_vk.h"  // nogncheck
@@ -1348,8 +1349,34 @@ class EmbedderTextureSourceVK : public impeller::TextureSourceVK {
 
   bool IsSwapchainImage() const override { return true; }
 
+ public:
+
+  std::shared_ptr<impeller::ExternalSemaphoreVK>
+  CreateRenderCompleteSignalSemaphore(
+      const std::shared_ptr<impeller::Context>& context) const override {
+    auto semaphore =
+        std::make_shared<impeller::ExternalSemaphoreVK>(context);
+    if (!semaphore || !semaphore->IsValid()) {
+      return nullptr;
+    }
+    return semaphore;
+  }
+
+  void SetRenderCompleteSyncFD(fml::UniqueFD sync_fd) const override {
+    std::scoped_lock lock(render_complete_sync_fd_mutex_);
+    render_complete_sync_fd_ = std::move(sync_fd);
+  }
+
+  fml::UniqueFD TakeRenderCompleteSyncFD() const override {
+    std::scoped_lock lock(render_complete_sync_fd_mutex_);
+    return std::move(render_complete_sync_fd_);
+  }
+
+ private:
   impeller::vk::Image image_;
   impeller::vk::ImageView image_view_;
+  mutable std::mutex render_complete_sync_fd_mutex_;
+  mutable fml::UniqueFD render_complete_sync_fd_;
 };
 
 namespace {
@@ -1490,7 +1517,10 @@ MakeRenderTargetFromBackingStoreImpeller(
   return std::make_unique<flutter::EmbedderRenderTargetImpeller>(
       backing_store, aiks_context,
       std::make_unique<impeller::RenderTarget>(std::move(render_target)),
-      on_release, fml::closure());
+      on_release, fml::closure(),
+      [wrapped_source]() mutable -> fml::UniqueFD {
+        return wrapped_source->TakeRenderCompleteSyncFD();
+      });
 #else
   return nullptr;
 #endif

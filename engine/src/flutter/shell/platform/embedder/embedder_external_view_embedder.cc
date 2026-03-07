@@ -376,6 +376,7 @@ class LayerBuilder {
       }
       if (layer.render_target() != nullptr) {
         layers.PushBackingStoreLayer(layer.render_target()->GetBackingStore(),
+                                     layer.render_target()->TakeRenderCompleteSyncFD(),
                                      layer.coverage());
       }
     }

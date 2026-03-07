@@ -24,6 +24,18 @@ std::optional<WaitSemaphore> TextureSourceVK::ConsumeAcquireSemaphore() const {
   return std::nullopt;
 }
 
+std::shared_ptr<ExternalSemaphoreVK>
+TextureSourceVK::CreateRenderCompleteSignalSemaphore(
+    const std::shared_ptr<Context>& context) const {
+  return nullptr;
+}
+
+void TextureSourceVK::SetRenderCompleteSyncFD(fml::UniqueFD sync_fd) const {}
+
+fml::UniqueFD TextureSourceVK::TakeRenderCompleteSyncFD() const {
+  return {};
+}
+
 vk::ImageLayout TextureSourceVK::GetLayout() const {
   return layout_;
 }

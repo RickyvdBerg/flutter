@@ -4,8 +4,11 @@
 
 #include "impeller/renderer/backend/vulkan/tracked_objects_vk.h"
 
+#include <algorithm>
+
 #include "impeller/renderer/backend/vulkan/command_pool_vk.h"
 #include "impeller/renderer/backend/vulkan/gpu_tracer_vk.h"
+#include "impeller/renderer/backend/vulkan/swapchain/ahb/external_semaphore_vk.h"
 
 namespace impeller {
 
@@ -74,6 +77,29 @@ void TrackedObjectsVK::Track(
 
 std::vector<WaitSemaphore> TrackedObjectsVK::TakeWaitSemaphores() {
   return std::move(wait_semaphores_);
+}
+
+std::vector<TrackedObjectsVK::PendingSignalSemaphoreVK>
+TrackedObjectsVK::CreateSignalSemaphores(const std::shared_ptr<Context>& context) {
+  std::vector<PendingSignalSemaphoreVK> signal_semaphores;
+  signal_semaphores.reserve(tracked_textures_.size());
+  for (const auto& texture : tracked_textures_) {
+    if (std::any_of(signal_semaphores.begin(), signal_semaphores.end(),
+                    [&texture](const PendingSignalSemaphoreVK& pending) {
+                      return pending.texture.get() == texture.get();
+                    })) {
+      continue;
+    }
+    auto semaphore = texture->CreateRenderCompleteSignalSemaphore(context);
+    if (!semaphore || !semaphore->IsValid()) {
+      continue;
+    }
+    signal_semaphores.push_back(PendingSignalSemaphoreVK{
+        .texture = texture,
+        .semaphore = std::move(semaphore),
+    });
+  }
+  return signal_semaphores;
 }
 
 vk::CommandBuffer TrackedObjectsVK::GetCommandBuffer() const {

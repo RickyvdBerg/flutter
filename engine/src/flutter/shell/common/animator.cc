@@ -790,6 +790,9 @@ void Animator::EndFrameForDisplay(DisplayFrameState& state) {
           << ", rendered_this_frame=" << state.rendered_views_this_frame.size()
           << ")";
     }
+    // Notify the delegate so the embedder can retire stale in-flight
+    // frame-request bookkeeping for this display's views.
+    delegate_.OnAnimatorEmptyFrameForDisplay(state.display_id, state.view_ids);
   }
 
   // Reset frame state.

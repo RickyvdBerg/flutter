@@ -2629,12 +2629,31 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
         };
   }
 
+  const FlutterCompositor* compositor_ptr =
+      SAFE_ACCESS(args, compositor, nullptr);
+
   auto external_view_embedder_result = InferExternalViewEmbedderFromArgs(
-      SAFE_ACCESS(args, compositor, nullptr), settings.enable_impeller);
+      compositor_ptr, settings.enable_impeller);
   if (!external_view_embedder_result.ok()) {
     FML_LOG(ERROR) << external_view_embedder_result.status().message();
     return LOG_EMBEDDER_ERROR(kInvalidArguments,
                               "Compositor arguments were invalid.");
+  }
+
+  // Wire the optional empty-frame notification callback from the compositor
+  // into Settings so the Shell can forward it to the embedder.
+  if (compositor_ptr != nullptr) {
+    auto c_empty_frame_callback =
+        SAFE_ACCESS(compositor_ptr, on_empty_frame_callback, nullptr);
+    if (c_empty_frame_callback != nullptr) {
+      auto empty_frame_user_data = compositor_ptr->user_data;
+      settings.on_empty_frame_for_display =
+          [c_empty_frame_callback, empty_frame_user_data](
+              int64_t display_id, const std::vector<int64_t>& view_ids) {
+            c_empty_frame_callback(display_id, view_ids.data(),
+                                   view_ids.size(), empty_frame_user_data);
+          };
+    }
   }
 
   flutter::PlatformViewEmbedder::PlatformDispatchTable platform_dispatch_table =

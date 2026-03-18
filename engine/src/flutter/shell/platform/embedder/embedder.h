@@ -2467,6 +2467,27 @@ typedef struct {
   /// explicit even when the current raster path still uses internal split
   /// markers to produce separate backing stores.
   FlutterShellSourcesCallback get_shell_sources_callback;
+
+  /// Callback invoked by the engine when a scheduled frame completes without
+  /// producing any compositor work (no backing stores created, no present_view
+  /// callback).
+  ///
+  /// This happens when the Dart framework decides nothing needs to be redrawn
+  /// for the views on the given display.  Without this callback, the embedder
+  /// has no way to distinguish "frame still in progress" from "frame completed
+  /// with no output", which can cause stale in-flight bookkeeping.
+  ///
+  /// @param[in]  display_id       The display whose frame completed empty.
+  /// @param[in]  view_ids         Array of view IDs that were part of the frame.
+  /// @param[in]  view_ids_count   Number of elements in @p view_ids.
+  /// @param[in]  user_data        The |FlutterCompositor.user_data|.
+  ///
+  /// This callback is optional.  When null, the engine does not notify the
+  /// embedder of empty frames.
+  void (*on_empty_frame_callback)(int64_t display_id,
+                                  const int64_t* view_ids,
+                                  size_t view_ids_count,
+                                  void* user_data);
 } FlutterCompositor;
 
 typedef struct {

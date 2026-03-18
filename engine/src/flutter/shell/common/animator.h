@@ -59,6 +59,16 @@ class Animator final {
 
     virtual void OnAnimatorDrawLastLayerTrees(
         std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder) = 0;
+
+    /// Notifies the delegate that a scheduled frame for the given display
+    /// completed without producing any layer trees (no Render() calls from
+    /// Dart for this display's views).
+    ///
+    /// This lets embedders retire in-flight frame bookkeeping without waiting
+    /// for a present_view callback that will never arrive.
+    virtual void OnAnimatorEmptyFrameForDisplay(
+        int64_t display_id,
+        const std::set<int64_t>& view_ids) {}
   };
 
   Animator(Delegate& delegate,

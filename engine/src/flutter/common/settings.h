@@ -339,6 +339,13 @@ struct Settings {
   // soon as a frame is rasterized.
   FrameRasterizedCallback frame_rasterized_callback;
 
+  // Callback invoked from the UI thread when a scheduled frame completes
+  // without producing any compositor work (empty EndFrameForDisplay).  This
+  // lets the embedder distinguish "frame still in progress" from "frame
+  // completed with no output" and retire stale in-flight bookkeeping.
+  std::function<void(int64_t display_id, const std::vector<int64_t>& view_ids)>
+      on_empty_frame_for_display;
+
   // This data will be available to the isolate immediately on launch via the
   // PlatformDispatcher.getPersistentIsolateData callback. This is meant for
   // information that the isolate cannot request asynchronously (platform

@@ -14,8 +14,6 @@ namespace {
 
 constexpr FlutterPlatformViewIdentifier kShellLayerBreakToUnderlay = -901001;
 constexpr FlutterPlatformViewIdentifier kShellLayerBreakToOverlay = -901002;
-constexpr FlutterPlatformViewIdentifier kShellLayerBreakToPerWindowChrome =
-    -901003;
 constexpr FlutterPlatformViewIdentifier
     kShellLayerBreakToPerWindowChromeExplicitBase = -9000000000000000000LL;
 constexpr uint64_t kShellLayerBreakToPerWindowChromeExplicitMaxVisualIdentifier =
@@ -57,7 +55,6 @@ bool IsShellLayerBoundaryMarker(FlutterPlatformViewIdentifier identifier) {
   switch (identifier) {
     case kShellLayerBreakToUnderlay:
     case kShellLayerBreakToOverlay:
-    case kShellLayerBreakToPerWindowChrome:
       return true;
     default:
       return DecodePerWindowChromeVisualIdentifier(identifier).has_value();
@@ -372,11 +369,6 @@ void EmbedderLayers::InvokePresentCallback(
     }
   }
 
-  auto is_anonymous_per_window_chrome = [](const FlutterLayer& layer) {
-    return layer.type == kFlutterLayerContentTypeBackingStore &&
-           layer.shell_layer_role == kFlutterShellLayerRolePerWindowChrome &&
-           layer.shell_visual_identifier == 0;
-  };
   auto is_explicit_per_window_chrome = [](const FlutterLayer& layer) {
     return layer.type == kFlutterLayerContentTypeBackingStore &&
            layer.shell_layer_role == kFlutterShellLayerRolePerWindowChrome &&
@@ -407,37 +399,10 @@ void EmbedderLayers::InvokePresentCallback(
 
   const auto* overlay_source =
       source_for_role(kFlutterShellLayerRoleOverlay);
-  const auto* per_window_chrome_source =
-      source_for_role(kFlutterShellLayerRolePerWindowChrome);
 
   for (auto& layer : presented_layers) {
     if (is_anonymous_overlay(layer) && overlay_source != nullptr) {
       ApplyShellSourceRect(&layer, overlay_source);
-    }
-    if (is_anonymous_per_window_chrome(layer) &&
-        per_window_chrome_source != nullptr) {
-      ApplyShellSourceRect(&layer, per_window_chrome_source);
-    }
-  }
-
-  // Diagnostic: count anonymous per-window chrome layers BEFORE fan-out.
-  {
-    size_t anon_chrome_count = 0;
-    for (const auto& layer : presented_layers) {
-      if (is_anonymous_per_window_chrome(layer)) {
-        anon_chrome_count++;
-      }
-    }
-    static int64_t diag_last_view_id = -1;
-    static size_t diag_last_anon_chrome = SIZE_MAX;
-    if (anon_chrome_count != diag_last_anon_chrome || view_id != diag_last_view_id) {
-      FML_LOG(IMPORTANT)
-          << "EmbedderLayers fan-out input: view=" << view_id
-          << " anon_chrome_layers=" << anon_chrome_count
-          << " total_layers=" << presented_layers.size()
-          << " saw_boundary=" << saw_shell_layer_boundary_;
-      diag_last_view_id = view_id;
-      diag_last_anon_chrome = anon_chrome_count;
     }
   }
 
@@ -508,10 +473,6 @@ void EmbedderLayers::InvokePresentCallback(
           continue;
         }
 
-        if (is_anonymous_per_window_chrome(layer)) {
-          continue;
-        }
-
         if (is_explicit_per_window_chrome(layer)) {
           const auto* visual =
               find_per_window_chrome_visual(layer.shell_visual_identifier);
@@ -539,9 +500,7 @@ void EmbedderLayers::InvokePresentCallback(
           continue;
         }
 
-        if (!is_anonymous_per_window_chrome(layer)) {
-          resolved_layers.push_back(layer);
-        }
+        resolved_layers.push_back(layer);
       }
 
       const size_t unused_overlay_visuals =
@@ -575,7 +534,6 @@ void EmbedderLayers::InvokePresentCallback(
         FML_LOG(IMPORTANT)
             << "Per-window chrome layer/visual count mismatch for view " << view_id
             << " (matched=" << matched_visuals
-            << ", fanout_fallback=disabled"
             << ", unused_visuals=" << unused_visuals
             << ", input_layers=" << presented_layers.size()
             << ", saw_boundary=" << saw_shell_layer_boundary_ << ")";

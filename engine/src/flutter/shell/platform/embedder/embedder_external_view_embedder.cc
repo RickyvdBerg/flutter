@@ -21,7 +21,6 @@ namespace {
 
 constexpr int64_t kShellLayerBreakToUnderlay = -901001;
 constexpr int64_t kShellLayerBreakToOverlay = -901002;
-constexpr int64_t kShellLayerBreakToPerWindowChrome = -901003;
 constexpr int64_t kShellLayerBreakToPerWindowChromeExplicitBase =
     -9000000000000000000LL;
 constexpr uint64_t kShellLayerBreakToPerWindowChromeExplicitMaxVisualIdentifier =
@@ -45,15 +44,12 @@ std::optional<uint64_t> DecodePerWindowChromeVisualIdentifier(int64_t view_id) {
 bool IsShellLayerBoundaryMarker(int64_t view_id) {
   return view_id == kShellLayerBreakToUnderlay ||
          view_id == kShellLayerBreakToOverlay ||
-         view_id == kShellLayerBreakToPerWindowChrome ||
          DecodePerWindowChromeVisualIdentifier(view_id).has_value();
 }
 
 FlutterBackingStoreRequestType RequestTypeForShellBoundaryMarker(
     int64_t view_id) {
   switch (view_id) {
-    case kShellLayerBreakToPerWindowChrome:
-      return kFlutterBackingStoreRequestTypePerWindowChrome;
     case kShellLayerBreakToUnderlay:
     case kShellLayerBreakToOverlay:
     default:
@@ -69,8 +65,6 @@ FlutterShellLayerRole ShellLayerRoleForBoundaryMarker(int64_t view_id) {
       return kFlutterShellLayerRoleUnderlay;
     case kShellLayerBreakToOverlay:
       return kFlutterShellLayerRoleOverlay;
-    case kShellLayerBreakToPerWindowChrome:
-      return kFlutterShellLayerRolePerWindowChrome;
     default:
       return DecodePerWindowChromeVisualIdentifier(view_id).has_value()
                  ? kFlutterShellLayerRolePerWindowChrome

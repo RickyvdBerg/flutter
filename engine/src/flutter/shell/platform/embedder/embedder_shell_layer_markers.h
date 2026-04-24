@@ -12,10 +12,8 @@
 
 namespace flutter {
 
-// Transitional shell-layer markers carried through PlatformViewLayer IDs.
-//
-// This is intentionally isolated here because the long-term contract should be
-// explicit shell render jobs/results, not magic platform-view identifiers.
+// Private Avio shell-layer boundary ABI carried through PlatformViewLayer IDs.
+// The embedder consumes these markers before they are exposed as platform views.
 namespace shell_layer_marker {
 
 constexpr FlutterPlatformViewIdentifier kUnderlay = -901001;

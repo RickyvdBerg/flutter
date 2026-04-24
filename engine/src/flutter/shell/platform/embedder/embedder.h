@@ -2002,6 +2002,16 @@ typedef struct {
   };
 } FlutterBackingStore;
 
+/// The logical request class for a backing store allocation.
+typedef enum {
+  /// No explicit request type was provided.
+  kFlutterBackingStoreRequestTypeUnknown = 0,
+  /// A display-scoped backing store for the root Flutter view or shell layers.
+  kFlutterBackingStoreRequestTypeView = 1,
+  /// A per-window shell chrome backing store.
+  kFlutterBackingStoreRequestTypePerWindowChrome = 2,
+} FlutterBackingStoreRequestType;
+
 typedef struct {
   /// The size of this struct. Must be sizeof(FlutterBackingStoreConfig).
   size_t struct_size;
@@ -2010,6 +2020,16 @@ typedef struct {
   /// The identifier for the view that the engine will use this backing store to
   /// render into.
   FlutterViewId view_id;
+  /// Stable per-window shell visual identifier for local chrome requests.
+  ///
+  /// Zero for display-scoped render targets and any request that is not tied to
+  /// a specific per-window shell visual.
+  uint64_t shell_visual_identifier;
+  /// The logical request class for this backing store.
+  ///
+  /// This lets embedders distinguish display-scoped render targets from
+  /// per-window shell chrome requests without inferring intent from dimensions.
+  FlutterBackingStoreRequestType request_type;
 } FlutterBackingStoreConfig;
 
 typedef enum {
@@ -2108,6 +2128,12 @@ typedef struct {
   /// layer. Zero when no explicit visual generation is attached.
   uint64_t shell_visual_generation;
 
+  /// Compositor-authored model serial for shell chrome identity.
+  ///
+  /// For per-window chrome layers this is the serial of the descriptor that
+  /// the layer was rasterized against. Zero when not applicable.
+  uint64_t shell_chrome_model_serial;
+
 } FlutterLayer;
 
 typedef struct {
@@ -2122,6 +2148,12 @@ typedef struct {
 
   /// Monotonic compositor-provided visual generation for this shell visual.
   uint64_t shell_visual_generation;
+
+  /// Compositor-authored model serial for this shell visual.
+  ///
+  /// For per-window chrome this advances when the compositor-visible chrome
+  /// model changes, independent of Flutter-authored raster generations.
+  uint64_t shell_chrome_model_serial;
 
   /// The exact visual rect inside the shell backing store. For per-window
   /// chrome this is the titlebar source rect that should be cropped out of the

@@ -4,6 +4,8 @@
 
 #include "flutter/shell/platform/embedder/embedder_external_view.h"
 
+#include <cmath>
+
 #include "flutter/display_list/dl_builder.h"
 #include "flutter/fml/trace_event.h"
 #include "flutter/shell/common/dl_op_spy.h"
@@ -111,6 +113,7 @@ static void InvalidateApiState(SkSurface& skia_surface) {
 #endif
 
 bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
+                                  const SkRect& render_target_bounds,
                                   bool clear_surface) {
   TRACE_EVENT0("flutter", "EmbedderExternalView::Render");
   TryEndRecording();
@@ -118,13 +121,18 @@ bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
       << "Unnecessarily asked to render into a render target when there was "
          "nothing to render.";
 
+  DlMatrix render_transform =
+      DlMatrix::MakeTranslation(
+          {-render_target_bounds.x(), -render_target_bounds.y()}) *
+      ToDlMatrix(surface_transformation_);
+
 #ifdef IMPELLER_SUPPORTS_RENDERING
   auto* impeller_target = render_target.GetImpellerRenderTarget();
   if (impeller_target) {
     auto aiks_context = render_target.GetAiksContext();
 
     auto dl_builder = DisplayListBuilder();
-    dl_builder.SetTransform(ToDlMatrix(surface_transformation_));
+    dl_builder.SetTransform(render_transform);
     slice_->render_into(&dl_builder);
     auto display_list = dl_builder.Build();
 
@@ -174,7 +182,9 @@ bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
     }
   });
 
-  FML_DCHECK(render_target.GetRenderTargetSize() == render_surface_size_);
+  FML_DCHECK(render_target.GetRenderTargetSize() ==
+             SkISize::Make(static_cast<int>(std::ceil(render_target_bounds.width())),
+                           static_cast<int>(std::ceil(render_target_bounds.height()))));
 
   auto canvas = skia_surface->getCanvas();
   if (!canvas) {
@@ -182,7 +192,7 @@ bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
   }
   DlSkCanvasAdapter dl_canvas(canvas);
   int restore_count = dl_canvas.GetSaveCount();
-  dl_canvas.SetTransform(ToDlMatrix(surface_transformation_));
+  dl_canvas.SetTransform(render_transform);
   if (clear_surface) {
     dl_canvas.Clear(DlColor::kTransparent());
   }

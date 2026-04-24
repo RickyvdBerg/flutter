@@ -33,13 +33,12 @@ EmbedderRenderTargetCache::ClearAllRenderTargetsInCache() {
 }
 
 void EmbedderRenderTargetCache::CacheRenderTarget(
+    const EmbedderExternalView::RenderTargetDescriptor& descriptor,
     std::unique_ptr<EmbedderRenderTarget> target) {
   if (target == nullptr) {
     return;
   }
-  auto desc = EmbedderExternalView::RenderTargetDescriptor{
-      target->GetRenderTargetSize()};
-  cached_render_targets_.insert(std::make_pair(desc, std::move(target)));
+  cached_render_targets_.insert(std::make_pair(descriptor, std::move(target)));
 }
 
 size_t EmbedderRenderTargetCache::GetCachedTargetsCount() const {

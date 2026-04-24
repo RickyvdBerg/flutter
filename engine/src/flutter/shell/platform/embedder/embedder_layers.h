@@ -35,7 +35,9 @@ class EmbedderLayers {
 
   void PushBackingStoreLayer(const FlutterBackingStore* store,
                              fml::UniqueFD render_complete_sync_fd,
-                             const std::vector<DlIRect>& drawn_region);
+                             const std::vector<DlIRect>& drawn_region,
+                             FlutterShellLayerRole shell_layer_role,
+                             uint64_t shell_visual_identifier);
 
   void PushPlatformViewLayer(FlutterPlatformViewIdentifier identifier,
                              const EmbeddedViewParams& params);
@@ -67,8 +69,6 @@ class EmbedderLayers {
   std::shared_ptr<const EmbedderLayers> retained_layers_dependency_;
   uint64_t presentation_time_;
   std::optional<DlRegion> frame_damage_;
-  FlutterShellLayerRole next_backing_store_role_ =
-      kFlutterShellLayerRoleBackground;
   bool saw_shell_layer_boundary_ = false;
 
   FML_DISALLOW_COPY_AND_ASSIGN(EmbedderLayers);

@@ -11,6 +11,7 @@
 #include "flutter/common/constants.h"
 #include "flutter/shell/platform/embedder/embedder_layers.h"
 #include "flutter/shell/platform/embedder/embedder_render_target.h"
+#include "flutter/shell/platform/embedder/embedder_shell_layer_markers.h"
 #include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 
 namespace flutter {
@@ -19,57 +20,17 @@ static const auto kRootViewIdentifier = EmbedderExternalView::ViewIdentifier{};
 
 namespace {
 
-constexpr int64_t kShellLayerBreakToUnderlay = -901001;
-constexpr int64_t kShellLayerBreakToOverlay = -901002;
-constexpr int64_t kShellLayerBreakToPerWindowChromeExplicitBase =
-    -9000000000000000000LL;
-constexpr uint64_t kShellLayerBreakToPerWindowChromeExplicitMaxVisualIdentifier =
-    899999999999999999ULL;
-
-std::optional<uint64_t> DecodePerWindowChromeVisualIdentifier(int64_t view_id) {
-  if (view_id <= kShellLayerBreakToPerWindowChromeExplicitBase) {
-    return std::nullopt;
-  }
-  constexpr int64_t kPerWindowChromeExplicitMaxViewId =
-      kShellLayerBreakToPerWindowChromeExplicitBase +
-      static_cast<int64_t>(
-          kShellLayerBreakToPerWindowChromeExplicitMaxVisualIdentifier);
-  if (view_id > kPerWindowChromeExplicitMaxViewId) {
-    return std::nullopt;
-  }
-  return static_cast<uint64_t>(view_id -
-                               kShellLayerBreakToPerWindowChromeExplicitBase);
-}
-
 bool IsShellLayerBoundaryMarker(int64_t view_id) {
-  return view_id == kShellLayerBreakToUnderlay ||
-         view_id == kShellLayerBreakToOverlay ||
-         DecodePerWindowChromeVisualIdentifier(view_id).has_value();
+  return shell_layer_marker::IsBoundary(view_id);
 }
 
 FlutterBackingStoreRequestType RequestTypeForShellBoundaryMarker(
     int64_t view_id) {
-  switch (view_id) {
-    case kShellLayerBreakToUnderlay:
-    case kShellLayerBreakToOverlay:
-    default:
-      return DecodePerWindowChromeVisualIdentifier(view_id).has_value()
-                 ? kFlutterBackingStoreRequestTypePerWindowChrome
-                 : kFlutterBackingStoreRequestTypeView;
-  }
+  return shell_layer_marker::BackingStoreRequestTypeFor(view_id);
 }
 
 FlutterShellLayerRole ShellLayerRoleForBoundaryMarker(int64_t view_id) {
-  switch (view_id) {
-    case kShellLayerBreakToUnderlay:
-      return kFlutterShellLayerRoleUnderlay;
-    case kShellLayerBreakToOverlay:
-      return kFlutterShellLayerRoleOverlay;
-    default:
-      return DecodePerWindowChromeVisualIdentifier(view_id).has_value()
-                 ? kFlutterShellLayerRolePerWindowChrome
-                 : kFlutterShellLayerRoleBackground;
-  }
+  return shell_layer_marker::RoleFor(view_id);
 }
 
 }  // namespace
@@ -269,7 +230,7 @@ struct PlatformView {
     if (!view_identifier.platform_view_id.has_value()) {
       return std::nullopt;
     }
-    return DecodePerWindowChromeVisualIdentifier(
+    return shell_layer_marker::DecodePerWindowChromeVisualIdentifier(
         view_identifier.platform_view_id.value());
   }
 

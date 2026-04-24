@@ -5,6 +5,7 @@
 #include "flutter/shell/platform/embedder/embedder_external_view_embedder.h"
 
 #include <cassert>
+#include <cmath>
 #include <utility>
 
 #include "flutter/common/constants.h"
@@ -21,11 +22,60 @@ namespace {
 constexpr int64_t kShellLayerBreakToUnderlay = -901001;
 constexpr int64_t kShellLayerBreakToOverlay = -901002;
 constexpr int64_t kShellLayerBreakToPerWindowChrome = -901003;
+constexpr int64_t kShellLayerBreakToPerWindowChromeExplicitBase =
+    -9000000000000000000LL;
+constexpr uint64_t kShellLayerBreakToPerWindowChromeExplicitMaxVisualIdentifier =
+    899999999999999999ULL;
+
+std::optional<uint64_t> DecodePerWindowChromeVisualIdentifier(int64_t view_id) {
+  if (view_id <= kShellLayerBreakToPerWindowChromeExplicitBase) {
+    return std::nullopt;
+  }
+  constexpr int64_t kPerWindowChromeExplicitMaxViewId =
+      kShellLayerBreakToPerWindowChromeExplicitBase +
+      static_cast<int64_t>(
+          kShellLayerBreakToPerWindowChromeExplicitMaxVisualIdentifier);
+  if (view_id > kPerWindowChromeExplicitMaxViewId) {
+    return std::nullopt;
+  }
+  return static_cast<uint64_t>(view_id -
+                               kShellLayerBreakToPerWindowChromeExplicitBase);
+}
 
 bool IsShellLayerBoundaryMarker(int64_t view_id) {
   return view_id == kShellLayerBreakToUnderlay ||
          view_id == kShellLayerBreakToOverlay ||
-         view_id == kShellLayerBreakToPerWindowChrome;
+         view_id == kShellLayerBreakToPerWindowChrome ||
+         DecodePerWindowChromeVisualIdentifier(view_id).has_value();
+}
+
+FlutterBackingStoreRequestType RequestTypeForShellBoundaryMarker(
+    int64_t view_id) {
+  switch (view_id) {
+    case kShellLayerBreakToPerWindowChrome:
+      return kFlutterBackingStoreRequestTypePerWindowChrome;
+    case kShellLayerBreakToUnderlay:
+    case kShellLayerBreakToOverlay:
+    default:
+      return DecodePerWindowChromeVisualIdentifier(view_id).has_value()
+                 ? kFlutterBackingStoreRequestTypePerWindowChrome
+                 : kFlutterBackingStoreRequestTypeView;
+  }
+}
+
+FlutterShellLayerRole ShellLayerRoleForBoundaryMarker(int64_t view_id) {
+  switch (view_id) {
+    case kShellLayerBreakToUnderlay:
+      return kFlutterShellLayerRoleUnderlay;
+    case kShellLayerBreakToOverlay:
+      return kFlutterShellLayerRoleOverlay;
+    case kShellLayerBreakToPerWindowChrome:
+      return kFlutterShellLayerRolePerWindowChrome;
+    default:
+      return DecodePerWindowChromeVisualIdentifier(view_id).has_value()
+                 ? kFlutterShellLayerRolePerWindowChrome
+                 : kFlutterShellLayerRoleBackground;
+  }
 }
 
 }  // namespace
@@ -147,7 +197,9 @@ DlCanvas* EmbedderExternalViewEmbedder::CompositeEmbeddedView(int64_t view_id) {
 
 static FlutterBackingStoreConfig MakeBackingStoreConfig(
     int64_t view_id,
-    const DlISize& backing_store_size) {
+    const DlISize& backing_store_size,
+    FlutterBackingStoreRequestType request_type,
+    uint64_t shell_visual_identifier) {
   FlutterBackingStoreConfig config = {};
 
   config.struct_size = sizeof(config);
@@ -155,6 +207,8 @@ static FlutterBackingStoreConfig MakeBackingStoreConfig(
   config.size.width = backing_store_size.width;
   config.size.height = backing_store_size.height;
   config.view_id = view_id;
+  config.shell_visual_identifier = shell_visual_identifier;
+  config.request_type = request_type;
 
   return config;
 }
@@ -166,7 +220,7 @@ struct PlatformView {
   const EmbeddedViewParams* params;
 
   // The frame of the platform view, after clipping, in screen coordinates.
-  SkRect clipped_frame;
+  DlRect clipped_frame;
 
   explicit PlatformView(const EmbedderExternalView* view) {
     FML_DCHECK(view->HasPlatformView());
@@ -212,7 +266,33 @@ struct PlatformView {
           break;
       }
     }
-    clipped_frame = ToSkRect(clip);
+    clipped_frame = clip;
+  }
+
+  bool IsShellLayerBoundaryMarker() const {
+    return view_identifier.platform_view_id.has_value() &&
+           ::flutter::IsShellLayerBoundaryMarker(
+               view_identifier.platform_view_id.value());
+  }
+
+  std::optional<uint64_t> shell_visual_identifier() const {
+    if (!view_identifier.platform_view_id.has_value()) {
+      return std::nullopt;
+    }
+    return DecodePerWindowChromeVisualIdentifier(
+        view_identifier.platform_view_id.value());
+  }
+
+  bool IsExplicitPerWindowChromeBoundaryMarker() const {
+    return shell_visual_identifier().has_value();
+  }
+
+  FlutterBackingStoreRequestType backing_store_request_type() const {
+    if (!view_identifier.platform_view_id.has_value()) {
+      return kFlutterBackingStoreRequestTypeView;
+    }
+    return RequestTypeForShellBoundaryMarker(
+        view_identifier.platform_view_id.value());
   }
 };
 
@@ -226,9 +306,9 @@ class Layer {
  public:
   /// Returns whether the rectangle intersects any of the platform views of
   /// this layer.
-  bool IntersectsPlatformView(const SkRect& rect) {
+  bool IntersectsPlatformView(const DlRect& rect) {
     for (auto& platform_view : platform_views_) {
-      if (platform_view.clipped_frame.intersects(rect)) {
+      if (platform_view.clipped_frame.IntersectsWithRect(rect)) {
         return true;
       }
     }
@@ -239,7 +319,7 @@ class Layer {
   /// layer.
   bool IntersectsPlatformView(const DlRegion& region) {
     for (auto& platform_view : platform_views_) {
-      auto clipped_frame = ToDlIRect(platform_view.clipped_frame.roundOut());
+      auto clipped_frame = DlIRect::RoundOut(platform_view.clipped_frame);
       if (region.intersects(clipped_frame)) {
         return true;
       }
@@ -249,8 +329,8 @@ class Layer {
 
   /// Returns whether the rectangle intersects any of the Flutter contents of
   /// this layer.
-  bool IntersectsFlutterContents(const SkRect& rect) {
-    return flutter_contents_region_.intersects(ToDlIRect(rect.roundOut()));
+  bool IntersectsFlutterContents(const DlRect& rect) {
+    return flutter_contents_region_.intersects(DlIRect::RoundOut(rect));
   }
 
   /// Returns whether the region intersects any of the Flutter contents of this
@@ -260,7 +340,20 @@ class Layer {
   }
 
   /// Adds a platform view to this layer.
-  void AddPlatformView(const PlatformView& platform_view) {
+  void AddPlatformView(const PlatformView& platform_view,
+                       const DlMatrix& surface_transformation) {
+    if (platform_view.IsShellLayerBoundaryMarker()) {
+      request_type_ = platform_view.backing_store_request_type();
+      shell_layer_role_ = ShellLayerRoleForBoundaryMarker(
+          platform_view.view_identifier.platform_view_id.value());
+      if (platform_view.IsExplicitPerWindowChromeBoundaryMarker()) {
+        shell_visual_identifier_ =
+            platform_view.shell_visual_identifier().value_or(0);
+        render_target_bounds_ = platform_view.clipped_frame
+                                    .TransformAndClipBounds(
+                                        surface_transformation);
+      }
+    }
     platform_views_.push_back(platform_view);
   }
 
@@ -270,6 +363,29 @@ class Layer {
     flutter_contents_.push_back(contents);
     flutter_contents_region_ =
         DlRegion::MakeUnion(flutter_contents_region_, contents_region);
+  }
+
+  bool IsExplicitPerWindowChromeLayer() const {
+    return request_type_ == kFlutterBackingStoreRequestTypePerWindowChrome &&
+           shell_visual_identifier_ != 0;
+  }
+
+  bool NeedsExplicitPerWindowChromeContents() const {
+    return IsExplicitPerWindowChromeLayer() && flutter_contents_.empty() &&
+           render_target_bounds_.has_value();
+  }
+
+  bool CanProvideContentsFor(const Layer& target) const {
+    if (!has_flutter_contents() || !target.render_target_bounds_.has_value()) {
+      return false;
+    }
+    return flutter_contents_region_.intersects(
+        DlIRect::RoundOut(target.render_target_bounds_.value()));
+  }
+
+  void CopyFlutterContentsFrom(const Layer& source) {
+    flutter_contents_ = source.flutter_contents_;
+    flutter_contents_region_ = source.flutter_contents_region_;
   }
 
   bool has_flutter_contents() const { return !flutter_contents_.empty(); }
@@ -282,12 +398,14 @@ class Layer {
 
   /// Renders this layer Flutter contents to the render target previously
   /// assigned with SetRenderTarget.
-  void RenderFlutterContents() {
+  void RenderFlutterContents(const DlRect& default_render_bounds) {
     FML_DCHECK(has_flutter_contents());
     if (render_target_) {
+      const auto render_target_bounds =
+          render_target_bounds_.value_or(default_render_bounds);
       bool clear_surface = true;
       for (auto c : flutter_contents_) {
-        c->Render(*render_target_, clear_surface);
+        c->Render(*render_target_, render_target_bounds, clear_surface);
         clear_surface = false;
       }
     }
@@ -305,11 +423,30 @@ class Layer {
     return flutter_contents_region_.getRects();
   }
 
+  EmbedderExternalView::RenderTargetDescriptor CreateRenderTargetDescriptor(
+      const DlISize& frame_size) const {
+    const auto render_target_bounds =
+        render_target_bounds_.value_or(DlRect::MakeSize(frame_size));
+    return EmbedderExternalView::RenderTargetDescriptor(
+        DlIRect::RoundOut(render_target_bounds).GetSize(),
+        request_type_,
+        shell_visual_identifier_);
+  }
+
+  bool is_empty() const {
+    return platform_views_.empty() && flutter_contents_.empty();
+  }
+
  private:
   std::vector<PlatformView> platform_views_;
   std::vector<EmbedderExternalView*> flutter_contents_;
   DlRegion flutter_contents_region_;
   std::unique_ptr<EmbedderRenderTarget> render_target_;
+  FlutterBackingStoreRequestType request_type_ =
+      kFlutterBackingStoreRequestTypeView;
+  FlutterShellLayerRole shell_layer_role_ = kFlutterShellLayerRoleBackground;
+  uint64_t shell_visual_identifier_ = 0;
+  std::optional<DlRect> render_target_bounds_;
   friend class LayerBuilder;
 };
 
@@ -325,9 +462,12 @@ class LayerBuilder {
  public:
   using RenderTargetProvider =
       std::function<std::unique_ptr<EmbedderRenderTarget>(
-          const DlISize& frame_size)>;
+          const EmbedderExternalView::RenderTargetDescriptor& descriptor)>;
 
-  explicit LayerBuilder(DlISize frame_size) : frame_size_(frame_size) {
+  explicit LayerBuilder(DlISize frame_size,
+                        DlMatrix surface_transformation)
+      : frame_size_(frame_size),
+        surface_transformation_(surface_transformation) {
     layers_.push_back(Layer());
   }
 
@@ -348,9 +488,11 @@ class LayerBuilder {
 
   /// Prepares the render targets for all layers that have Flutter contents.
   void PrepareBackingStore(const RenderTargetProvider& target_provider) {
+    PopulateExplicitPerWindowChromeLayers();
     for (auto& layer : layers_) {
       if (layer.has_flutter_contents()) {
-        layer.SetRenderTarget(target_provider(frame_size_));
+        layer.SetRenderTarget(
+            target_provider(layer.CreateRenderTargetDescriptor(frame_size_)));
       }
     }
   }
@@ -358,9 +500,11 @@ class LayerBuilder {
   /// Renders all layers with Flutter contents to their respective render
   /// targets.
   void Render() {
+    const auto full_frame_bounds =
+        DlRect::MakeSize(frame_size_);
     for (auto& layer : layers_) {
       if (layer.has_flutter_contents()) {
-        layer.RenderFlutterContents();
+        layer.RenderFlutterContents(full_frame_bounds);
       }
     }
   }
@@ -377,18 +521,23 @@ class LayerBuilder {
       if (layer.render_target() != nullptr) {
         layers.PushBackingStoreLayer(layer.render_target()->GetBackingStore(),
                                      layer.render_target()->TakeRenderCompleteSyncFD(),
-                                     layer.coverage());
+                                     layer.coverage(), layer.shell_layer_role_,
+                                     layer.shell_visual_identifier_);
       }
     }
   }
 
   /// Removes the render targets from layers and returns them for collection.
-  std::vector<std::unique_ptr<EmbedderRenderTarget>>
+  std::vector<std::pair<EmbedderExternalView::RenderTargetDescriptor,
+                        std::unique_ptr<EmbedderRenderTarget>>>
   ClearAndCollectRenderTargets() {
-    std::vector<std::unique_ptr<EmbedderRenderTarget>> result;
+    std::vector<std::pair<EmbedderExternalView::RenderTargetDescriptor,
+                          std::unique_ptr<EmbedderRenderTarget>>>
+        result;
     for (auto& layer : layers_) {
       if (layer.render_target() != nullptr) {
-        result.push_back(std::move(layer.render_target_));
+        result.emplace_back(layer.CreateRenderTargetDescriptor(frame_size_),
+                            std::move(layer.render_target_));
       }
     }
     layers_.clear();
@@ -396,14 +545,61 @@ class LayerBuilder {
   }
 
  private:
+  void PopulateExplicitPerWindowChromeLayers() {
+    for (size_t index = 0; index < layers_.size(); index++) {
+      auto& target = layers_[index];
+      if (!target.NeedsExplicitPerWindowChromeContents()) {
+        continue;
+      }
+
+      Layer* source = nullptr;
+      for (size_t candidate_index = index; candidate_index > 0;
+           candidate_index--) {
+        auto& candidate = layers_[candidate_index - 1];
+        if (candidate.CanProvideContentsFor(target)) {
+          source = &candidate;
+          break;
+        }
+      }
+      if (source == nullptr) {
+        for (size_t candidate_index = index + 1; candidate_index < layers_.size();
+             candidate_index++) {
+          auto& candidate = layers_[candidate_index];
+          if (candidate.CanProvideContentsFor(target)) {
+            source = &candidate;
+            break;
+          }
+        }
+      }
+      if (source != nullptr) {
+        target.CopyFlutterContentsFrom(*source);
+      }
+    }
+  }
+
   void AddPlatformView(PlatformView view) {
-    GetLayerForPlatformView(view).AddPlatformView(view);
+    auto& layer = GetLayerForPlatformView(view);
+    layer.AddPlatformView(view, surface_transformation_);
+    if (view.IsExplicitPerWindowChromeBoundaryMarker()) {
+      pending_explicit_per_window_chrome_layer_index_ =
+          layers_.empty() ? std::nullopt
+                          : std::optional<size_t>(layers_.size() - 1);
+    }
   }
 
   void AddFlutterContents(EmbedderExternalView* contents) {
     FML_DCHECK(contents->HasEngineRenderedContents());
 
     DlRegion region = contents->GetDlRegion();
+    if (pending_explicit_per_window_chrome_layer_index_.has_value()) {
+      const size_t layer_index =
+          pending_explicit_per_window_chrome_layer_index_.value();
+      pending_explicit_per_window_chrome_layer_index_.reset();
+      if (layer_index < layers_.size()) {
+        layers_[layer_index].AddFlutterContents(contents, region);
+        return;
+      }
+    }
     GetLayerForFlutterContentsRegion(region).AddFlutterContents(contents,
                                                                 region);
   }
@@ -415,6 +611,12 @@ class LayerBuilder {
   /// - Very last layer from back that has surface that doesn't intersect with
   ///   this. That is because layer content renders on top of the platform view.
   Layer& GetLayerForPlatformView(PlatformView view) {
+    if (view.IsExplicitPerWindowChromeBoundaryMarker()) {
+      if (layers_.empty() || !layers_.back().is_empty()) {
+        layers_.emplace_back();
+      }
+      return layers_.back();
+    }
     for (auto iter = layers_.rbegin(); iter != layers_.rend(); ++iter) {
       // This layer has surface that intersects with this view. That means we
       // went one too far and need the layer before this.
@@ -447,7 +649,9 @@ class LayerBuilder {
   }
 
   std::vector<Layer> layers_;
+  std::optional<size_t> pending_explicit_per_window_chrome_layer_index_;
   DlISize frame_size_;
+  DlMatrix surface_transformation_;
 };
 
 };  // namespace
@@ -464,23 +668,28 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
   DlRect _rect = DlRect::MakeSize(pending_frame_size_)
                      .TransformAndClipBounds(pending_surface_transformation_);
 
-  LayerBuilder builder(DlIRect::RoundOut(_rect).GetSize());
+  LayerBuilder builder(DlIRect::RoundOut(_rect).GetSize(),
+                       pending_surface_transformation_);
 
   for (auto view_id : composition_order_) {
     auto& view = pending_views_[view_id];
     builder.AddExternalView(view.get());
   }
 
-  builder.PrepareBackingStore([&](const DlISize& frame_size) {
+  builder.PrepareBackingStore([&](
+                                  const EmbedderExternalView::
+                                      RenderTargetDescriptor& descriptor) {
     if (!avoid_backing_store_cache_) {
       std::unique_ptr<EmbedderRenderTarget> target =
-          render_target_cache.GetRenderTarget(
-              EmbedderExternalView::RenderTargetDescriptor(frame_size));
+          render_target_cache.GetRenderTarget(descriptor);
       if (target != nullptr) {
         return target;
       }
     }
-    auto config = MakeBackingStoreConfig(flutter_view_id, frame_size);
+    auto config = MakeBackingStoreConfig(flutter_view_id,
+                                         descriptor.surface_size,
+                                         descriptor.request_type,
+                                         descriptor.shell_visual_identifier);
     return create_render_target_callback_(context, aiks_context, config);
   });
 
@@ -568,9 +777,10 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
   deferred_cleanup_render_targets.clear();
 
   auto render_targets = builder.ClearAndCollectRenderTargets();
-  for (auto& render_target : render_targets) {
+  for (auto& [descriptor, render_target] : render_targets) {
     if (!avoid_backing_store_cache_) {
-      render_target_cache.CacheRenderTarget(std::move(render_target));
+      render_target_cache.CacheRenderTarget(descriptor,
+                                            std::move(render_target));
     }
   }
 

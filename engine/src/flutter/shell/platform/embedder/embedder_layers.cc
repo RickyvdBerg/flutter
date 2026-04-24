@@ -7,33 +7,11 @@
 #include <algorithm>
 
 #include "flutter/fml/logging.h"
+#include "flutter/shell/platform/embedder/embedder_shell_layer_markers.h"
 
 namespace flutter {
 
 namespace {
-
-constexpr FlutterPlatformViewIdentifier kShellLayerBreakToUnderlay = -901001;
-constexpr FlutterPlatformViewIdentifier kShellLayerBreakToOverlay = -901002;
-constexpr FlutterPlatformViewIdentifier
-    kShellLayerBreakToPerWindowChromeExplicitBase = -9000000000000000000LL;
-constexpr uint64_t kShellLayerBreakToPerWindowChromeExplicitMaxVisualIdentifier =
-    899999999999999999ULL;
-
-std::optional<uint64_t> DecodePerWindowChromeVisualIdentifier(
-    FlutterPlatformViewIdentifier identifier) {
-  if (identifier <= kShellLayerBreakToPerWindowChromeExplicitBase) {
-    return std::nullopt;
-  }
-  constexpr FlutterPlatformViewIdentifier kPerWindowChromeExplicitMaxViewId =
-      kShellLayerBreakToPerWindowChromeExplicitBase +
-      static_cast<FlutterPlatformViewIdentifier>(
-          kShellLayerBreakToPerWindowChromeExplicitMaxVisualIdentifier);
-  if (identifier > kPerWindowChromeExplicitMaxViewId) {
-    return std::nullopt;
-  }
-  return static_cast<uint64_t>(identifier -
-                               kShellLayerBreakToPerWindowChromeExplicitBase);
-}
 
 void ApplyShellSourceRect(FlutterLayer* layer,
                           const FlutterShellSourceInfo* source) {
@@ -49,16 +27,6 @@ void ApplyShellSourceRect(FlutterLayer* layer,
   layer->offset.y = source->source_rect.top;
   layer->size.width = width;
   layer->size.height = height;
-}
-
-bool IsShellLayerBoundaryMarker(FlutterPlatformViewIdentifier identifier) {
-  switch (identifier) {
-    case kShellLayerBreakToUnderlay:
-    case kShellLayerBreakToOverlay:
-      return true;
-    default:
-      return DecodePerWindowChromeVisualIdentifier(identifier).has_value();
-  }
 }
 
 }  // namespace
@@ -236,7 +204,7 @@ static std::unique_ptr<FlutterPlatformViewMutation> ConvertMutation(
 void EmbedderLayers::PushPlatformViewLayer(
     FlutterPlatformViewIdentifier identifier,
     const EmbeddedViewParams& params) {
-  if (IsShellLayerBoundaryMarker(identifier)) {
+  if (shell_layer_marker::IsBoundary(identifier)) {
     saw_shell_layer_boundary_ = true;
     return;
   }

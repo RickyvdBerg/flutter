@@ -87,8 +87,7 @@ class EmbedderConfigBuilder {
       const std::function<void(const FlutterViewFocusChangeRequest*)>&
           callback);
 
-  void SetCompositor(bool avoid_backing_store_cache = false,
-                     bool use_present_layers_callback = false);
+  void SetCompositor(bool avoid_backing_store_cache = false);
 
   FlutterCompositor& GetCompositor();
 

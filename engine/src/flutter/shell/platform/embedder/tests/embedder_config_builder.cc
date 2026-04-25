@@ -205,8 +205,7 @@ void EmbedderConfigBuilder::SetViewFocusChangeRequestCallback(
   context_.SetViewFocusChangeRequestCallback(callback);
 }
 
-void EmbedderConfigBuilder::SetCompositor(bool avoid_backing_store_cache,
-                                          bool use_present_layers_callback) {
+void EmbedderConfigBuilder::SetCompositor(bool avoid_backing_store_cache) {
   context_.SetupCompositor();
   auto& compositor = context_.GetCompositor();
   compositor_.struct_size = sizeof(compositor_);
@@ -226,25 +225,28 @@ void EmbedderConfigBuilder::SetCompositor(bool avoid_backing_store_cache,
         return reinterpret_cast<EmbedderTestCompositor*>(user_data)
             ->CollectBackingStore(backing_store);
       };
-  if (use_present_layers_callback) {
-    compositor_.present_layers_callback = [](const FlutterLayer** layers,
-                                             size_t layers_count,
-                                             void* user_data) {
-      auto compositor = reinterpret_cast<EmbedderTestCompositor*>(user_data);
-
-      // The present layers callback is incompatible with multiple views;
-      // it can only be used to render the implicit view.
-      return compositor->Present(kFlutterImplicitViewId, layers, layers_count);
-    };
-  } else {
-    compositor_.present_view_callback = [](const FlutterPresentViewInfo* info) {
-      auto compositor =
-          reinterpret_cast<EmbedderTestCompositor*>(info->user_data);
-
-      return compositor->Present(info->view_id, info->layers,
-                                 info->layers_count);
-    };
-  }
+  compositor_.present_render_target_callback =
+      [](const FlutterPresentRenderTargetInfo* info) {
+        auto compositor =
+            reinterpret_cast<EmbedderTestCompositor*>(info->user_data);
+        FlutterLayer layer = {
+            .struct_size = sizeof(FlutterLayer),
+            .type = kFlutterLayerContentTypeBackingStore,
+            .backing_store = info->backing_store,
+            .offset = FlutterPoint{0.0, 0.0},
+            .size = FlutterSize{0.0, 0.0},
+            .backing_store_present_info =
+                const_cast<FlutterBackingStorePresentInfo*>(
+                    info->backing_store_present_info),
+            .presentation_time = 0,
+            .shell_layer_role = kFlutterShellLayerRoleUnknown,
+            .shell_visual_identifier = 0,
+            .shell_visual_generation = 0,
+            .shell_chrome_model_serial = 0,
+        };
+        const FlutterLayer* layers[] = {&layer};
+        return compositor->Present(info->target_id, layers, 1);
+      };
   compositor_.avoid_backing_store_cache = avoid_backing_store_cache;
   project_args_.compositor = &compositor_;
 }

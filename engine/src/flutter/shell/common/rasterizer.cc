@@ -799,29 +799,35 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
       if (has_external_view_embedder) {
         // External view embedder path: SubmitFlutterView unconditionally
         // clears the backing store, so partial repaint would cause visual
-        // corruption.
-        //
-        // DEBUG-ONLY CRASH TRIAGE: do not commit this as the final fix.
-        //
-        // The metadata-only damage diff below runs before the current frame has
-        // been prerolled. At this point the embedder has not yet seen any
-        // PlatformViewLayer instances for the frame, so
-        // SupportsMetadataFrameDamageForCurrentFrame() cannot reliably detect
-        // shell layer break markers or other platform-view content.
-        //
-        // That makes this path unsafe for our embedder: FrameDamage diffs trees
-        // that can contain PlatformViewLayer nodes, but PlatformViewLayer does
-        // not participate in PaintRegion tracking. When the diff sees an
-        // unmatched old platform-view subtree, ContainerLayer::DiffChildren()
-        // can pass an invalid PaintRegion into DiffContext::AddDamage(), which
-        // is the exact SEGV path seen in the latest KMS/DRM crash.
-        //
-        // Skip metadata-only diffing for all external-view frames while
-        // debugging the startup crash. The frame still renders as a full
-        // repaint, which is what this path already relied on for correctness.
-        // Non-zero damage: leave damage as nullptr so Raster() does a full
-        // repaint (PaintLayerTreeImpeller treats empty clip_bounds as
-        // "no clip = full repaint").
+        // corruption. We can still calculate damage metadata with a temporary
+        // FrameDamage and leave `damage` null so Raster() performs a full
+        // repaint. The embedder can opt out for frames where metadata diffing
+        // is not safe.
+        if (external_view_embedder_
+                ->SupportsMetadataFrameDamageForCurrentFrame()) {
+          auto existing_damage = frame->framebuffer_info().existing_damage;
+          if (existing_damage.has_value()) {
+            FrameDamage metadata_damage;
+            metadata_damage.SetPreviousLayerTree(GetLastLayerTree(view_id));
+            metadata_damage.AddAdditionalDamage(existing_damage.value());
+            metadata_damage.SetClipAlignment(
+                frame->framebuffer_info().horizontal_clip_alignment,
+                frame->framebuffer_info().vertical_clip_alignment);
+
+            auto* gr_context = surface_->GetContext();
+            metadata_damage.ComputeClipRects(
+                layer_tree, surface_->EnableRasterCache(), !gr_context,
+                compositor_context_->texture_registry().get());
+
+            auto frame_dmg = metadata_damage.GetFrameDamage();
+            if (frame_dmg.has_value() && frame_dmg->isEmpty() &&
+                metadata_damage.GetBufferDamage().has_value()) {
+              NOT_SLIMPELLER(compositor_context_->raster_cache().EndFrame());
+              return DrawSurfaceStatus::kSuccess;
+            }
+            eve_frame_damage = std::move(frame_dmg);
+          }
+        }
       } else {
         // Standard partial repaint path for non-EVE surfaces.
         damage = std::make_unique<FrameDamage>();

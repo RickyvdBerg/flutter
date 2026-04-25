@@ -375,7 +375,7 @@ class FlutterWindowsEngine {
   // Present content to a view. Returns true if the content was presented.
   //
   // This is invoked on the raster thread.
-  bool Present(const FlutterPresentViewInfo* info);
+  bool Present(const FlutterPresentRenderTargetInfo* info);
 
   // The handle to the embedder.h engine instance.
   FLUTTER_API_SYMBOL(FlutterEngine) engine_ = nullptr;

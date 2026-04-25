@@ -1764,14 +1764,8 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
       SAFE_ACCESS(compositor, create_backing_store_callback, nullptr);
   auto c_collect_callback =
       SAFE_ACCESS(compositor, collect_backing_store_callback, nullptr);
-  auto c_present_callback =
-      SAFE_ACCESS(compositor, present_layers_callback, nullptr);
-  auto c_present_view_callback =
-      SAFE_ACCESS(compositor, present_view_callback, nullptr);
-  auto c_get_shell_visuals_callback =
-      SAFE_ACCESS(compositor, get_shell_visuals_callback, nullptr);
-  auto c_get_shell_sources_callback =
-      SAFE_ACCESS(compositor, get_shell_sources_callback, nullptr);
+  auto c_present_render_target_callback =
+      SAFE_ACCESS(compositor, present_render_target_callback, nullptr);
   bool avoid_backing_store_cache =
       SAFE_ACCESS(compositor, avoid_backing_store_cache, false);
 
@@ -1780,11 +1774,8 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
     FML_LOG(ERROR) << "Required compositor callbacks absent.";
     return {nullptr, true};
   }
-  // Either the present view or the present layers callback must be provided.
-  if ((!c_present_view_callback && !c_present_callback) ||
-      (c_present_view_callback && c_present_callback)) {
-    FML_LOG(ERROR) << "Either present_layers_callback or present_view_callback "
-                      "must be provided but not both.";
+  if (!c_present_render_target_callback) {
+    FML_LOG(ERROR) << "present_render_target_callback must be provided.";
     return {nullptr, true};
   }
 
@@ -1801,138 +1792,28 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
                                               enable_impeller);
           };
 
-  flutter::EmbedderExternalViewEmbedder::PresentCallback present_callback;
-  flutter::EmbedderExternalViewEmbedder::GetShellVisualsCallback
-      get_shell_visuals_callback;
-  flutter::EmbedderExternalViewEmbedder::GetShellSourcesCallback
-      get_shell_sources_callback;
-  if (c_get_shell_visuals_callback) {
-    get_shell_visuals_callback =
-        [c_get_shell_visuals_callback, user_data = compositor->user_data](
-            FlutterViewId view_id) {
-          FlutterShellVisuals shell_visuals = {
-              .struct_size = sizeof(FlutterShellVisuals),
-              .shell_visuals = nullptr,
-              .shell_visuals_count = 0,
-          };
-          if (!c_get_shell_visuals_callback(view_id, &shell_visuals, user_data) ||
-              shell_visuals.shell_visuals == nullptr ||
-              shell_visuals.shell_visuals_count == 0) {
-            return std::vector<FlutterShellVisualInfo>{};
-          }
-          return std::vector<FlutterShellVisualInfo>(
-              shell_visuals.shell_visuals,
-              shell_visuals.shell_visuals + shell_visuals.shell_visuals_count);
+  flutter::EmbedderExternalViewEmbedder::PresentRenderTargetCallback
+      present_render_target_callback;
+  present_render_target_callback =
+      [c_present_render_target_callback, user_data = compositor->user_data](
+          FlutterViewId view_id,
+          const FlutterBackingStore* backing_store,
+          const FlutterBackingStorePresentInfo* backing_store_present_info) {
+        TRACE_EVENT0("flutter", "FlutterCompositorPresentRenderTarget");
+
+        FlutterPresentRenderTargetInfo info = {
+            .struct_size = sizeof(FlutterPresentRenderTargetInfo),
+            .target_id = view_id,
+            .backing_store = backing_store,
+            .backing_store_present_info = backing_store_present_info,
+            .user_data = user_data,
         };
-  }
-  if (c_get_shell_sources_callback) {
-    get_shell_sources_callback =
-        [c_get_shell_sources_callback, user_data = compositor->user_data](
-            FlutterViewId view_id) {
-          FlutterShellSources shell_sources = {
-              .struct_size = sizeof(FlutterShellSources),
-              .shell_sources = nullptr,
-              .shell_sources_count = 0,
-          };
-          if (!c_get_shell_sources_callback(view_id, &shell_sources, user_data) ||
-              shell_sources.shell_sources == nullptr ||
-              shell_sources.shell_sources_count == 0) {
-            return std::vector<FlutterShellSourceInfo>{};
-          }
-          return std::vector<FlutterShellSourceInfo>(
-              shell_sources.shell_sources,
-              shell_sources.shell_sources + shell_sources.shell_sources_count);
-        };
-  }
-
-  if (c_present_callback) {
-    present_callback = [c_present_callback, user_data = compositor->user_data](
-                           FlutterViewId view_id, const auto& layers) {
-      TRACE_EVENT0("flutter", "FlutterCompositorPresentLayers");
-      return c_present_callback(const_cast<const FlutterLayer**>(layers.data()),
-                                layers.size(), user_data);
-    };
-  } else {
-    FML_DCHECK(c_present_view_callback != nullptr);
-    auto shell_present_sequence =
-        std::make_shared<std::atomic<uint64_t>>(1u);
-    present_callback = [c_present_view_callback,
-                        user_data = compositor->user_data,
-                        shell_present_sequence](
-                           FlutterViewId view_id, const auto& layers) {
-      TRACE_EVENT0("flutter", "FlutterCompositorPresentLayers");
-
-      size_t shell_backing_store_count = 0;
-      FlutterShellLayerRole shell_layer_role = kFlutterShellLayerRoleUnknown;
-      const FlutterLayer* shell_background_layer = nullptr;
-      const FlutterLayer* shell_underlay_layer = nullptr;
-      const FlutterLayer* shell_overlay_layer = nullptr;
-      const FlutterLayer* shell_per_window_chrome_layer = nullptr;
-      for (const auto* layer : layers) {
-        if (layer == nullptr ||
-            layer->type != kFlutterLayerContentTypeBackingStore) {
-          continue;
-        }
-        shell_backing_store_count++;
-        switch (layer->shell_layer_role) {
-          case kFlutterShellLayerRoleBackground:
-            if (shell_background_layer == nullptr) {
-              shell_background_layer = layer;
-            }
-            break;
-          case kFlutterShellLayerRoleUnderlay:
-            if (shell_underlay_layer == nullptr) {
-              shell_underlay_layer = layer;
-            }
-            break;
-          case kFlutterShellLayerRoleOverlay:
-            if (shell_overlay_layer == nullptr) {
-              shell_overlay_layer = layer;
-            }
-            break;
-          case kFlutterShellLayerRolePerWindowChrome:
-            if (shell_per_window_chrome_layer == nullptr) {
-              shell_per_window_chrome_layer = layer;
-            }
-            break;
-          case kFlutterShellLayerRoleUnknown:
-          case kFlutterShellLayerRoleEmbeddedContent:
-            break;
-        }
-        if (shell_layer_role == kFlutterShellLayerRoleUnknown &&
-            layer->shell_layer_role != kFlutterShellLayerRoleUnknown) {
-          shell_layer_role = layer->shell_layer_role;
-        }
-      }
-      if (shell_backing_store_count > 0 &&
-          shell_layer_role == kFlutterShellLayerRoleUnknown) {
-        shell_layer_role = kFlutterShellLayerRoleOverlay;
-      }
-
-      FlutterPresentViewInfo info = {
-          .struct_size = sizeof(FlutterPresentViewInfo),
-          .view_id = view_id,
-          .layers = const_cast<const FlutterLayer**>(layers.data()),
-          .layers_count = layers.size(),
-          .user_data = user_data,
-          .shell_layer_role = shell_layer_role,
-          .shell_backing_store_count = shell_backing_store_count,
-          .shell_present_sequence =
-              shell_present_sequence->fetch_add(1, std::memory_order_relaxed),
-          .shell_background_layer = shell_background_layer,
-          .shell_underlay_layer = shell_underlay_layer,
-          .shell_overlay_layer = shell_overlay_layer,
-          .shell_per_window_chrome_layer = shell_per_window_chrome_layer,
+        return c_present_render_target_callback(&info);
       };
-
-      return c_present_view_callback(&info);
-    };
-  }
 
   return {std::make_unique<flutter::EmbedderExternalViewEmbedder>(
               avoid_backing_store_cache, create_render_target_callback,
-              present_callback, get_shell_visuals_callback,
-              get_shell_sources_callback),
+              present_render_target_callback),
           false};
 }
 

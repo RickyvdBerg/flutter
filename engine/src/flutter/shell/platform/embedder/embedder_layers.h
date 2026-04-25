@@ -20,11 +20,6 @@ namespace flutter {
 
 class EmbedderLayers {
  public:
-  using GetShellVisualsCallback =
-      std::function<std::vector<FlutterShellVisualInfo>(FlutterViewId view_id)>;
-  using GetShellSourcesCallback =
-      std::function<std::vector<FlutterShellSourceInfo>(FlutterViewId view_id)>;
-
   EmbedderLayers(SkISize frame_size,
                  double device_pixel_ratio,
                  SkMatrix root_surface_transformation,
@@ -45,11 +40,17 @@ class EmbedderLayers {
   using PresentCallback =
       std::function<bool(FlutterViewId view_id,
                          const std::vector<const FlutterLayer*>& layers)>;
+  using PresentRenderTargetCallback =
+      std::function<bool(
+          FlutterViewId view_id,
+          const FlutterBackingStore* backing_store,
+          const FlutterBackingStorePresentInfo* backing_store_present_info)>;
   void InvokePresentCallback(FlutterViewId view_id,
                              std::shared_ptr<const EmbedderLayers> retained_layers,
-                             const GetShellVisualsCallback* get_shell_visuals_callback,
-                             const GetShellSourcesCallback* get_shell_sources_callback,
                              const PresentCallback& callback);
+  bool InvokePresentRenderTargetCallback(
+      FlutterViewId view_id,
+      const PresentRenderTargetCallback& callback);
 
  private:
   const SkISize frame_size_;
@@ -69,7 +70,6 @@ class EmbedderLayers {
   std::shared_ptr<const EmbedderLayers> retained_layers_dependency_;
   uint64_t presentation_time_;
   std::optional<DlRegion> frame_damage_;
-  bool saw_shell_layer_boundary_ = false;
 
   FML_DISALLOW_COPY_AND_ASSIGN(EmbedderLayers);
 };

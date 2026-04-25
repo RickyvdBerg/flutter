@@ -36,13 +36,11 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
           GrDirectContext* context,
           const std::shared_ptr<impeller::AiksContext>& aiks_context,
           const FlutterBackingStoreConfig& config)>;
-  using PresentCallback =
-      std::function<bool(FlutterViewId view_id,
-                         const std::vector<const FlutterLayer*>& layers)>;
-  using GetShellVisualsCallback =
-      std::function<std::vector<FlutterShellVisualInfo>(FlutterViewId view_id)>;
-  using GetShellSourcesCallback =
-      std::function<std::vector<FlutterShellSourceInfo>(FlutterViewId view_id)>;
+  using PresentRenderTargetCallback =
+      std::function<bool(
+          FlutterViewId view_id,
+          const FlutterBackingStore* backing_store,
+          const FlutterBackingStorePresentInfo* backing_store_present_info)>;
   using SurfaceTransformationCallback = std::function<SkMatrix(void)>;
 
   //----------------------------------------------------------------------------
@@ -65,9 +63,7 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
   EmbedderExternalViewEmbedder(
       bool avoid_backing_store_cache,
       const CreateRenderTargetCallback& create_render_target_callback,
-      const PresentCallback& present_callback,
-      const GetShellVisualsCallback& get_shell_visuals_callback,
-      const GetShellSourcesCallback& get_shell_sources_callback);
+      const PresentRenderTargetCallback& present_render_target_callback);
 
   //----------------------------------------------------------------------------
   /// @brief      Collects the external view embedder.
@@ -125,20 +121,15 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
  private:
   const bool avoid_backing_store_cache_;
   const CreateRenderTargetCallback create_render_target_callback_;
-  const PresentCallback present_callback_;
-  const GetShellVisualsCallback get_shell_visuals_callback_;
-  const GetShellSourcesCallback get_shell_sources_callback_;
+  const PresentRenderTargetCallback present_render_target_callback_;
   SurfaceTransformationCallback surface_transformation_callback_;
   SkISize pending_frame_size_ = SkISize::Make(0, 0);
   double pending_device_pixel_ratio_ = 1.0;
   SkMatrix pending_surface_transformation_;
-  bool has_shell_layer_boundary_markers_ = false;
   EmbedderExternalView::PendingViews pending_views_;
   std::vector<EmbedderExternalView::ViewIdentifier> composition_order_;
   // The render target caches for views. Each key is a view ID.
   std::unordered_map<int64_t, EmbedderRenderTargetCache> render_target_caches_;
-  std::unordered_map<int64_t, std::shared_ptr<EmbedderLayers>>
-      retained_presented_layers_;
 
   void Reset();
 

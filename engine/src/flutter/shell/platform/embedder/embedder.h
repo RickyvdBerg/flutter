@@ -2137,108 +2137,22 @@ typedef struct {
 } FlutterLayer;
 
 typedef struct {
-  /// This size of this struct. Must be sizeof(FlutterShellVisualInfo).
-  size_t struct_size;
-
-  /// The logical shell role represented by this visual.
-  FlutterShellLayerRole shell_layer_role;
-
-  /// Stable compositor-provided identifier for this shell visual.
-  uint64_t shell_visual_identifier;
-
-  /// Monotonic compositor-provided visual generation for this shell visual.
-  uint64_t shell_visual_generation;
-
-  /// Compositor-authored model serial for this shell visual.
-  ///
-  /// For per-window chrome this advances when the compositor-visible chrome
-  /// model changes, independent of Flutter-authored raster generations.
-  uint64_t shell_chrome_model_serial;
-
-  /// The exact visual rect inside the shell backing store. For per-window
-  /// chrome this is the titlebar source rect that should be cropped out of the
-  /// backing store before compositor placement.
-  FlutterRect source_rect;
-} FlutterShellVisualInfo;
-
-typedef struct {
-  /// This size of this struct. Must be sizeof(FlutterShellVisuals).
-  size_t struct_size;
-
-  /// Borrowed array of shell visual descriptors valid for the duration of the
-  /// callback.
-  const FlutterShellVisualInfo* shell_visuals;
-
-  /// The count of `shell_visuals`.
-  size_t shell_visuals_count;
-} FlutterShellVisuals;
-
-typedef struct {
-  /// This size of this struct. Must be sizeof(FlutterShellSourceInfo).
-  size_t struct_size;
-
-  /// The logical shell role for this source channel.
-  FlutterShellLayerRole shell_layer_role;
-
-  /// The exact source rect for this channel inside the backing store.
-  FlutterRect source_rect;
-} FlutterShellSourceInfo;
-
-typedef struct {
-  /// This size of this struct. Must be sizeof(FlutterShellSources).
-  size_t struct_size;
-
-  /// Borrowed array of shell source descriptors valid for the duration of the
-  /// callback.
-  const FlutterShellSourceInfo* shell_sources;
-
-  /// The count of `shell_sources`.
-  size_t shell_sources_count;
-} FlutterShellSources;
-
-typedef struct {
   /// The size of this struct.
-  /// Must be sizeof(FlutterPresentViewInfo).
+  /// Must be sizeof(FlutterPresentRenderTargetInfo).
   size_t struct_size;
 
-  /// The identifier of the target view.
-  FlutterViewId view_id;
+  /// The identifier of the compositor-owned render target.
+  FlutterViewId target_id;
 
-  /// The layers that should be composited onto the view.
-  const FlutterLayer** layers;
+  /// The single Flutter backing store produced for this render target.
+  const FlutterBackingStore* backing_store;
 
-  /// The count of layers.
-  size_t layers_count;
+  /// Per-target presentation metadata for the backing store.
+  const FlutterBackingStorePresentInfo* backing_store_present_info;
 
   /// The |FlutterCompositor.user_data|.
   void* user_data;
-
-  /// The logical role of the shell frame bundle carried by this present
-  /// callback.
-  FlutterShellLayerRole shell_layer_role;
-
-  /// The number of Flutter backing-store layers in this callback.
-  size_t shell_backing_store_count;
-
-  /// A monotonic present-callback sequence number for this shell bundle.
-  ///
-  /// This preserves callback ordering only. Exact shell-layer generations
-  /// remain layer-local (for example, the transitional single-layer path uses
-  /// the backing-store generation as the exact shell generation).
-  uint64_t shell_present_sequence;
-
-  /// The explicit shell background layer, or NULL if absent.
-  const FlutterLayer* shell_background_layer;
-
-  /// The explicit shell underlay layer, or NULL if absent.
-  const FlutterLayer* shell_underlay_layer;
-
-  /// The explicit shell overlay layer, or NULL if absent.
-  const FlutterLayer* shell_overlay_layer;
-
-  /// The explicit per-window chrome layer, or NULL if absent.
-  const FlutterLayer* shell_per_window_chrome_layer;
-} FlutterPresentViewInfo;
+} FlutterPresentRenderTargetInfo;
 
 typedef bool (*FlutterBackingStoreCreateCallback)(
     const FlutterBackingStoreConfig* config,
@@ -2249,31 +2163,13 @@ typedef bool (*FlutterBackingStoreCollectCallback)(
     const FlutterBackingStore* renderer,
     void* user_data);
 
-typedef bool (*FlutterLayersPresentCallback)(const FlutterLayer** layers,
-                                             size_t layers_count,
-                                             void* user_data);
-
-/// The callback invoked when the embedder should present to a view.
+/// The callback invoked when the engine has produced a single explicit render
+/// target for presentation.
 ///
-/// The |FlutterPresentViewInfo| will be deallocated once the callback returns.
-typedef bool (*FlutterPresentViewCallback)(
-    const FlutterPresentViewInfo* /* present info */);
-
-/// Callback invoked by the engine to query explicit shell visual metadata for a
-/// specific view. The returned pointers only need to remain valid until the
-/// callback returns.
-typedef bool (*FlutterShellVisualsCallback)(
-    FlutterViewId view_id,
-    FlutterShellVisuals* shell_visuals_out,
-    void* user_data);
-
-/// Callback invoked by the engine to query explicit shell source-channel
-/// metadata for a specific view. The returned pointers only need to remain
-/// valid until the callback returns.
-typedef bool (*FlutterShellSourcesCallback)(
-    FlutterViewId view_id,
-    FlutterShellSources* shell_sources_out,
-    void* user_data);
+/// The |FlutterPresentRenderTargetInfo| will be deallocated once the callback
+/// returns.
+typedef bool (*FlutterPresentRenderTargetCallback)(
+    const FlutterPresentRenderTargetInfo* /* present info */);
 
 typedef struct {
   /// This size of this struct. Must be sizeof(FlutterCompositor).
@@ -2281,8 +2177,7 @@ typedef struct {
   /// A baton that in not interpreted by the engine in any way. If it passed
   /// back to the embedder in `FlutterCompositor.create_backing_store_callback`,
   /// `FlutterCompositor.collect_backing_store_callback`,
-  /// `FlutterCompositor.present_layers_callback`, and
-  /// `FlutterCompositor.present_view_callback`.
+  /// `FlutterCompositor.present_render_target_callback`.
   void* user_data;
   /// A callback invoked by the engine to obtain a backing store for a specific
   /// `FlutterLayer`.
@@ -2299,19 +2194,6 @@ typedef struct {
   ///
   /// The callback should return true if the operation was successful.
   FlutterBackingStoreCollectCallback collect_backing_store_callback;
-  /// Callback invoked by the engine to composite the contents of each layer
-  /// onto the implicit view.
-  ///
-  /// DEPRECATED: Use `present_view_callback` to support multiple views.
-  /// If this callback is provided, `FlutterEngineAddView` and
-  /// `FlutterEngineRemoveView` should not be used.
-  ///
-  /// Only one of `present_layers_callback` and `present_view_callback` may be
-  /// provided. Providing both is an error and engine initialization will
-  /// terminate.
-  ///
-  /// The callback should return true if the operation was successful.
-  FlutterLayersPresentCallback present_layers_callback;
   /// Avoid caching backing stores provided by this compositor.
   ///
   /// The engine has an internal backing store cache. Instead of
@@ -2322,31 +2204,20 @@ typedef struct {
   /// they've been used once, and create new backing stores for every frame,
   /// you can set this bool to true.
   bool avoid_backing_store_cache;
-  /// Callback invoked by the engine to composite the contents of each layer
-  /// onto the specified view.
+
+  /// Callback invoked by the engine to present a single explicit render target
+  /// produced for the specified view/target.
   ///
-  /// Only one of `present_layers_callback` and `present_view_callback` may be
-  /// provided. Providing both is an error and engine initialization will
-  /// terminate.
+  /// This path is intended for compositor-owned scene systems where Flutter is
+  /// a render-target producer and the embedder remains the authority for
+  /// geometry, ordering, and scene composition.
   ///
   /// The callback should return true if the operation was successful.
-  FlutterPresentViewCallback present_view_callback;
-
-  /// Callback invoked by the engine to query explicit shell visual metadata for
-  /// a specific view. This is used to expose structured shell visuals such as
-  /// per-window chrome without smuggling identity through platform-view marker
-  /// IDs.
-  FlutterShellVisualsCallback get_shell_visuals_callback;
-
-  /// Callback invoked by the engine to query explicit shell source-channel
-  /// metadata for a specific view. This makes the source-channel contract
-  /// explicit even when the current raster path still uses internal split
-  /// markers to produce separate backing stores.
-  FlutterShellSourcesCallback get_shell_sources_callback;
+  FlutterPresentRenderTargetCallback present_render_target_callback;
 
   /// Callback invoked by the engine when a scheduled frame completes without
-  /// producing any compositor work (no backing stores created, no present_view
-  /// callback).
+  /// producing any compositor work (no backing stores created, no explicit
+  /// render-target callback).
   ///
   /// This happens when the Dart framework decides nothing needs to be redrawn
   /// for the views on the given display.  Without this callback, the embedder

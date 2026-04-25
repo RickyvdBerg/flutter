@@ -496,6 +496,18 @@ static void fl_compositor_opengl_wait_for_frame(FlCompositor* compositor,
   }
 }
 
+static void fl_compositor_opengl_get_target_size(FlCompositor* compositor,
+                                                 int* target_width,
+                                                 int* target_height) {
+  FlCompositorOpenGL* self = FL_COMPOSITOR_OPENGL(compositor);
+  if (target_width != nullptr) {
+    *target_width = self->target_width;
+  }
+  if (target_height != nullptr) {
+    *target_height = self->target_height;
+  }
+}
+
 static gboolean fl_compositor_opengl_present_layers(FlCompositor* compositor,
                                                     FlutterViewId view_id,
                                                     const FlutterLayer** layers,
@@ -552,6 +564,8 @@ static void fl_compositor_opengl_class_init(FlCompositorOpenGLClass* klass) {
       fl_compositor_opengl_create_backing_store;
   FL_COMPOSITOR_CLASS(klass)->collect_backing_store =
       fl_compositor_opengl_collect_backing_store;
+  FL_COMPOSITOR_CLASS(klass)->get_target_size =
+      fl_compositor_opengl_get_target_size;
   FL_COMPOSITOR_CLASS(klass)->wait_for_frame =
       fl_compositor_opengl_wait_for_frame;
   FL_COMPOSITOR_CLASS(klass)->present_layers =

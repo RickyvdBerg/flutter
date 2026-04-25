@@ -434,8 +434,8 @@ bool FlutterWindowsEngine::Run(std::string_view entrypoint) {
     return host->compositor_->CollectBackingStore(backing_store);
   };
 
-  compositor.present_view_callback =
-      [](const FlutterPresentViewInfo* info) -> bool {
+  compositor.present_render_target_callback =
+      [](const FlutterPresentRenderTargetInfo* info) -> bool {
     auto host = static_cast<FlutterWindowsEngine*>(info->user_data);
 
     return host->Present(info);
@@ -1069,20 +1069,41 @@ void FlutterWindowsEngine::OnViewFocusChangeRequest(
   view->Focus();
 }
 
-bool FlutterWindowsEngine::Present(const FlutterPresentViewInfo* info) {
+bool FlutterWindowsEngine::Present(const FlutterPresentRenderTargetInfo* info) {
   // This runs on the raster thread. Lock the views map for the entirety of the
   // present operation to block the platform thread from destroying the
   // view during the present.
   std::shared_lock read_lock(views_mutex_);
 
-  auto iterator = views_.find(info->view_id);
+  auto iterator = views_.find(info->target_id);
   if (iterator == views_.end()) {
     return false;
   }
 
   FlutterWindowsView* view = iterator->second;
+  double width = 0.0;
+  double height = 0.0;
+  if (auto* surface = view->surface()) {
+    width = static_cast<double>(surface->width());
+    height = static_cast<double>(surface->height());
+  }
 
-  return compositor_->Present(view, info->layers, info->layers_count);
+  FlutterLayer layer = {
+      .struct_size = sizeof(FlutterLayer),
+      .type = kFlutterLayerContentTypeBackingStore,
+      .backing_store = info->backing_store,
+      .offset = FlutterPoint{0.0, 0.0},
+      .size = FlutterSize{width, height},
+      .backing_store_present_info = const_cast<FlutterBackingStorePresentInfo*>(
+          info->backing_store_present_info),
+      .presentation_time = 0,
+      .shell_layer_role = kFlutterShellLayerRoleUnknown,
+      .shell_visual_identifier = 0,
+      .shell_visual_generation = 0,
+      .shell_chrome_model_serial = 0,
+  };
+  const FlutterLayer* layers[] = {&layer};
+  return compositor_->Present(view, layers, 1);
 }
 
 }  // namespace flutter

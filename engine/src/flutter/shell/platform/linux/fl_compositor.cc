@@ -45,3 +45,11 @@ gboolean fl_compositor_present_layers(FlCompositor* self,
   return FL_COMPOSITOR_GET_CLASS(self)->present_layers(self, view_id, layers,
                                                        layers_count);
 }
+
+void fl_compositor_get_target_size(FlCompositor* self,
+                                   int* target_width,
+                                   int* target_height) {
+  g_return_if_fail(FL_IS_COMPOSITOR(self));
+  FL_COMPOSITOR_GET_CLASS(self)->get_target_size(self, target_width,
+                                                 target_height);
+}

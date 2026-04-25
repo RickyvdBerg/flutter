@@ -66,28 +66,21 @@ TEST_F(EmbedderTest,
   builder.SetCompositor();
   builder.GetCompositor().create_backing_store_callback = nullptr;
   builder.GetCompositor().collect_backing_store_callback = nullptr;
-  builder.GetCompositor().present_layers_callback = nullptr;
-  builder.GetCompositor().present_view_callback = nullptr;
+  builder.GetCompositor().present_render_target_callback = nullptr;
   auto engine = builder.LaunchEngine();
   ASSERT_FALSE(engine.is_valid());
 }
 
 //------------------------------------------------------------------------------
-/// Either present_layers_callback or present_view_callback must be provided,
-/// but not both, otherwise the engine must fail to launch instead of failing to
-/// render a frame at a later point in time.
+/// The compositor present callback is required. Launch must fail if it is
+/// missing rather than deferring the error until a frame is rendered.
 ///
-TEST_F(EmbedderTest, LaunchFailsWhenMultiplePresentCallbacks) {
+TEST_F(EmbedderTest, LaunchFailsWhenPresentRenderTargetCallbackMissing) {
   auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
   EmbedderConfigBuilder builder(context);
   builder.SetSurface(SkISize::Make(1, 1));
   builder.SetCompositor();
-  builder.GetCompositor().present_layers_callback =
-      [](const FlutterLayer** layers, size_t layers_count, void* user_data) {
-        return true;
-      };
-  builder.GetCompositor().present_view_callback =
-      [](const FlutterPresentViewInfo* info) { return true; };
+  builder.GetCompositor().present_render_target_callback = nullptr;
   auto engine = builder.LaunchEngine();
   ASSERT_FALSE(engine.is_valid());
 }

@@ -28,6 +28,10 @@ struct _FlCompositorClass {
                              const FlutterLayer** layers,
                              size_t layers_count);
 
+  void (*get_target_size)(FlCompositor* compositor,
+                          int* target_width,
+                          int* target_height);
+
   void (*wait_for_frame)(FlCompositor* compositor,
                          int target_width,
                          int target_height);
@@ -84,6 +88,10 @@ gboolean fl_compositor_present_layers(FlCompositor* compositor,
                                       FlutterViewId view_id,
                                       const FlutterLayer** layers,
                                       size_t layers_count);
+
+void fl_compositor_get_target_size(FlCompositor* compositor,
+                                   int* target_width,
+                                   int* target_height);
 
 /**
  * fl_compositor_wait_for_frame:

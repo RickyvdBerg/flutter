@@ -973,13 +973,12 @@ TEST_F(EmbedderTest, CanRenderImplicitView) {
   latch.Wait();
 }
 
-TEST_F(EmbedderTest, CanRenderImplicitViewUsingPresentLayersCallback) {
+TEST_F(EmbedderTest, CanRenderImplicitViewUsingPresentRenderTargetCallback) {
   auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
 
   EmbedderConfigBuilder builder(context);
   builder.SetSurface(SkISize::Make(800, 600));
-  builder.SetCompositor(/* avoid_backing_store_cache = */ false,
-                        /* use_present_layers_callback = */ true);
+  builder.SetCompositor(/* avoid_backing_store_cache = */ false);
   builder.SetDartEntrypoint("render_implicit_view");
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kSoftwareBuffer);
@@ -2398,20 +2397,19 @@ TEST_F(EmbedderTest, BackingStoresCorrespondToTheirViews) {
           },
       .collect_backing_store_callback = [](const FlutterBackingStore* renderer,
                                            void* user_data) { return true; },
-      .present_layers_callback = nullptr,
       .avoid_backing_store_cache = false,
-      .present_view_callback =
-          [](const FlutterPresentViewInfo* info) {
-            EXPECT_EQ(info->layers_count, 1u);
-            // Verify that the given layer's backing store has the same view ID
+      .present_render_target_callback =
+          [](const FlutterPresentRenderTargetInfo* info) {
+            ASSERT_NE(info->backing_store, nullptr);
+            // Verify that the given backing store has the same view ID
             // as the target view.
-            int64_t store_view_id = reinterpret_cast<int64_t>(
-                info->layers[0]->backing_store->user_data);
-            EXPECT_EQ(store_view_id, info->view_id);
+            int64_t store_view_id =
+                reinterpret_cast<int64_t>(info->backing_store->user_data);
+            EXPECT_EQ(store_view_id, info->target_id);
             auto compositor_user_data =
                 reinterpret_cast<CompositorUserData*>(info->user_data);
             // Verify that the respective views are rendered.
-            switch (info->view_id) {
+            switch (info->target_id) {
               case 0:
                 compositor_user_data->latch_implicit.Signal();
                 break;

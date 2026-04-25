@@ -265,12 +265,33 @@ static bool compositor_collect_backing_store_callback(
   return fl_compositor_collect_backing_store(self->compositor, backing_store);
 }
 
-// Called when embedder should composite contents of each layer onto the screen.
-static bool compositor_present_view_callback(
-    const FlutterPresentViewInfo* info) {
+// Called when the engine presents an explicit render target.
+static bool compositor_present_render_target_callback(
+    const FlutterPresentRenderTargetInfo* info) {
   FlEngine* self = static_cast<FlEngine*>(info->user_data);
-  return fl_compositor_present_layers(self->compositor, info->view_id,
-                                      info->layers, info->layers_count);
+
+  int target_width = 0;
+  int target_height = 0;
+  fl_compositor_get_target_size(self->compositor, &target_width, &target_height);
+
+  FlutterLayer layer = {
+      .struct_size = sizeof(FlutterLayer),
+      .type = kFlutterLayerContentTypeBackingStore,
+      .backing_store = info->backing_store,
+      .offset = FlutterPoint{0.0, 0.0},
+      .size = FlutterSize{static_cast<double>(target_width),
+                          static_cast<double>(target_height)},
+      .backing_store_present_info = const_cast<FlutterBackingStorePresentInfo*>(
+          info->backing_store_present_info),
+      .presentation_time = 0,
+      .shell_layer_role = kFlutterShellLayerRoleUnknown,
+      .shell_visual_identifier = 0,
+      .shell_visual_generation = 0,
+      .shell_chrome_model_serial = 0,
+  };
+  const FlutterLayer* layers[] = {&layer};
+  return fl_compositor_present_layers(self->compositor, info->target_id, layers,
+                                      1);
 }
 
 // Flutter engine rendering callbacks.
@@ -298,7 +319,7 @@ static uint32_t fl_engine_gl_get_fbo(void* user_data) {
 
 static bool fl_engine_gl_present(void* user_data) {
   // No action required, as this is handled in
-  // compositor_present_view_callback.
+  // compositor_present_render_target_callback.
   return true;
 }
 
@@ -672,7 +693,8 @@ gboolean fl_engine_start(FlEngine* self, GError** error) {
       compositor_create_backing_store_callback;
   compositor.collect_backing_store_callback =
       compositor_collect_backing_store_callback;
-  compositor.present_view_callback = compositor_present_view_callback;
+  compositor.present_render_target_callback =
+      compositor_present_render_target_callback;
   args.compositor = &compositor;
 
   if (self->embedder_api.RunsAOTCompiledDartCode()) {

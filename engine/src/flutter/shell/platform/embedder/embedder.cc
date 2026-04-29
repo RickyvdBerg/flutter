@@ -691,6 +691,8 @@ InferVulkanPlatformViewCreationCallback(
             .get_next_image = vulkan_get_next_image,
             .present_image = vulkan_present_image_callback,
         };
+    impeller::Flags impeller_flags;
+    impeller_flags.use_sdfs = shell.GetSettings().impeller_use_sdfs;
 
     std::unique_ptr<flutter::EmbedderSurfaceVulkanImpeller> embedder_surface =
         std::make_unique<flutter::EmbedderSurfaceVulkanImpeller>(
@@ -703,7 +705,7 @@ InferVulkanPlatformViewCreationCallback(
             static_cast<VkDevice>(config->vulkan.device),
             config->vulkan.queue_family_index,
             static_cast<VkQueue>(config->vulkan.queue), vulkan_dispatch_table,
-            view_embedder);
+            view_embedder, impeller_flags);
 
     return fml::MakeCopyable(
         [embedder_surface = std::move(embedder_surface),

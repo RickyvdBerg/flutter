@@ -639,7 +639,8 @@ InferVulkanPlatformViewCreationCallback(
         platform_dispatch_table,
     std::unique_ptr<flutter::EmbedderExternalViewEmbedder>
         external_view_embedder,
-    bool enable_impeller) {
+    bool enable_impeller,
+    bool impeller_use_sdfs) {
   if (config->type != kVulkan) {
     return nullptr;
   }
@@ -692,7 +693,7 @@ InferVulkanPlatformViewCreationCallback(
             .present_image = vulkan_present_image_callback,
         };
     impeller::Flags impeller_flags;
-    impeller_flags.use_sdfs = shell.GetSettings().impeller_use_sdfs;
+    impeller_flags.use_sdfs = impeller_use_sdfs;
 
     std::unique_ptr<flutter::EmbedderSurfaceVulkanImpeller> embedder_surface =
         std::make_unique<flutter::EmbedderSurfaceVulkanImpeller>(
@@ -841,7 +842,8 @@ InferPlatformViewCreationCallback(
         platform_dispatch_table,
     std::unique_ptr<flutter::EmbedderExternalViewEmbedder>
         external_view_embedder,
-    bool enable_impeller) {
+    bool enable_impeller,
+    bool impeller_use_sdfs) {
   if (config == nullptr) {
     return nullptr;
   }
@@ -862,7 +864,7 @@ InferPlatformViewCreationCallback(
     case kVulkan:
       return InferVulkanPlatformViewCreationCallback(
           config, user_data, platform_dispatch_table,
-          std::move(external_view_embedder), enable_impeller);
+          std::move(external_view_embedder), enable_impeller, impeller_use_sdfs);
     default:
       return nullptr;
   }
@@ -1516,10 +1518,17 @@ MakeRenderTargetFromBackingStoreImpeller(
 
   auto render_target = surface->GetRenderTarget();
 
+  fml::closure framebuffer_destruct =
+      [callback = vulkan->destruction_callback, user_data = vulkan->user_data] {
+        if (callback) {
+          callback(user_data);
+        }
+      };
+
   return std::make_unique<flutter::EmbedderRenderTargetImpeller>(
       backing_store, aiks_context,
       std::make_unique<impeller::RenderTarget>(std::move(render_target)),
-      on_release, fml::closure(),
+      on_release, framebuffer_destruct,
       [wrapped_source]() mutable -> fml::UniqueFD {
         return wrapped_source->TakeRenderCompleteSyncFD();
       });
@@ -2555,7 +2564,7 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
   auto on_create_platform_view = InferPlatformViewCreationCallback(
       config, user_data, platform_dispatch_table,
       std::move(external_view_embedder_result.value()),
-      settings.enable_impeller);
+      settings.enable_impeller, settings.impeller_use_sdfs);
 
   if (!on_create_platform_view) {
     return LOG_EMBEDDER_ERROR(

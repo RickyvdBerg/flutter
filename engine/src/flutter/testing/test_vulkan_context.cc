@@ -109,7 +109,10 @@ TestVulkanContext::TestVulkanContext() {
 
 TestVulkanContext::~TestVulkanContext() {
   if (context_) {
+    context_->flushAndSubmit();
+    context_->freeGpuResources();
     context_->releaseResourcesAndAbandonContext();
+    context_.reset();
   }
 }
 

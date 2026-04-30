@@ -182,7 +182,7 @@ bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
   });
 
   FML_DCHECK(render_target.GetRenderTargetSize() ==
-             SkISize::Make(
+             DlISize(
                  static_cast<int>(std::ceil(render_target_bounds.GetWidth())),
                  static_cast<int>(std::ceil(render_target_bounds.GetHeight()))));
 

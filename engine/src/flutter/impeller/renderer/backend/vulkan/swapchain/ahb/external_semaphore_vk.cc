@@ -5,6 +5,7 @@
 #include "impeller/renderer/backend/vulkan/swapchain/ahb/external_semaphore_vk.h"
 
 #include "impeller/base/validation.h"
+#include "impeller/renderer/backend/vulkan/capabilities_vk.h"
 #include "impeller/renderer/backend/vulkan/context_vk.h"
 #include "vulkan/vulkan_handles.hpp"
 
@@ -15,13 +16,28 @@ ExternalSemaphoreVK::ExternalSemaphoreVK(
   if (!context) {
     return;
   }
+  const auto& context_vk = ContextVK::Cast(*context);
+  const auto& caps = CapabilitiesVK::Cast(*context->GetCapabilities());
+  if (!caps.SupportsExternalSemaphoreExtensions()) {
+    return;
+  }
+
+  vk::PhysicalDeviceExternalSemaphoreInfo external_info;
+  external_info.handleType = vk::ExternalSemaphoreHandleTypeFlagBits::eSyncFd;
+  const auto external_properties =
+      context_vk.GetPhysicalDevice().getExternalSemaphoreProperties(
+          external_info);
+  if (!(external_properties.externalSemaphoreFeatures &
+        vk::ExternalSemaphoreFeatureFlagBits::eExportable)) {
+    return;
+  }
+
   vk::StructureChain<vk::SemaphoreCreateInfo, vk::ExportSemaphoreCreateInfoKHR>
       info;
 
   info.get<vk::ExportSemaphoreCreateInfoKHR>().handleTypes =
       vk::ExternalSemaphoreHandleTypeFlagBits::eSyncFd;
 
-  const auto& context_vk = ContextVK::Cast(*context);
   auto [result, semaphore] =
       context_vk.GetDevice().createSemaphoreUnique(info.get());
   if (result != vk::Result::eSuccess) {

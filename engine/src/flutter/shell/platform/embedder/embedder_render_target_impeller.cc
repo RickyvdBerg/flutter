@@ -5,7 +5,9 @@
 #include "flutter/shell/platform/embedder/embedder_render_target_impeller.h"
 
 #include "flutter/fml/logging.h"
+#include "flutter/impeller/display_list/aiks_context.h"
 #include "flutter/impeller/renderer/render_target.h"
+#include "impeller/renderer/context.h"
 
 namespace flutter {
 
@@ -28,6 +30,7 @@ EmbedderRenderTargetImpeller::EmbedderRenderTargetImpeller(
 }
 
 EmbedderRenderTargetImpeller::~EmbedderRenderTargetImpeller() {
+  impeller_target_.reset();
   if (framebuffer_destruction_callback_) {
     framebuffer_destruction_callback_();
   }
@@ -56,7 +59,11 @@ fml::UniqueFD EmbedderRenderTargetImpeller::TakeRenderCompleteSyncFD() {
   if (!take_render_complete_sync_fd_callback_) {
     return {};
   }
-  return take_render_complete_sync_fd_callback_();
+  auto sync_fd = take_render_complete_sync_fd_callback_();
+  if (!sync_fd.is_valid()) {
+    aiks_context_->GetContext()->GetIdleWaiter()->WaitIdle();
+  }
+  return sync_fd;
 }
 
 }  // namespace flutter

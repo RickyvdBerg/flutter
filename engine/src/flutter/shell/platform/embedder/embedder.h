@@ -3009,6 +3009,21 @@ typedef void (*FlutterDmabufReleaseCallback)(void* user_data);
 
 #endif  // __linux__
 
+//------------------------------------------------------------------------------
+/// @brief      Intent for compositor-driven shell frame requests.
+///
+///             This is the narrow ABI seam between the compositor and the
+///             engine. All request kinds are compositor-directed; the engine
+///             only executes the requested shell work.
+typedef enum {
+  /// Build a fresh shell scene and rasterize it.
+  kFlutterEngineFrameRequestKindRebuild = 0,
+  /// Reuse the latest shell scene and rasterize it again.
+  kFlutterEngineFrameRequestKindReuseLatest = 1,
+  /// Reuse the latest shell scene after shell-owned texture invalidation.
+  kFlutterEngineFrameRequestKindTextureOnlyInvalidation = 2,
+} FlutterEngineFrameRequestKind;
+
 #ifndef FLUTTER_ENGINE_NO_PROTOTYPES
 
 // NOLINTBEGIN(google-objc-function-naming)
@@ -3858,21 +3873,6 @@ FlutterEngineResult FlutterEngineNotifyDisplayUpdate(
     FlutterEngineDisplaysUpdateType update_type,
     const FlutterEngineDisplay* displays,
     size_t display_count);
-
-//------------------------------------------------------------------------------
-/// @brief      Intent for compositor-driven shell frame requests.
-///
-///             This is the narrow ABI seam between the compositor and the
-///             engine. All request kinds are compositor-directed; the engine
-///             only executes the requested shell work.
-typedef enum {
-  /// Build a fresh shell scene and rasterize it.
-  kFlutterEngineFrameRequestKindRebuild = 0,
-  /// Reuse the latest shell scene and rasterize it again.
-  kFlutterEngineFrameRequestKindReuseLatest = 1,
-  /// Reuse the latest shell scene after shell-owned texture invalidation.
-  kFlutterEngineFrameRequestKindTextureOnlyInvalidation = 2,
-} FlutterEngineFrameRequestKind;
 
 //------------------------------------------------------------------------------
 /// @brief      Schedule a new frame to redraw the content.

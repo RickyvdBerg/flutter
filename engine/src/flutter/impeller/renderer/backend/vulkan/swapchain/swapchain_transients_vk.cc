@@ -16,19 +16,21 @@ SwapchainTransientsVK::SwapchainTransientsVK(std::weak_ptr<Context> context,
 SwapchainTransientsVK::~SwapchainTransientsVK() = default;
 
 const std::shared_ptr<Texture>& SwapchainTransientsVK::GetMSAATexture() {
-  if (cached_msaa_texture_) {
-    return cached_msaa_texture_;
+  std::scoped_lock lock(init_mutex_);
+  if (!cached_msaa_texture_) {
+    // Retry on null: a previous failed creation must not lock in the null
+    // result. Subsequent calls will re-attempt construction.
+    cached_msaa_texture_ = CreateMSAATexture();
   }
-  cached_msaa_texture_ = CreateMSAATexture();
   return cached_msaa_texture_;
 }
 
 const std::shared_ptr<Texture>&
 SwapchainTransientsVK::GetDepthStencilTexture() {
-  if (cached_depth_stencil_) {
-    return cached_depth_stencil_;
+  std::scoped_lock lock(init_mutex_);
+  if (!cached_depth_stencil_) {
+    cached_depth_stencil_ = CreateDepthStencilTexture();
   }
-  cached_depth_stencil_ = CreateDepthStencilTexture();
   return cached_depth_stencil_;
 }
 

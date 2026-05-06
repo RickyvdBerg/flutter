@@ -119,6 +119,7 @@ extern const intptr_t kPlatformStrongDillSize;
 #include "impeller/renderer/backend/vulkan/swapchain/ahb/external_semaphore_vk.h"  // nogncheck
 #include "impeller/renderer/backend/vulkan/swapchain/surface_vk.h"  // nogncheck
 #include "impeller/renderer/backend/vulkan/swapchain/swapchain_transients_vk.h"  // nogncheck
+#include "impeller/renderer/backend/vulkan/swapchain/transients_pool_vk.h"  // nogncheck
 #include "impeller/renderer/backend/vulkan/texture_source_vk.h"  // nogncheck
 #include "impeller/renderer/backend/vulkan/texture_vk.h"         // nogncheck
 #include "impeller/renderer/render_target.h"                     // nogncheck
@@ -1385,72 +1386,27 @@ class EmbedderTextureSourceVK : public impeller::TextureSourceVK {
 
 namespace {
 
-struct SwapchainTransientsCacheKey {
-  const impeller::Context* context = nullptr;
-  int format = 0;
-  int width = 0;
-  int height = 0;
-  bool enable_msaa = false;
-
-  bool operator==(const SwapchainTransientsCacheKey& other) const {
-    return context == other.context && format == other.format &&
-           width == other.width && height == other.height &&
-           enable_msaa == other.enable_msaa;
-  }
-};
-
-struct SwapchainTransientsCacheKeyHash {
-  std::size_t operator()(const SwapchainTransientsCacheKey& key) const {
-    return fml::HashCombine(reinterpret_cast<std::size_t>(key.context),
-                            static_cast<std::size_t>(key.format),
-                            static_cast<std::size_t>(key.width),
-                            static_cast<std::size_t>(key.height),
-                            static_cast<std::size_t>(key.enable_msaa));
-  }
-};
-
+// Resolve the `SwapchainTransientsVK` for the given color descriptor by
+// asking the Vulkan context for its long-lived transients pool. The pool
+// reuses MSAA + depth/stencil attachments across `EmbedderRenderTarget`
+// lifetimes so embedder paths that disable Flutter's render-target cache
+// (e.g. Wayland compositors that own the presentable buffer ring) do not
+// re-allocate the attachments per frame. Returns nullptr if the context
+// has no Vulkan backend or the pool has been torn down.
 std::shared_ptr<impeller::SwapchainTransientsVK> GetCachedSwapchainTransientsVK(
     const std::shared_ptr<impeller::Context>& context,
     const impeller::TextureDescriptor& desc,
     bool enable_msaa) {
-  static std::mutex cache_mutex;
-  static std::unordered_map<SwapchainTransientsCacheKey,
-                            std::weak_ptr<impeller::SwapchainTransientsVK>,
-                            SwapchainTransientsCacheKeyHash>
-      cache;
-
-  SwapchainTransientsCacheKey key = {
-      .context = context.get(),
-      .format = static_cast<int>(desc.format),
-      .width = static_cast<int>(desc.size.width),
-      .height = static_cast<int>(desc.size.height),
-      .enable_msaa = enable_msaa,
-  };
-
-  std::scoped_lock lock(cache_mutex);
-  auto found = cache.find(key);
-  if (found != cache.end()) {
-    if (auto existing = found->second.lock()) {
-      return existing;
-    }
-    cache.erase(found);
+  if (!context ||
+      context->GetBackendType() != impeller::Context::BackendType::kVulkan) {
+    return nullptr;
   }
-
-  auto created = std::make_shared<impeller::SwapchainTransientsVK>(
-      context, desc, enable_msaa);
-  cache[key] = created;
-
-  if (cache.size() > 64u) {
-    for (auto it = cache.begin(); it != cache.end();) {
-      if (it->second.expired()) {
-        it = cache.erase(it);
-      } else {
-        ++it;
-      }
-    }
+  auto& vk_context = impeller::ContextVK::Cast(*context);
+  auto pool = vk_context.GetSwapchainTransientsPool();
+  if (!pool) {
+    return nullptr;
   }
-
-  return created;
+  return pool->Acquire(desc, enable_msaa);
 }
 
 }  // namespace

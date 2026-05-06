@@ -42,6 +42,7 @@ class GPUTracerVK;
 class DescriptorPoolRecyclerVK;
 class CommandQueueVK;
 class DescriptorPoolVK;
+class TransientsPoolVK;
 
 class IdleWaiterVK : public IdleWaiter {
  public:
@@ -213,6 +214,14 @@ class ContextVK final : public Context,
 
   std::shared_ptr<CommandPoolRecyclerVK> GetCommandPoolRecycler() const;
 
+  /// @brief  Process-wide pool of `SwapchainTransientsVK` keyed by
+  ///         `(width, height, color format, MSAA enabled)`. Used by
+  ///         embedder render-target paths that must request a new
+  ///         backing store every frame and would otherwise re-allocate
+  ///         the MSAA + depth/stencil attachments per render. The pool
+  ///         lifetime is bound to this context.
+  std::shared_ptr<TransientsPoolVK> GetSwapchainTransientsPool() const;
+
   std::shared_ptr<DescriptorPoolRecyclerVK> GetDescriptorPoolRecycler() const;
 
   std::shared_ptr<CommandQueue> GetCommandQueue() const override;
@@ -283,6 +292,10 @@ class ContextVK final : public Context,
   std::shared_ptr<ResourceManagerVK> resource_manager_;
   std::shared_ptr<DescriptorPoolRecyclerVK> descriptor_pool_recycler_;
   std::shared_ptr<CommandPoolRecyclerVK> command_pool_recycler_;
+  // Declared after `resource_manager_` and `fence_waiter_` so that, on
+  // destruction, the cached transient textures are released before the
+  // resource manager / fence waiter that drive their cleanup.
+  std::shared_ptr<TransientsPoolVK> swapchain_transients_pool_;
   std::string device_name_;
   std::shared_ptr<fml::ConcurrentMessageLoop> raster_message_loop_;
   std::shared_ptr<GPUTracerVK> gpu_tracer_;

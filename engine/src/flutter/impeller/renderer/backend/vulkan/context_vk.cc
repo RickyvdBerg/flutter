@@ -41,6 +41,7 @@
 #include "impeller/renderer/backend/vulkan/gpu_tracer_vk.h"
 #include "impeller/renderer/backend/vulkan/resource_manager_vk.h"
 #include "impeller/renderer/backend/vulkan/surface_context_vk.h"
+#include "impeller/renderer/backend/vulkan/swapchain/transients_pool_vk.h"
 #include "impeller/renderer/backend/vulkan/yuv_conversion_library_vk.h"
 #include "impeller/renderer/capabilities.h"
 
@@ -131,6 +132,11 @@ ContextVK::ContextVK(const Flags& flags)
 ContextVK::~ContextVK() {
   if (device_holder_ && device_holder_->device) {
     [[maybe_unused]] auto result = device_holder_->device->waitIdle();
+  }
+  // Drop cached transient attachments before tearing down the resource
+  // manager and fence waiter that the textures rely on for cleanup.
+  if (swapchain_transients_pool_) {
+    swapchain_transients_pool_->Reset();
   }
   if (command_pool_recycler_) {
     command_pool_recycler_->DestroyThreadLocalPools();
@@ -488,6 +494,13 @@ void ContextVK::Setup(Settings settings) {
   resource_manager_ = std::move(resource_manager);
   command_pool_recycler_ = std::move(command_pool_recycler);
   descriptor_pool_recycler_ = std::move(descriptor_pool_recycler);
+  // Construct the transient attachment pool after capabilities are ready so
+  // we can ask whether memoryless attachments are supported and pick the
+  // depth/stencil format from device defaults.
+  swapchain_transients_pool_ = std::make_shared<TransientsPoolVK>(
+      weak_from_this(),
+      device_capabilities_->GetDefaultDepthStencilFormat(),
+      device_capabilities_->SupportsDeviceTransientTextures());
   device_name_ = std::string(physical_device_properties.deviceName);
   command_queue_vk_ = std::make_shared<CommandQueueVK>(weak_from_this());
   should_enable_surface_control_ = settings.enable_surface_control;
@@ -604,6 +617,14 @@ void ContextVK::Shutdown() {
   // pointers ensures that cleanup happens in a correct order.
   //
   // tl;dr: Without it, we get thread::join failures on shutdown.
+  //
+  // The transients pool owns cached MSAA + depth textures whose
+  // destructors enqueue work on `resource_manager_`/`fence_waiter_`, so it
+  // must be released before either of those is reset.
+  if (swapchain_transients_pool_) {
+    swapchain_transients_pool_->Reset();
+    swapchain_transients_pool_.reset();
+  }
   fence_waiter_->Terminate();
   resource_manager_.reset();
 
@@ -628,6 +649,11 @@ vk::PhysicalDevice ContextVK::GetPhysicalDevice() const {
 
 std::shared_ptr<FenceWaiterVK> ContextVK::GetFenceWaiter() const {
   return fence_waiter_;
+}
+
+std::shared_ptr<TransientsPoolVK> ContextVK::GetSwapchainTransientsPool()
+    const {
+  return swapchain_transients_pool_;
 }
 
 std::shared_ptr<ResourceManagerVK> ContextVK::GetResourceManager() const {

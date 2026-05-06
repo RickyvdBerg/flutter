@@ -84,7 +84,7 @@ class TransientsPoolVK {
                                                  bool enable_msaa);
 
   /// @brief  Drop all cached entries. Must be called before the owning
-  ///         `ResourceManagerVK` and `FenceWaiterVK` are destroyed so
+  ///         `ResourceManagerVK` and `TimelineCompletionVK` are destroyed so
   ///         that the textures' destructors complete cleanly.
   void Reset();
 

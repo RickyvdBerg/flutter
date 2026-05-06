@@ -6,6 +6,7 @@
 #define FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_QUEUE_VK_H_
 
 #include <memory>
+#include <utility>
 
 #include "impeller/base/thread.h"
 #include "impeller/renderer/backend/vulkan/vk.h"
@@ -38,6 +39,12 @@ class QueueVK {
 
   vk::Result Submit(const vk::SubmitInfo& submit_info,
                     const vk::Fence& fence) const;
+
+  template <class Submitter>
+  vk::Result SubmitLocked(Submitter&& submitter) const {
+    Lock lock(queue_mutex_);
+    return std::forward<Submitter>(submitter)(queue_);
+  }
 
   vk::Result Submit(const vk::Fence& fence) const;
 

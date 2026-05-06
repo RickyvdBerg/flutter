@@ -34,6 +34,13 @@ enum class RequiredCommonDeviceExtensionVK : uint32_t {
   ///
   kKHRSwapchain,
 
+  //----------------------------------------------------------------------------
+  /// Persistent queue completion timeline used instead of per-submit fences.
+  ///
+  /// https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_timeline_semaphore.html
+  ///
+  kKHRTimelineSemaphore,
+
   kLast,
 };
 
@@ -273,6 +280,7 @@ class CapabilitiesVK final : public Capabilities,
       vk::StructureChain<vk::PhysicalDeviceFeatures2,
                          vk::PhysicalDeviceSamplerYcbcrConversionFeaturesKHR,
                          vk::PhysicalDevice16BitStorageFeatures,
+                         vk::PhysicalDeviceTimelineSemaphoreFeatures,
                          vk::PhysicalDeviceImageCompressionControlFeaturesEXT>;
 
   std::optional<PhysicalDeviceFeatures> GetEnabledDeviceFeatures(

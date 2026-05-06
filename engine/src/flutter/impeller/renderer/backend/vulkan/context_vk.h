@@ -35,13 +35,13 @@ class CommandEncoderFactoryVK;
 class CommandEncoderVK;
 class CommandPoolRecyclerVK;
 class DebugReportVK;
-class FenceWaiterVK;
 class ResourceManagerVK;
 class SurfaceContextVK;
 class GPUTracerVK;
 class DescriptorPoolRecyclerVK;
 class CommandQueueVK;
 class DescriptorPoolVK;
+class TimelineCompletionVK;
 class TransientsPoolVK;
 
 class IdleWaiterVK : public IdleWaiter {
@@ -208,7 +208,7 @@ class ContextVK final : public Context,
 
   vk::PhysicalDevice GetPhysicalDevice() const;
 
-  std::shared_ptr<FenceWaiterVK> GetFenceWaiter() const;
+  std::shared_ptr<TimelineCompletionVK> GetTimelineCompletion() const;
 
   std::shared_ptr<ResourceManagerVK> GetResourceManager() const;
 
@@ -288,13 +288,13 @@ class ContextVK final : public Context,
   std::shared_ptr<YUVConversionLibraryVK> yuv_conversion_library_;
   QueuesVK queues_;
   std::shared_ptr<const Capabilities> device_capabilities_;
-  std::shared_ptr<FenceWaiterVK> fence_waiter_;
   std::shared_ptr<ResourceManagerVK> resource_manager_;
+  std::shared_ptr<TimelineCompletionVK> timeline_completion_;
   std::shared_ptr<DescriptorPoolRecyclerVK> descriptor_pool_recycler_;
   std::shared_ptr<CommandPoolRecyclerVK> command_pool_recycler_;
-  // Declared after `resource_manager_` and `fence_waiter_` so that, on
+  // Declared after `resource_manager_` and `timeline_completion_` so that, on
   // destruction, the cached transient textures are released before the
-  // resource manager / fence waiter that drive their cleanup.
+  // resource manager / timeline callbacks that drive their cleanup.
   std::shared_ptr<TransientsPoolVK> swapchain_transients_pool_;
   std::string device_name_;
   std::shared_ptr<fml::ConcurrentMessageLoop> raster_message_loop_;

@@ -37,11 +37,11 @@
 #include "impeller/renderer/backend/vulkan/command_queue_vk.h"
 #include "impeller/renderer/backend/vulkan/debug_report_vk.h"
 #include "impeller/renderer/backend/vulkan/descriptor_pool_vk.h"
-#include "impeller/renderer/backend/vulkan/fence_waiter_vk.h"
 #include "impeller/renderer/backend/vulkan/gpu_tracer_vk.h"
 #include "impeller/renderer/backend/vulkan/resource_manager_vk.h"
 #include "impeller/renderer/backend/vulkan/surface_context_vk.h"
 #include "impeller/renderer/backend/vulkan/swapchain/transients_pool_vk.h"
+#include "impeller/renderer/backend/vulkan/timeline_completion_vk.h"
 #include "impeller/renderer/backend/vulkan/yuv_conversion_library_vk.h"
 #include "impeller/renderer/capabilities.h"
 
@@ -134,10 +134,14 @@ ContextVK::~ContextVK() {
     [[maybe_unused]] auto result = device_holder_->device->waitIdle();
   }
   // Drop cached transient attachments before tearing down the resource
-  // manager and fence waiter that the textures rely on for cleanup.
+  // manager and timeline completion tracker that the textures rely on for
+  // cleanup.
   if (swapchain_transients_pool_) {
     swapchain_transients_pool_->Reset();
+    swapchain_transients_pool_.reset();
   }
+  timeline_completion_.reset();
+  resource_manager_.reset();
   if (command_pool_recycler_) {
     command_pool_recycler_->DestroyThreadLocalPools();
   }
@@ -415,10 +419,14 @@ void ContextVK::Setup(Settings settings) {
   }
 
   //----------------------------------------------------------------------------
-  /// Create the fence waiter.
+  /// Create the timeline completion tracker.
   ///
-  auto fence_waiter =
-      std::shared_ptr<FenceWaiterVK>(new FenceWaiterVK(device_holder));
+  auto timeline_completion = std::make_shared<TimelineCompletionVK>(
+      std::weak_ptr<DeviceHolderVK>(device_holder));
+  if (!timeline_completion->IsValid()) {
+    VALIDATION_LOG << "Could not create timeline completion tracker.";
+    return;
+  }
 
   //----------------------------------------------------------------------------
   /// Create the resource manager and command pool recycler.
@@ -490,8 +498,8 @@ void ContextVK::Setup(Settings settings) {
       new YUVConversionLibraryVK(device_holder_));
   queues_ = std::move(queues);
   device_capabilities_ = std::move(caps);
-  fence_waiter_ = std::move(fence_waiter);
   resource_manager_ = std::move(resource_manager);
+  timeline_completion_ = std::move(timeline_completion);
   command_pool_recycler_ = std::move(command_pool_recycler);
   descriptor_pool_recycler_ = std::move(descriptor_pool_recycler);
   // Construct the transient attachment pool after capabilities are ready so
@@ -619,13 +627,16 @@ void ContextVK::Shutdown() {
   // tl;dr: Without it, we get thread::join failures on shutdown.
   //
   // The transients pool owns cached MSAA + depth textures whose
-  // destructors enqueue work on `resource_manager_`/`fence_waiter_`, so it
-  // must be released before either of those is reset.
+  // destructors enqueue work on `resource_manager_`, so it must be released
+  // before the resource manager is reset.
   if (swapchain_transients_pool_) {
     swapchain_transients_pool_->Reset();
     swapchain_transients_pool_.reset();
   }
-  fence_waiter_->Terminate();
+  if (device_holder_ && device_holder_->device) {
+    [[maybe_unused]] auto result = device_holder_->device->waitIdle();
+  }
+  timeline_completion_.reset();
   resource_manager_.reset();
 
   raster_message_loop_->Terminate();
@@ -647,8 +658,8 @@ vk::PhysicalDevice ContextVK::GetPhysicalDevice() const {
   return device_holder_->physical_device;
 }
 
-std::shared_ptr<FenceWaiterVK> ContextVK::GetFenceWaiter() const {
-  return fence_waiter_;
+std::shared_ptr<TimelineCompletionVK> ContextVK::GetTimelineCompletion() const {
+  return timeline_completion_;
 }
 
 std::shared_ptr<TransientsPoolVK> ContextVK::GetSwapchainTransientsPool()

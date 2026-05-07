@@ -819,6 +819,53 @@ void PlatformConfigurationNativeApi::ScheduleFrame() {
   UIDartState::Current()->platform_configuration()->client()->ScheduleFrame();
 }
 
+void PlatformConfigurationNativeApi::ScheduleFrameForDisplayViews(
+    int64_t display_id,
+    Dart_Handle view_ids) {
+  UIDartState::ThrowIfUIOperationsProhibited();
+
+  // Convert Dart List<int> -> std::set<int64_t>. Mirrors the conversion
+  // pattern used by PlatformConfiguration::BeginFrameForDisplay (line 592ff
+  // in this file), but in the reverse direction.
+  std::set<int64_t> view_id_set;
+  intptr_t length = 0;
+  if (Dart_IsList(view_ids)) {
+    Dart_Handle length_handle = Dart_ListLength(view_ids, &length);
+    if (Dart_IsError(length_handle)) {
+      Dart_PropagateError(length_handle);
+      return;
+    }
+    for (intptr_t i = 0; i < length; ++i) {
+      Dart_Handle element = Dart_ListGetAt(view_ids, i);
+      if (Dart_IsError(element)) {
+        Dart_PropagateError(element);
+        return;
+      }
+      int64_t value = 0;
+      Dart_Handle int_result = Dart_IntegerToInt64(element, &value);
+      if (Dart_IsError(int_result)) {
+        Dart_PropagateError(int_result);
+        return;
+      }
+      view_id_set.insert(value);
+    }
+  }
+
+  if (view_id_set.empty()) {
+    // Empty subset is a no-op: the engine cannot satisfy a frame request
+    // for "no views". Falling back to the global ScheduleFrame would
+    // widen scope; better to ignore — the framework will issue another
+    // request on the next dirty mark.
+    return;
+  }
+
+  UIDartState::Current()
+      ->platform_configuration()
+      ->client()
+      ->ScheduleFrameForDisplayViews(display_id, view_id_set,
+                                     /*regenerate_layer_trees=*/true);
+}
+
 void PlatformConfigurationNativeApi::EndWarmUpFrame() {
   UIDartState::ThrowIfUIOperationsProhibited();
   UIDartState::Current()->platform_configuration()->client()->EndWarmUpFrame();

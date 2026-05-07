@@ -2724,6 +2724,21 @@ final class BuildScope {
   bool? _dirtyElementsNeedsResorting;
   final List<Element> _dirtyElements = <Element>[];
 
+  /// A read-only view of the elements currently scheduled for rebuild in
+  /// this scope.  Exposed for view-scoped frame scheduling, which walks
+  /// this list at `scheduleFrame` time to find the owning [View] of each
+  /// dirty element so the engine frame can be narrowed to those views.
+  ///
+  /// Iteration is O(N) in the dirty count and only happens when scoped
+  /// scheduling is active; the list itself is the same one that
+  /// [BuildOwner.buildScope] processes, so no copying is involved.
+  Iterable<Element> get dirtyElements => _dirtyElements;
+
+  /// Whether this scope currently has any dirty elements.  Cheap
+  /// `isNotEmpty` check used by [WidgetsBinding.scheduleFrame] before
+  /// deciding whether to attempt view-scoped scheduling.
+  bool get hasDirtyElements => _dirtyElements.isNotEmpty;
+
   @pragma('dart2js:tryInline')
   @pragma('vm:prefer-inline')
   @pragma('wasm:prefer-inline')
@@ -2927,6 +2942,18 @@ class BuildOwner {
   /// dirty.
   VoidCallback? onBuildScheduled;
 
+  /// Called from [scheduleBuildFor] each time an element is added to the
+  /// dirty list.  Used by [WidgetsBinding] to track which views' Element
+  /// trees are dirty so [PlatformDispatcher.scheduleFrameForDisplayViews]
+  /// can be used to scope the engine's next frame to those views only.
+  ///
+  /// The callback runs synchronously inside [scheduleBuildFor] and is
+  /// hot — implementations should be O(treeDepth) at worst (e.g. a
+  /// `findAncestorRenderObjectOfType<RenderView>()` walk).  The element
+  /// is guaranteed to be mounted but may be in [Element.deactivate] for
+  /// brief windows.
+  void Function(Element element)? onElementDirtied;
+
   final _InactiveElements _inactiveElements = _InactiveElements();
 
   bool _scheduledFlushDirtyElements = false;
@@ -3001,6 +3028,11 @@ class BuildOwner {
       onBuildScheduled!();
     }
     buildScope._scheduleBuildFor(element);
+    // View-scoped scheduling hook: notify the binding that this element
+    // is now dirty so it can attribute the dirty mark to the element's
+    // owning [View].  The callback walks ancestors and updates a
+    // dirty-view registry consulted by [SchedulerBinding.scheduleFrame].
+    onElementDirtied?.call(element);
     assert(() {
       if (debugPrintScheduleBuildForStacks) {
         debugPrint("...the build scope's dirty list is now: ${buildScope._dirtyElements}");

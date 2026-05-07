@@ -979,8 +979,26 @@ mixin SchedulerBinding on BindingBase {
       return true;
     }());
     ensureFrameCallbacksRegistered();
-    platformDispatcher.scheduleFrame();
+    dispatchPlatformScheduleFrame();
     _hasScheduledFrame = true;
+  }
+
+  /// Hook called by [scheduleFrame] / [scheduleForcedFrame] to actually
+  /// request a frame from the engine.
+  ///
+  /// Subclasses (notably [WidgetsBinding]) override this to route the
+  /// request through the per-display scoped API
+  /// ([PlatformDispatcher.scheduleFrameForDisplayViews]) when the
+  /// framework-side dirty-view set resolves to a strict subset of views
+  /// on a single display.  The default implementation calls the legacy
+  /// global scheduler.
+  ///
+  /// Overrides MUST request exactly one frame from the engine — either
+  /// via the scoped API or by calling `super.dispatchPlatformScheduleFrame()`.
+  /// `_hasScheduledFrame` is updated by [scheduleFrame] regardless.
+  @protected
+  void dispatchPlatformScheduleFrame() {
+    platformDispatcher.scheduleFrame();
   }
 
   /// Schedules a new frame by calling
@@ -1014,7 +1032,7 @@ mixin SchedulerBinding on BindingBase {
       return true;
     }());
     ensureFrameCallbacksRegistered();
-    platformDispatcher.scheduleFrame();
+    dispatchPlatformScheduleFrame();
     _hasScheduledFrame = true;
   }
 

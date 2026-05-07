@@ -475,6 +475,7 @@ mixin WidgetsBinding
     // properly setup the [defaultBinaryMessenger] instance.
     _buildOwner = BuildOwner();
     buildOwner!.onBuildScheduled = _handleBuildScheduled;
+    buildOwner!.onElementDirtied = _trackDirtyElementForViewScopedScheduling;
     platformDispatcher.onLocaleChanged = handleLocaleChanged;
     SystemChannels.navigation.setMethodCallHandler(_handleNavigationInvocation);
     SystemChannels.backGesture.setMethodCallHandler(_handleBackGestureInvocation);
@@ -1427,6 +1428,117 @@ mixin WidgetsBinding
   ///  * [firstFrameRasterized], whether the first frame has finished rendering.
   bool get debugDidSendFirstFrameEvent => !_needToReportFirstFrame;
 
+  // -----------------------------------------------------------------------
+  // View-scoped frame scheduling (Phase 2)
+  // -----------------------------------------------------------------------
+  //
+  // When the engine fires `_beginFrameForDisplay(displayId, viewIds)` (the
+  // per-display scoped frame callback), [SchedulerBinding] honours the
+  // requested view set in [RendererBinding.drawFrame] (see Phase 1). This
+  // section closes the other half: when *Dart* originates a frame request
+  // (Riverpod invalidation, animation ticker, [State.setState], etc.), the
+  // framework would normally call the global [PlatformDispatcher.scheduleFrame],
+  // which the engine widens to all views on the display. Instead we
+  //
+  //   1. Eagerly track which views' Element trees have a dirty rebuild
+  //      pending, via [BuildOwner.onElementDirtied] which fires on every
+  //      [BuildOwner.scheduleBuildFor] call.
+  //   2. Lazily inspect each [RenderView]'s [PipelineOwner.hasDirtyForFrame]
+  //      at scheduleFrame time to capture animation/paint dirties.
+  //   3. If the union of dirty views resolves to a strict subset of views
+  //      on a single display, route the frame request through
+  //      [PlatformDispatcher.scheduleFrameForDisplayViews] instead of the
+  //      global path.
+  //
+  // The dirty-view registry is cleared at the END of [drawFrame] — once
+  // the frame has processed the dirties, the next batch is independent.
+  // Dirties from `addPostFrameCallback` repopulate it and trigger the
+  // next [scheduleFrame].
+
+  /// Views (by `FlutterView.viewId`) whose Element trees have a pending
+  /// rebuild not yet processed.  Populated by
+  /// [_trackDirtyElementForViewScopedScheduling]; cleared at end of
+  /// [drawFrame].  Render-side dirties are NOT tracked here; they are
+  /// queried lazily from [PipelineOwner.hasDirtyForFrame].
+  final Set<int> _dirtyBuildViewIds = <int>{};
+
+  void _trackDirtyElementForViewScopedScheduling(Element element) {
+    // Walk to the nearest RenderView ancestor.  Cheap if View is a
+    // close ancestor (the common case for chrome ornaments / output
+    // overlays / per-window Flutter views).  Bounded by tree depth.
+    final RenderView? renderView =
+        element.findAncestorRenderObjectOfType<RenderView>();
+    if (renderView == null) {
+      // Element has no RenderView ancestor — pre-mount or detached.
+      // Cannot attribute; the next scheduleFrame falls back to global
+      // because [_dirtyBuildViewIds] won't reflect it. That is the
+      // safe, conservative behaviour for unattributable dirty marks.
+      return;
+    }
+    _dirtyBuildViewIds.add(renderView.flutterView.viewId);
+  }
+
+  /// Routing decision for the next platform frame request.  Returns
+  /// `(displayId, viewIds)` to use the per-display scoped engine API,
+  /// or `null` to fall through to the legacy global scheduler.
+  ({int displayId, List<int> viewIds})? _resolveScopedFrameRequest() {
+    if (renderViews.isEmpty) {
+      return null;
+    }
+    final dirtyViewIds = <int>{};
+    // Build-side: eagerly tracked.
+    dirtyViewIds.addAll(_dirtyBuildViewIds);
+    // Render-side: lazy walk.  PipelineOwner already maintains its own
+    // dirty lists; we just check the predicate per view.
+    for (final RenderView renderView in renderViews) {
+      final PipelineOwner? owner = renderView.owner;
+      if (owner != null && owner.hasDirtyForFrame) {
+        dirtyViewIds.add(renderView.flutterView.viewId);
+      }
+    }
+    if (dirtyViewIds.isEmpty) {
+      // No tracked dirties — typical of warm-up frames or
+      // [scheduleForcedFrame] / explicit [scheduleFrame] calls without
+      // a prior dirty mark.  Let the global path run.
+      return null;
+    }
+    // Resolve to a single display.  Cross-display dirties fall back to
+    // global because the engine API is per-display.
+    int? displayId;
+    for (final RenderView renderView in renderViews) {
+      if (!dirtyViewIds.contains(renderView.flutterView.viewId)) {
+        continue;
+      }
+      final int viewDisplayId = renderView.flutterView.display.id;
+      if (displayId == null) {
+        displayId = viewDisplayId;
+      } else if (displayId != viewDisplayId) {
+        return null;
+      }
+    }
+    if (displayId == null) {
+      return null;
+    }
+    return (
+      displayId: displayId,
+      viewIds: dirtyViewIds.toList(growable: false),
+    );
+  }
+
+  @override
+  void dispatchPlatformScheduleFrame() {
+    final ({int displayId, List<int> viewIds})? scoped =
+        _resolveScopedFrameRequest();
+    if (scoped == null) {
+      super.dispatchPlatformScheduleFrame();
+      return;
+    }
+    platformDispatcher.scheduleFrameForDisplayViews(
+      scoped.displayId,
+      scoped.viewIds,
+    );
+  }
+
   void _handleBuildScheduled() {
     // If we're in the process of building dirty elements, then changes
     // should not trigger a new frame.
@@ -1581,6 +1693,11 @@ mixin WidgetsBinding
         debugBuildingDirtyElements = false;
         return true;
       }());
+      // Clear the eagerly-tracked dirty-view registry: this frame's
+      // pipeline has just processed those dirties (build, layout, paint,
+      // composite, semantics).  Any new dirties from
+      // post-frame callbacks repopulate the set for the next frame.
+      _dirtyBuildViewIds.clear();
     }
     if (!kReleaseMode) {
       if (_needToReportFirstFrame && sendFramesToEngine) {

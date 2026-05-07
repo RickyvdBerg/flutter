@@ -1117,6 +1117,24 @@ base class PipelineOwner with DiagnosticableTreeMixin {
   @nonVirtual
   Iterable<RenderObject> get nodesNeedingLayout => _nodesNeedingLayout;
 
+  /// Whether this [PipelineOwner] (only — not its children) currently has
+  /// any dirty render objects that would do work in the next [flushLayout],
+  /// [flushCompositingBits], [flushPaint], or [flushSemantics] pass.
+  ///
+  /// Used by view-scoped frame scheduling to decide whether the
+  /// [RenderView] backed by this owner needs to be included in the next
+  /// engine frame request.  Cheap: four `isNotEmpty` checks on the dirty
+  /// lists this owner already maintains.
+  ///
+  /// This intentionally does NOT recurse into child owners — each owner
+  /// reports its own state, and view scheduling iterates registered
+  /// [RenderView]s individually.
+  bool get hasDirtyForFrame =>
+      _nodesNeedingLayout.isNotEmpty ||
+      _nodesNeedingPaint.isNotEmpty ||
+      _nodesNeedingCompositingBitsUpdate.isNotEmpty ||
+      _nodesNeedingSemantics.isNotEmpty;
+
   /// Whether this pipeline is currently in the layout phase.
   ///
   /// Specifically, whether [flushLayout] is currently running.

@@ -23,6 +23,10 @@ class MockRuntimeDelegate : public RuntimeDelegate {
 
   void ScheduleFrame(bool regenerate_layer_trees = true) override {}
 
+  void ScheduleFrameForDisplayViews(int64_t display_id,
+                                    const std::set<int64_t>& view_ids,
+                                    bool regenerate_layer_trees = true) override {}
+
   void OnAllViewsRendered() override {}
 
   void Render(int64_t view_id,

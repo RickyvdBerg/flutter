@@ -1475,7 +1475,27 @@ mixin WidgetsBinding
       // safe, conservative behaviour for unattributable dirty marks.
       return;
     }
-    _dirtyBuildViewIds.add(renderView.flutterView.viewId);
+    final int viewId = renderView.flutterView.viewId;
+    final bool wasNew = _dirtyBuildViewIds.add(viewId);
+    if (wasNew && hasScheduledFrame) {
+      // A frame is already in flight (the first dirty mark of this
+      // build round triggered scheduleFrame and locked in
+      // _hasScheduledFrame). Subsequent scheduleFrame calls are
+      // suppressed — but the engine's animator still accepts late
+      // additions to its pending view-id set right up until vsync
+      // (`Animator::LatchDisplayFrameRequest` UNIONs incoming view_ids
+      // into pending_frame_view_ids when pending_frame_all_views is
+      // false).  Forward this newly-dirtied view directly so it joins
+      // the in-flight frame instead of being deferred.
+      //
+      // If the in-flight frame went through the legacy global path
+      // (e.g. a prior dirty was unattributable, or render-side dirty
+      // routed through super.dispatchPlatformScheduleFrame), the
+      // animator already set pending_frame_all_views=true and this
+      // call is a no-op — exactly the right behaviour.
+      final int displayId = renderView.flutterView.display.id;
+      platformDispatcher.scheduleFrameForDisplayViews(displayId, <int>[viewId]);
+    }
   }
 
   /// Routing decision for the next platform frame request.  Returns

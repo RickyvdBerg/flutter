@@ -3023,16 +3023,26 @@ class BuildOwner {
       }
       return true;
     }());
-    if (!_scheduledFlushDirtyElements && onBuildScheduled != null) {
-      _scheduledFlushDirtyElements = true;
-      onBuildScheduled!();
-    }
     buildScope._scheduleBuildFor(element);
     // View-scoped scheduling hook: notify the binding that this element
     // is now dirty so it can attribute the dirty mark to the element's
     // owning [View].  The callback walks ancestors and updates a
     // dirty-view registry consulted by [SchedulerBinding.scheduleFrame].
+    //
+    // Order matters: this MUST fire before [onBuildScheduled] so that the
+    // scheduleFrame call onBuildScheduled triggers can already see this
+    // element's view in the dirty-view registry.  Otherwise the first
+    // scheduleFrame of a build round always falls through to the legacy
+    // global platformDispatcher.scheduleFrame() path (because the
+    // registry is still empty at dispatch time), which sets
+    // `pending_frame_all_views = true` in the engine animator and
+    // makes every subsequent scoped scheduleFrameForDisplayViews call
+    // a no-op for the rest of the frame.
     onElementDirtied?.call(element);
+    if (!_scheduledFlushDirtyElements && onBuildScheduled != null) {
+      _scheduledFlushDirtyElements = true;
+      onBuildScheduled!();
+    }
     assert(() {
       if (debugPrintScheduleBuildForStacks) {
         debugPrint("...the build scope's dirty list is now: ${buildScope._dirtyElements}");

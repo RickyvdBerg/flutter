@@ -883,12 +883,37 @@ mixin SchedulerBinding on BindingBase {
   }
 
   /// Ensures callbacks for [PlatformDispatcher.onBeginFrame] and
-  /// [PlatformDispatcher.onDrawFrame] are registered.
+  /// [PlatformDispatcher.onDrawFrame] are registered, plus the per-display
+  /// scoped variants [PlatformDispatcher.onBeginFrameForDisplay] and
+  /// [PlatformDispatcher.onDrawFrameForDisplay] when the engine offers them.
+  ///
+  /// When an embedder uses the engine's
+  /// `FlutterEngineScheduleFrameForDisplayViewsWithRequestKind` API, the
+  /// engine fires the scoped variants carrying the set of view IDs that
+  /// should participate in the next frame. If the framework leaves those
+  /// callbacks unregistered the engine falls back to the legacy global
+  /// [PlatformDispatcher.onBeginFrame], which widens scoped engine work
+  /// back to all views — defeating compositor-side per-view scheduling.
   @protected
   void ensureFrameCallbacksRegistered() {
     platformDispatcher.onBeginFrame ??= _handleBeginFrame;
     platformDispatcher.onDrawFrame ??= _handleDrawFrame;
+    platformDispatcher.onBeginFrameForDisplay ??= _handleBeginFrameForDisplay;
+    platformDispatcher.onDrawFrameForDisplay ??= _handleDrawFrameForDisplay;
   }
+
+  /// View IDs that the engine has asked the framework to render for the
+  /// in-flight frame, when the engine used a per-display scoped frame
+  /// request. `null` means "unscoped" — either the legacy global
+  /// [PlatformDispatcher.onBeginFrame] path was used, or no frame is in
+  /// progress.
+  ///
+  /// Read by [RendererBinding.drawFrame] to filter which views receive
+  /// layout/paint/composite work.  Set in [_handleBeginFrameForDisplay]
+  /// and cleared in [_handleDrawFrameForDisplay] (in a `finally` to
+  /// preserve the invariant across exceptions).
+  Set<int>? get activeFrameViewIds => _activeFrameViewIds;
+  Set<int>? _activeFrameViewIds;
 
   /// Schedules a new frame using [scheduleFrame] if this object is not
   /// currently producing a frame.
@@ -1175,6 +1200,49 @@ mixin SchedulerBinding on BindingBase {
       return;
     }
     handleBeginFrame(rawTimeStamp);
+  }
+
+  /// Engine entry point for per-display scoped begin-frame.  Stashes the
+  /// requested view set in [_activeFrameViewIds] for the duration of the
+  /// frame, then runs the same warm-up-frame handling as the legacy
+  /// [_handleBeginFrame] path.
+  ///
+  /// The view set is *not* cleared here — it is cleared in
+  /// [_handleDrawFrameForDisplay] so it survives across the
+  /// transient-callbacks → microtasks → persistent-callbacks pipeline.
+  void _handleBeginFrameForDisplay(
+    Duration rawTimeStamp,
+    int displayId,
+    List<int> viewIds,
+  ) {
+    _activeFrameViewIds = viewIds.toSet();
+    if (_warmUpFrame) {
+      assert(!_rescheduleAfterWarmUpFrame);
+      _rescheduleAfterWarmUpFrame = true;
+      return;
+    }
+    handleBeginFrame(rawTimeStamp);
+  }
+
+  /// Engine entry point for per-display scoped draw-frame.  Runs the
+  /// normal draw-frame pipeline and then clears [_activeFrameViewIds]
+  /// in `finally` so an unhandled exception in [drawFrame] does not
+  /// leak scoped state into the next (potentially unscoped) frame.
+  void _handleDrawFrameForDisplay() {
+    if (_rescheduleAfterWarmUpFrame) {
+      _rescheduleAfterWarmUpFrame = false;
+      addPostFrameCallback((Duration timeStamp) {
+        _hasScheduledFrame = false;
+        scheduleFrame();
+      }, debugLabel: 'SchedulerBinding.scheduleFrame');
+      _activeFrameViewIds = null;
+      return;
+    }
+    try {
+      handleDrawFrame();
+    } finally {
+      _activeFrameViewIds = null;
+    }
   }
 
   void _handleDrawFrame() {

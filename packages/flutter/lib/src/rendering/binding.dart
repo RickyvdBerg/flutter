@@ -689,14 +689,64 @@ mixin RendererBinding
   // When editing the above, also update widgets/binding.dart's copy.
   @protected
   void drawFrame() {
-    rootPipelineOwner.flushLayout();
-    rootPipelineOwner.flushCompositingBits();
-    rootPipelineOwner.flushPaint();
-    if (sendFramesToEngine) {
-      for (final RenderView renderView in renderViews) {
-        renderView.compositeFrame(); // this sends the bits to the GPU
+    final Set<int>? activeViewIds = activeFrameViewIds;
+    if (activeViewIds == null) {
+      // Unscoped (legacy) path: flush the root pipeline owner, which
+      // recurses into every child PipelineOwner and produces work for
+      // every RenderView managed by this binding.
+      rootPipelineOwner.flushLayout();
+      rootPipelineOwner.flushCompositingBits();
+      rootPipelineOwner.flushPaint();
+      if (sendFramesToEngine) {
+        for (final RenderView renderView in renderViews) {
+          renderView.compositeFrame(); // this sends the bits to the GPU
+        }
+        rootPipelineOwner.flushSemantics(); // this sends the semantics to the OS.
+        _firstFrameSent = true;
       }
-      rootPipelineOwner.flushSemantics(); // this sends the semantics to the OS.
+      return;
+    }
+
+    // Scoped path: the engine asked for a frame for a specific subset of
+    // views.  We must NOT flush rootPipelineOwner — its flushLayout /
+    // flushPaint / flushCompositingBits / flushSemantics recurse into
+    // *every* child PipelineOwner (see [PipelineOwner.flushLayout]
+    // implementation), which would defeat scoping by widening work back
+    // to all views.
+    //
+    // Instead, flush each requested RenderView's own PipelineOwner.  The
+    // build phase ran globally in [WidgetsBinding.drawFrame] (it is cheap
+    // when no widgets are dirty), so widget-level state coherence —
+    // [InheritedWidget] propagation, BuildOwner finalization — is
+    // preserved.  Render-tree dirty state for non-active views remains
+    // marked and will be flushed on a future frame that includes those
+    // views; this is bounded and correct because the dirty lists live on
+    // each per-view PipelineOwner.
+    //
+    // Views in [activeViewIds] that are not registered with this binding
+    // are silently skipped — the engine treats those as empty-frame
+    // events (see `EmbedderEngine::ScheduleFrameForDisplayViews` and the
+    // animator's `OnAnimatorEmptyFrameForDisplay` path).
+    for (final int viewId in activeViewIds) {
+      final RenderView? renderView = _viewIdToRenderView[viewId];
+      if (renderView == null) {
+        continue;
+      }
+      final PipelineOwner? owner = renderView.owner;
+      if (owner == null) {
+        // Render view is registered but not attached to a PipelineOwner.
+        // This can happen mid-attach; skip gracefully.
+        continue;
+      }
+      owner.flushLayout();
+      owner.flushCompositingBits();
+      owner.flushPaint();
+      if (sendFramesToEngine) {
+        renderView.compositeFrame(); // this sends the bits to the GPU
+        owner.flushSemantics(); // this sends the semantics to the OS.
+      }
+    }
+    if (sendFramesToEngine) {
       _firstFrameSent = true;
     }
   }

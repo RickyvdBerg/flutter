@@ -118,6 +118,14 @@ class Animator final {
     int64_t display_id = VsyncWaiter::kDefaultDisplayId;
     double refresh_rate = 60.0;
     std::set<int64_t> view_ids;
+    // Views requested for the next display frame. Full-display requests take
+    // precedence over subset requests so global callers keep legacy behavior.
+    std::set<int64_t> pending_frame_view_ids;
+    bool pending_frame_all_views = false;
+    // Views participating in the frame currently being built. This is normally
+    // the full display set, but compositor-directed frames can narrow it to the
+    // view ids that actually changed.
+    std::set<int64_t> current_frame_view_ids;
     std::set<int64_t> rendered_views_this_frame;
     bool frame_scheduled = false;
     bool frame_in_progress = false;
@@ -160,6 +168,11 @@ class Animator final {
   /// Requests a frame for a specific display on its next vsync.
   void RequestFrameForDisplay(int64_t display_id,
                               bool regenerate_layer_trees = true);
+
+  /// Requests a frame for a subset of views on a specific display.
+  void RequestFrameForDisplayViews(int64_t display_id,
+                                   const std::set<int64_t>& view_ids,
+                                   bool regenerate_layer_trees = true);
 
   /// Returns true if per-display mode is active.
   bool IsPerDisplayMode() const;
@@ -233,6 +246,12 @@ class Animator final {
   /// Begins a frame for the given display: acquires a pipeline slot,
   /// notifies the delegate to invoke Dart callbacks for this display's views.
   void BeginFrameForDisplay(DisplayFrameState& state);
+
+  void RequestFrameForDisplayInternal(int64_t display_id,
+                                      const std::set<int64_t>* view_ids,
+                                      bool regenerate_layer_trees);
+
+  void ScheduleDisplayVsync(DisplayFrameState& state);
 
   /// Ends a frame for the given display: packages layer trees into a
   /// FrameItem and submits to the pipeline.

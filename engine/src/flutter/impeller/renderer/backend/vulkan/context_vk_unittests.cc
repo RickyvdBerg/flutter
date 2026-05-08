@@ -6,8 +6,10 @@
 #include "flutter/testing/testing.h"  // IWYU pragma: keep
 #include "impeller/base/validation.h"
 #include "impeller/core/formats.h"
+#include "impeller/renderer/backend/vulkan/command_buffer_vk.h"
 #include "impeller/renderer/backend/vulkan/command_pool_vk.h"
 #include "impeller/renderer/backend/vulkan/context_vk.h"
+#include "impeller/renderer/backend/vulkan/swapchain/transients_pool_vk.h"
 #include "impeller/renderer/backend/vulkan/test/mock_vulkan.h"
 #include "vulkan/vulkan_core.h"
 
@@ -40,6 +42,65 @@ TEST(ContextVKTest, DeletesCommandPools) {
   }
   ASSERT_FALSE(weak_pool.lock());
   ASSERT_FALSE(weak_context.lock());
+}
+
+TEST(ContextVKTest, TransientsPoolDoesNotReuseLeasedEntries) {
+  TextureDescriptor desc;
+  desc.size = ISize(100, 100);
+  desc.format = PixelFormat::kR8G8B8A8UNormInt;
+
+  TransientsPoolVK pool(std::weak_ptr<Context>(),
+                        PixelFormat::kD32FloatS8UInt,
+                        /*supports_memoryless_textures=*/false,
+                        /*max_entries=*/8u,
+                        /*max_bytes=*/1024u * 1024u);
+
+  auto first = pool.Acquire(desc, /*enable_msaa=*/true);
+  ASSERT_TRUE(first);
+  auto* first_raw = first.get();
+
+  auto second = pool.Acquire(desc, /*enable_msaa=*/true);
+  ASSERT_TRUE(second);
+  EXPECT_NE(first, second);
+
+  first.reset();
+  auto third = pool.Acquire(desc, /*enable_msaa=*/true);
+  ASSERT_TRUE(third);
+  EXPECT_EQ(third.get(), first_raw);
+}
+
+TEST(ContextVKTest, TransientsPoolDoesNotReuseTrackedTextureEntries) {
+  auto context = MockVulkanContextBuilder().Build();
+  auto pool = context->GetSwapchainTransientsPool();
+
+  TextureDescriptor desc;
+  desc.size = ISize(100, 100);
+  desc.format = PixelFormat::kR8G8B8A8UNormInt;
+
+  auto first = pool->Acquire(desc, /*enable_msaa=*/true);
+  ASSERT_TRUE(first);
+  auto* first_raw = first.get();
+  auto msaa = first->GetMSAATexture();
+  auto depth_stencil = first->GetDepthStencilTexture();
+  ASSERT_TRUE(msaa);
+  ASSERT_TRUE(depth_stencil);
+  auto command_buffer = context->CreateCommandBuffer();
+  ASSERT_TRUE(command_buffer);
+  auto& command_buffer_vk = CommandBufferVK::Cast(*command_buffer);
+  ASSERT_TRUE(command_buffer_vk.Track(msaa));
+  ASSERT_TRUE(command_buffer_vk.Track(depth_stencil));
+
+  first.reset();
+  msaa.reset();
+  depth_stencil.reset();
+  auto second = pool->Acquire(desc, /*enable_msaa=*/true);
+  ASSERT_TRUE(second);
+  EXPECT_NE(second.get(), first_raw);
+
+  command_buffer.reset();
+  auto third = pool->Acquire(desc, /*enable_msaa=*/true);
+  ASSERT_TRUE(third);
+  EXPECT_EQ(third.get(), first_raw);
 }
 
 TEST(ContextVKTest, DeletesCommandPoolsOnAllThreads) {
@@ -332,6 +393,32 @@ TEST(ContextVKTest, BatchSubmitCommandBuffersOnArm) {
   functions = GetMockVulkanFunctions(context->GetDevice());
   EXPECT_TRUE(std::find(functions->begin(), functions->end(),
                         "vkCreateFence") == functions->end());
+
+  auto submit_batch_counts = GetMockVulkanQueueSubmitBatchCounts();
+  ASSERT_FALSE(submit_batch_counts.empty());
+  EXPECT_EQ(submit_batch_counts.back(), 2u);
+
+  auto submit_wait_counts = GetMockVulkanQueueSubmitWaitCounts();
+  ASSERT_FALSE(submit_wait_counts.empty());
+  const auto& last_wait_counts = submit_wait_counts.back();
+  ASSERT_EQ(last_wait_counts.size(), 2u);
+  EXPECT_EQ(last_wait_counts[0], 0u);
+  EXPECT_EQ(last_wait_counts[1], 1u);
+
+  auto submit_signal_counts = GetMockVulkanQueueSubmitSignalCounts();
+  ASSERT_FALSE(submit_signal_counts.empty());
+  const auto& last_signal_counts = submit_signal_counts.back();
+  ASSERT_EQ(last_signal_counts.size(), 2u);
+  EXPECT_EQ(last_signal_counts[0], 1u);
+  EXPECT_EQ(last_signal_counts[1], 1u);
+
+  auto submit_signal_values = GetMockVulkanQueueSubmitSignalValues();
+  ASSERT_FALSE(submit_signal_values.empty());
+  const auto& last_signal_values = submit_signal_values.back();
+  ASSERT_EQ(last_signal_values.size(), 2u);
+  EXPECT_TRUE(last_signal_values[0].empty());
+  ASSERT_EQ(last_signal_values[1].size(), 1u);
+  EXPECT_GT(last_signal_values[1][0], 0u);
 }
 
 TEST(ContextVKTest, BatchSubmitCommandBuffersOnNonArm) {

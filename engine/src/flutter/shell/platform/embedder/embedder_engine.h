@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <memory>
+#include <set>
 #include <unordered_map>
 
 #include "flutter/fml/macros.h"
@@ -108,6 +109,9 @@ class EmbedderEngine {
   bool ScheduleFrameForDisplay(int64_t display_id) {
     return ScheduleFrameForDisplay(display_id, true);
   }
+  bool ScheduleFrameForDisplayViews(int64_t display_id,
+                                    std::set<int64_t> view_ids,
+                                    bool regenerate_layer_trees);
 
   Shell& GetShell();
 

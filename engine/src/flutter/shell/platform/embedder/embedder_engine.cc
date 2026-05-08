@@ -475,6 +475,30 @@ bool EmbedderEngine::ScheduleFrameForDisplay(int64_t display_id,
   return true;
 }
 
+bool EmbedderEngine::ScheduleFrameForDisplayViews(int64_t display_id,
+                                                  std::set<int64_t> view_ids,
+                                                  bool regenerate_layer_trees) {
+  if (!IsValid() || view_ids.empty()) {
+    return false;
+  }
+
+  auto ui_runner = shell_->GetTaskRunners().GetUITaskRunner();
+  auto schedule_frame = [engine = shell_->GetEngine(), display_id,
+                         view_ids = std::move(view_ids),
+                         regenerate_layer_trees]() {
+    if (engine) {
+      engine->ScheduleFrameForDisplayViews(display_id, view_ids,
+                                           regenerate_layer_trees);
+    }
+  };
+  if (ui_runner->RunsTasksOnCurrentThread()) {
+    schedule_frame();
+  } else {
+    ui_runner->PostTask(std::move(schedule_frame));
+  }
+  return true;
+}
+
 Shell& EmbedderEngine::GetShell() {
   FML_DCHECK(shell_);
   return *shell_.get();

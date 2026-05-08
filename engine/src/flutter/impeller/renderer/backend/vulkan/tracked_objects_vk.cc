@@ -32,6 +32,7 @@ TrackedObjectsVK::TrackedObjectsVK(
   // AiksTest.CanRenderMultipleBackdropBlurWithSingleBackdropId.
   tracked_objects_.reserve(5);
   tracked_buffers_.reserve(5);
+  tracked_texture_wrappers_.reserve(5);
   tracked_textures_.reserve(5);
 }
 
@@ -61,6 +62,14 @@ void TrackedObjectsVK::Track(
     return;
   }
   tracked_buffers_.emplace_back(buffer);
+}
+
+void TrackedObjectsVK::Track(const std::shared_ptr<const Texture>& texture) {
+  if (!texture || (!tracked_texture_wrappers_.empty() &&
+                   texture.get() == tracked_texture_wrappers_.back().get())) {
+    return;
+  }
+  tracked_texture_wrappers_.emplace_back(texture);
 }
 
 void TrackedObjectsVK::Track(

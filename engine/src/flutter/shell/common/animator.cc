@@ -20,6 +20,54 @@ namespace {
 constexpr fml::TimeDelta kNotifyIdleTaskWaitTime =
     fml::TimeDelta::FromMilliseconds(51);
 
+bool LatchDisplayFrameRequest(Animator::DisplayFrameState& state,
+                              const std::set<int64_t>* view_ids,
+                              bool regenerate_layer_trees) {
+  if (view_ids == nullptr) {
+    if (state.view_ids.empty()) {
+      return false;
+    }
+    state.pending_frame_all_views = true;
+    state.pending_frame_view_ids.clear();
+    state.pending_regenerate_layer_trees =
+        state.pending_regenerate_layer_trees || regenerate_layer_trees;
+    return true;
+  }
+
+  bool inserted = false;
+  if (!state.pending_frame_all_views) {
+    for (int64_t view_id : *view_ids) {
+      if (state.view_ids.find(view_id) != state.view_ids.end()) {
+        inserted =
+            state.pending_frame_view_ids.insert(view_id).second || inserted;
+      }
+    }
+  }
+
+  const bool has_pending_views = inserted || state.pending_frame_all_views ||
+                                 !state.pending_frame_view_ids.empty();
+  if (has_pending_views) {
+    state.pending_regenerate_layer_trees =
+        state.pending_regenerate_layer_trees || regenerate_layer_trees;
+  }
+  return has_pending_views;
+}
+
+void ResolveDisplayFrameViewIds(Animator::DisplayFrameState& state) {
+  state.current_frame_view_ids.clear();
+  if (state.pending_frame_all_views) {
+    state.current_frame_view_ids = state.view_ids;
+  } else {
+    for (int64_t view_id : state.pending_frame_view_ids) {
+      if (state.view_ids.find(view_id) != state.view_ids.end()) {
+        state.current_frame_view_ids.insert(view_id);
+      }
+    }
+  }
+  state.pending_frame_all_views = false;
+  state.pending_frame_view_ids.clear();
+}
+
 }  // namespace
 
 Animator::Animator(Delegate& delegate,
@@ -315,9 +363,13 @@ void Animator::Render(int64_t view_id,
     DisplayFrameState* state = GetDisplayState(display_id);
     if (state) {
       if (state->frame_in_progress) {
-        state->rendered_views_this_frame.insert(view_id);
-        if (state->rendered_views_this_frame == state->view_ids) {
-          EndFrameForDisplay(*state);
+        if (state->current_frame_view_ids.find(view_id) !=
+            state->current_frame_view_ids.end()) {
+          state->rendered_views_this_frame.insert(view_id);
+          if (state->rendered_views_this_frame ==
+              state->current_frame_view_ids) {
+            EndFrameForDisplay(*state);
+          }
         }
       } else if (!state->frame_scheduled) {
         // A view can render while another display owns the active frame
@@ -367,8 +419,18 @@ void Animator::RequestFrame(bool regenerate_layer_trees) {
       // Called during a per-display frame (e.g. from Dart's scheduleFrame()).
       // Only re-schedule the display whose frame is currently executing to
       // prevent cross-display coupling that would lock all displays to the
-      // same frame rate.
-      RequestFrameForDisplay(active_frame_display_id_, regenerate_layer_trees);
+      // same frame rate. If the active frame is scoped to a view subset, keep
+      // follow-up Dart scheduleFrame() calls scoped to that same subset.
+      DisplayFrameState* state = GetDisplayState(active_frame_display_id_);
+      if (state && !state->current_frame_view_ids.empty() &&
+          state->current_frame_view_ids != state->view_ids) {
+        RequestFrameForDisplayViews(active_frame_display_id_,
+                                    state->current_frame_view_ids,
+                                    regenerate_layer_trees);
+      } else {
+        RequestFrameForDisplay(active_frame_display_id_,
+                               regenerate_layer_trees);
+      }
     } else {
       // Called outside a frame (e.g. initial setup, user input, view added).
       // Fan out to all displays with views.
@@ -521,7 +583,16 @@ void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
     int64_t prev_display = prev_it->second;
     auto state_it = display_states_.find(prev_display);
     if (state_it != display_states_.end()) {
-      state_it->second.view_ids.erase(view_id);
+      DisplayFrameState& prev_state = state_it->second;
+      prev_state.view_ids.erase(view_id);
+      prev_state.pending_frame_view_ids.erase(view_id);
+      prev_state.current_frame_view_ids.erase(view_id);
+      prev_state.rendered_views_this_frame.erase(view_id);
+      if (prev_state.frame_in_progress &&
+          prev_state.rendered_views_this_frame ==
+              prev_state.current_frame_view_ids) {
+        EndFrameForDisplay(prev_state);
+      }
     }
   }
   default_state_.view_ids.erase(view_id);
@@ -551,6 +622,8 @@ void Animator::RemoveView(int64_t view_id) {
   layer_trees_tasks_.erase(view_id);
 
   default_state_.view_ids.erase(view_id);
+  default_state_.pending_frame_view_ids.erase(view_id);
+  default_state_.current_frame_view_ids.erase(view_id);
   default_state_.rendered_views_this_frame.erase(view_id);
 
   auto mapping_it = view_to_display_.find(view_id);
@@ -568,18 +641,33 @@ void Animator::RemoveView(int64_t view_id) {
 
   DisplayFrameState& state = state_it->second;
   state.view_ids.erase(view_id);
+  state.pending_frame_view_ids.erase(view_id);
+  state.current_frame_view_ids.erase(view_id);
   state.rendered_views_this_frame.erase(view_id);
 
   // If this removal unblocks an in-progress frame waiting on the removed view,
   // end the frame now so it does not stall.
   if (state.frame_in_progress &&
-      state.rendered_views_this_frame == state.view_ids) {
+      state.rendered_views_this_frame == state.current_frame_view_ids) {
     EndFrameForDisplay(state);
   }
 }
 
 void Animator::RequestFrameForDisplay(int64_t display_id,
                                       bool regenerate_layer_trees) {
+  RequestFrameForDisplayInternal(display_id, nullptr, regenerate_layer_trees);
+}
+
+void Animator::RequestFrameForDisplayViews(int64_t display_id,
+                                           const std::set<int64_t>& view_ids,
+                                           bool regenerate_layer_trees) {
+  RequestFrameForDisplayInternal(display_id, &view_ids, regenerate_layer_trees);
+}
+
+void Animator::RequestFrameForDisplayInternal(
+    int64_t display_id,
+    const std::set<int64_t>* view_ids,
+    bool regenerate_layer_trees) {
   // Only proceed if the display has been explicitly registered.
   if (display_states_.find(display_id) == display_states_.end()) {
     return;
@@ -589,9 +677,11 @@ void Animator::RequestFrameForDisplay(int64_t display_id,
     return;
   }
 
+  if (!LatchDisplayFrameRequest(*state, view_ids, regenerate_layer_trees)) {
+    return;
+  }
+
   if (state->frame_scheduled) {
-    state->pending_regenerate_layer_trees =
-        state->pending_regenerate_layer_trees || regenerate_layer_trees;
     return;
   }
 
@@ -600,13 +690,15 @@ void Animator::RequestFrameForDisplay(int64_t display_id,
   // must not drop the request (animations call scheduleFrame() during build).
   if (state->frame_in_progress) {
     state->frame_scheduled = true;
-    state->pending_regenerate_layer_trees =
-        state->pending_regenerate_layer_trees || regenerate_layer_trees;
     return;
   }
 
-  state->frame_scheduled = true;
-  state->pending_regenerate_layer_trees = regenerate_layer_trees;
+  ScheduleDisplayVsync(*state);
+}
+
+void Animator::ScheduleDisplayVsync(DisplayFrameState& state) {
+  state.frame_scheduled = true;
+  const auto display_id = state.display_id;
   const auto display_id_str = std::to_string(display_id);
   TRACE_EVENT1("flutter", "Animator::RequestFrameForDisplay", "display_id",
                display_id_str.c_str());
@@ -638,6 +730,11 @@ void Animator::OnDisplayVsync(int64_t display_id,
   state->frame_scheduled = false;
   state->frame_regenerate_layer_trees = state->pending_regenerate_layer_trees;
   state->pending_regenerate_layer_trees = false;
+  ResolveDisplayFrameViewIds(*state);
+  if (state->current_frame_view_ids.empty()) {
+    state->frame_regenerate_layer_trees = true;
+    return;
+  }
   state->frame_timings_recorder = std::move(recorder);
 
   BeginFrameForDisplay(*state);
@@ -704,7 +801,7 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
   // callback (for example, legacy global draw fallback rendering all views),
   // mark them as rendered so this display can consume the newest cached task
   // even when no new Render() arrives in this specific begin-frame callback.
-  for (int64_t view_id : state.view_ids) {
+  for (int64_t view_id : state.current_frame_view_ids) {
     if (layer_trees_tasks_.find(view_id) != layer_trees_tasks_.end()) {
       state.rendered_views_this_frame.insert(view_id);
     }
@@ -727,7 +824,8 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
 
   // Notify delegate with display-scoped view set.
   delegate_.OnAnimatorBeginFrameForDisplay(frame_target_time, frame_number,
-                                           state.display_id, state.view_ids);
+                                           state.display_id,
+                                           state.current_frame_view_ids);
 
   // End the frame if it wasn't already completed by Render() callbacks.
   if (state.frame_in_progress) {
@@ -787,18 +885,21 @@ void Animator::EndFrameForDisplay(DisplayFrameState& state) {
           << ", render_calls_total=" << render_calls_total_
           << ", layer_trees_tasks_size=" << layer_trees_tasks_.size()
           << ", view_ids=" << state.view_ids.size()
+          << ", current_view_ids=" << state.current_frame_view_ids.size()
           << ", rendered_this_frame=" << state.rendered_views_this_frame.size()
           << ")";
     }
     // Notify the delegate so the embedder can retire stale in-flight
     // frame-request bookkeeping for this display's views.
-    delegate_.OnAnimatorEmptyFrameForDisplay(state.display_id, state.view_ids);
+    delegate_.OnAnimatorEmptyFrameForDisplay(state.display_id,
+                                             state.current_frame_view_ids);
   }
 
   // Reset frame state.
   const bool request_next_frame = state.frame_scheduled;
   state.frame_in_progress = false;
   state.rendered_views_this_frame.clear();
+  state.current_frame_view_ids.clear();
   state.frame_timings_recorder = nullptr;
   state.frame_regenerate_layer_trees = true;
 
@@ -806,8 +907,7 @@ void Animator::EndFrameForDisplay(DisplayFrameState& state) {
   // display frame was in progress.
   if (request_next_frame) {
     state.frame_scheduled = false;
-    RequestFrameForDisplay(state.display_id,
-                           state.pending_regenerate_layer_trees);
+    ScheduleDisplayVsync(state);
   }
 }
 

@@ -4,6 +4,8 @@
 
 #include "fml/status.h"
 
+#include <array>
+
 #include "flutter/fml/make_copyable.h"
 #include "impeller/renderer/backend/vulkan/command_queue_vk.h"
 
@@ -91,39 +93,60 @@ fml::Status CommandQueueVK::Submit(
     }
   }
 
-  vk::SubmitInfo submit_info;
-  submit_info.setCommandBuffers(vk_buffers);
-  if (!wait_semaphore_handles.empty()) {
-    submit_info.setWaitSemaphores(wait_semaphore_handles);
-    submit_info.setWaitDstStageMask(wait_stage_masks);
+  vk::SemaphoreCreateInfo internal_dependency_info;
+  auto [dependency_result, internal_dependency_semaphore] =
+      context->GetDevice().createSemaphoreUnique(internal_dependency_info);
+  if (dependency_result != vk::Result::eSuccess) {
+    VALIDATION_LOG << "Could not create Vulkan submit dependency semaphore: "
+                   << vk::to_string(dependency_result);
+    return fml::Status(fml::StatusCode::kCancelled,
+                       "Failed to create submit dependency semaphore.");
   }
-  signal_semaphore_handles.push_back(completion->GetSemaphore());
+  context->SetDebugName(internal_dependency_semaphore.get(),
+                        "ImpellerSubmitCompletionDependency");
 
-  std::vector<uint64_t> wait_semaphore_values(wait_semaphore_handles.size(),
-                                              0u);
-  std::vector<uint64_t> signal_semaphore_values(signal_semaphore_handles.size(),
-                                                0u);
-  // Existing external semaphores are binary, so their timeline payload is 0.
-  // The persistent timeline semaphore is appended last and receives the
-  // queue-ordered completion value assigned below.
+  vk::SubmitInfo render_submit_info;
+  render_submit_info.setCommandBuffers(vk_buffers);
+  if (!wait_semaphore_handles.empty()) {
+    render_submit_info.setWaitSemaphores(wait_semaphore_handles);
+    render_submit_info.setWaitDstStageMask(wait_stage_masks);
+  }
+  signal_semaphore_handles.push_back(internal_dependency_semaphore.get());
+  render_submit_info.setSignalSemaphores(signal_semaphore_handles);
 
-  vk::TimelineSemaphoreSubmitInfo timeline_submit_info;
-  timeline_submit_info.setWaitSemaphoreValues(wait_semaphore_values);
-  timeline_submit_info.setSignalSemaphoreValues(signal_semaphore_values);
+  std::array<vk::Semaphore, 1> completion_wait_semaphores = {
+      internal_dependency_semaphore.get()};
+  std::array<vk::PipelineStageFlags, 1> completion_wait_stage_masks = {
+      vk::PipelineStageFlagBits::eTopOfPipe};
+  std::array<vk::Semaphore, 1> completion_signal_semaphores = {
+      completion->GetSemaphore()};
+  std::array<uint64_t, 1> completion_wait_values = {0u};
+  std::array<uint64_t, 1> completion_signal_values = {0u};
+  vk::TimelineSemaphoreSubmitInfo completion_timeline_submit_info;
+  completion_timeline_submit_info.setWaitSemaphoreValues(
+      completion_wait_values);
+  completion_timeline_submit_info.setSignalSemaphoreValues(
+      completion_signal_values);
 
-  submit_info.setSignalSemaphores(signal_semaphore_handles);
-  submit_info.setPNext(&timeline_submit_info);
+  vk::SubmitInfo completion_submit_info;
+  completion_submit_info.setWaitSemaphores(completion_wait_semaphores);
+  completion_submit_info.setWaitDstStageMask(completion_wait_stage_masks);
+  completion_submit_info.setSignalSemaphores(completion_signal_semaphores);
+  completion_submit_info.setPNext(&completion_timeline_submit_info);
 
-  uint64_t submit_value = 0u;
+  std::array<vk::SubmitInfo, 2> submit_infos = {render_submit_info,
+                                                completion_submit_info};
+
+  uint64_t completion_value = 0u;
   auto status = context->GetGraphicsQueue()->SubmitLocked(
       [&](const vk::Queue& queue) -> vk::Result {
-        // Timeline values must reflect actual queue submission order. Submit()
-        // can be called by multiple producer threads, so reserving before the
-        // queue mutex can make value N+1 reach the driver before value N and
-        // cause callbacks/resources for N to retire early.
-        submit_value = completion->ReserveSubmitValue();
-        signal_semaphore_values.back() = submit_value;
-        return queue.submit(submit_info, vk::Fence{});
+        // Timeline values must reflect actual queue submission order. The
+        // marker batch waits on a queue-local binary semaphore signaled by the
+        // render batch, so CPU completion cannot run before render execution
+        // reaches that signal.
+        completion_value = completion->ReserveSubmitValue();
+        completion_signal_values[0] = completion_value;
+        return queue.submit(submit_infos, vk::Fence{});
       });
   if (status != vk::Result::eSuccess) {
     VALIDATION_LOG << "Failed to submit queue: " << vk::to_string(status);
@@ -137,17 +160,20 @@ fml::Status CommandQueueVK::Submit(
   // Submit will proceed, call callback with true when it is done and do not
   // call when `reset` is collected.
   auto added_completion = completion->AddCompletion(
-      submit_value,
+      completion_value,
       fml::MakeCopyable(
           [completion_callback,
            tracked_objects = std::move(tracked_objects),
            signal_semaphores_storage = std::move(signal_semaphores_storage),
+           internal_dependency_semaphore =
+               std::move(internal_dependency_semaphore),
            wait_semaphores_storage =
                std::move(wait_semaphores_storage)](
               CommandBuffer::Status status) mutable {
             // Ensure tracked objects and semaphores are destructed before
             // calling any final callbacks.
             signal_semaphores_storage.clear();
+            internal_dependency_semaphore.reset();
             wait_semaphores_storage.clear();
             tracked_objects.clear();
             if (completion_callback) {
@@ -155,7 +181,7 @@ fml::Status CommandQueueVK::Submit(
             }
           }));
   if (!added_completion) {
-    completion->WaitFor(submit_value);
+    completion->WaitFor(completion_value);
     return fml::Status(fml::StatusCode::kCancelled,
                        "Failed to add timeline completion.");
   }

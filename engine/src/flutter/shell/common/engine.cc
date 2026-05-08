@@ -721,6 +721,17 @@ void Engine::ScheduleFrameForDisplay(int64_t display_id,
   }
 }
 
+void Engine::ScheduleFrameForDisplayViews(int64_t display_id,
+                                          const std::set<int64_t>& view_ids,
+                                          bool regenerate_layer_trees) {
+  if (animator_->IsPerDisplayMode()) {
+    animator_->RequestFrameForDisplayViews(display_id, view_ids,
+                                           regenerate_layer_trees);
+  } else {
+    ScheduleFrame(regenerate_layer_trees);
+  }
+}
+
 void Engine::ShutdownPlatformIsolates() {
   runtime_controller_->ShutdownPlatformIsolates();
 }

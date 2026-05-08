@@ -50,6 +50,8 @@ class SwapchainTransientsVK {
 
   bool IsMSAAEnabled() const;
 
+  bool IsIdle() const;
+
   const std::shared_ptr<Texture>& GetMSAATexture();
 
   const std::shared_ptr<Texture>& GetDepthStencilTexture();
@@ -61,7 +63,7 @@ class SwapchainTransientsVK {
   // Lazy-init mutex. A `std::once_flag` would be wrong here: a transient
   // creation failure (e.g. expired context, allocator OOM) must remain
   // retryable on the next call rather than locking in a null result.
-  std::mutex init_mutex_;
+  mutable std::mutex init_mutex_;
   std::shared_ptr<Texture> cached_msaa_texture_;
   std::shared_ptr<Texture> cached_depth_stencil_;
 

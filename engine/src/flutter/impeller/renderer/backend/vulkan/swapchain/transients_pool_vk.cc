@@ -7,17 +7,9 @@
 #include <cstdlib>
 #include <utility>
 
-#include "flutter/fml/hash_combine.h"
 #include "flutter/fml/logging.h"
 
 namespace impeller {
-
-size_t TransientsPoolVK::KeyHash::operator()(const Key& key) const noexcept {
-  return fml::HashCombine(static_cast<size_t>(key.width),
-                          static_cast<size_t>(key.height),
-                          static_cast<size_t>(key.color_format),
-                          static_cast<size_t>(key.enable_msaa));
-}
 
 size_t TransientsPoolVK::ResolveByteBudgetFromEnv(size_t default_bytes) {
   const char* override_value = std::getenv(kBudgetEnvVar);
@@ -52,7 +44,6 @@ TransientsPoolVK::~TransientsPoolVK() {
 
 void TransientsPoolVK::Reset() {
   std::scoped_lock lock(mutex_);
-  map_.clear();
   lru_.clear();
   total_bytes_ = 0;
 }
@@ -69,15 +60,21 @@ std::shared_ptr<SwapchainTransientsVK> TransientsPoolVK::Acquire(
 
   std::scoped_lock lock(mutex_);
 
-  // Hit: promote to MRU and return.
-  auto found = map_.find(key);
-  if (found != map_.end()) {
-    lru_.splice(lru_.begin(), lru_, found->second);
-    return found->second->transients;
+  // Hit: promote an idle entry to MRU and return it. Entries with additional
+  // wrapper owners or cached texture refs may still be referenced by pending
+  // render targets or in-flight GPU work, so they cannot be handed out again
+  // for the same key.
+  for (auto it = lru_.begin(); it != lru_.end(); ++it) {
+    if (it->key == key && it->transients.use_count() == 1u &&
+        it->transients->IsIdle()) {
+      lru_.splice(lru_.begin(), lru_, it);
+      return lru_.front().transients;
+    }
   }
 
-  // Miss: construct a fresh entry. Bind the transients to the same context
-  // we hold weakly so its lifetime cannot outlast the owning ContextVK.
+  // Miss, or all matching entries are leased: construct a fresh entry. Bind
+  // the transients to the same context we hold weakly so its lifetime cannot
+  // outlast the owning ContextVK.
   auto transients =
       std::make_shared<SwapchainTransientsVK>(context_, desc, enable_msaa);
   if (!transients) {
@@ -89,7 +86,6 @@ std::shared_ptr<SwapchainTransientsVK> TransientsPoolVK::Acquire(
       .transients = transients,
       .byte_footprint = footprint,
   });
-  map_[key] = lru_.begin();
   total_bytes_ += footprint;
 
   EvictExcess();
@@ -139,7 +135,6 @@ void TransientsPoolVK::EvictExcess() {
     total_bytes_ = (total_bytes_ >= tail.byte_footprint)
                        ? total_bytes_ - tail.byte_footprint
                        : 0u;
-    map_.erase(tail.key);
     lru_.pop_back();
   }
 }

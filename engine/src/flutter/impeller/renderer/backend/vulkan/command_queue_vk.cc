@@ -10,8 +10,8 @@
 #include "impeller/base/validation.h"
 #include "impeller/renderer/backend/vulkan/command_buffer_vk.h"
 #include "impeller/renderer/backend/vulkan/context_vk.h"
-#include "impeller/renderer/backend/vulkan/fence_waiter_vk.h"
 #include "impeller/renderer/backend/vulkan/swapchain/ahb/external_semaphore_vk.h"
+#include "impeller/renderer/backend/vulkan/timeline_completion_vk.h"
 #include "impeller/renderer/backend/vulkan/tracked_objects_vk.h"
 #include "impeller/renderer/command_buffer.h"
 
@@ -56,11 +56,13 @@ fml::Status CommandQueueVK::Submit(
     VALIDATION_LOG << "Device lost.";
     return fml::Status(fml::StatusCode::kCancelled, "Device lost.");
   }
-  auto [fence_result, fence] = context->GetDevice().createFenceUnique({});
-  if (fence_result != vk::Result::eSuccess) {
-    VALIDATION_LOG << "Failed to create fence: " << vk::to_string(fence_result);
-    return fml::Status(fml::StatusCode::kCancelled, "Failed to create fence.");
+  auto completion = context->GetTimelineCompletion();
+  if (!completion || !completion->IsValid()) {
+    VALIDATION_LOG << "Timeline completion tracker is not available.";
+    return fml::Status(fml::StatusCode::kCancelled,
+                       "Timeline completion tracker is not available.");
   }
+  const uint64_t submit_value = completion->ReserveSubmitValue();
 
   // Collect wait semaphores from all tracked objects (e.g. DMA-BUF
   // acquire fences imported as VkSemaphores).
@@ -96,10 +98,25 @@ fml::Status CommandQueueVK::Submit(
     submit_info.setWaitSemaphores(wait_semaphore_handles);
     submit_info.setWaitDstStageMask(wait_stage_masks);
   }
-  if (!signal_semaphore_handles.empty()) {
-    submit_info.setSignalSemaphores(signal_semaphore_handles);
-  }
-  auto status = context->GetGraphicsQueue()->Submit(submit_info, *fence);
+  signal_semaphore_handles.push_back(completion->GetSemaphore());
+
+  std::vector<uint64_t> wait_semaphore_values(wait_semaphore_handles.size(),
+                                              0u);
+  std::vector<uint64_t> signal_semaphore_values(signal_semaphore_handles.size(),
+                                                0u);
+  // Existing external semaphores are binary, so their timeline payload is 0.
+  // The persistent timeline semaphore is appended last and receives this
+  // submit's monotonic completion value.
+  signal_semaphore_values.back() = submit_value;
+
+  vk::TimelineSemaphoreSubmitInfo timeline_submit_info;
+  timeline_submit_info.setWaitSemaphoreValues(wait_semaphore_values);
+  timeline_submit_info.setSignalSemaphoreValues(signal_semaphore_values);
+
+  submit_info.setSignalSemaphores(signal_semaphore_handles);
+  submit_info.setPNext(&timeline_submit_info);
+
+  auto status = context->GetGraphicsQueue()->Submit(submit_info, vk::Fence{});
   if (status != vk::Result::eSuccess) {
     VALIDATION_LOG << "Failed to submit queue: " << vk::to_string(status);
     return fml::Status(fml::StatusCode::kCancelled, "Failed to submit queue: ");
@@ -111,25 +128,28 @@ fml::Status CommandQueueVK::Submit(
 
   // Submit will proceed, call callback with true when it is done and do not
   // call when `reset` is collected.
-  auto added_fence = context->GetFenceWaiter()->AddFence(
-      std::move(fence),
+  auto added_completion = completion->AddCompletion(
+      submit_value,
       fml::MakeCopyable(
           [completion_callback,
            tracked_objects = std::move(tracked_objects),
            signal_semaphores_storage = std::move(signal_semaphores_storage),
            wait_semaphores_storage =
-               std::move(wait_semaphores_storage)]() mutable {
+               std::move(wait_semaphores_storage)](
+              CommandBuffer::Status status) mutable {
             // Ensure tracked objects and semaphores are destructed before
             // calling any final callbacks.
             signal_semaphores_storage.clear();
             wait_semaphores_storage.clear();
             tracked_objects.clear();
             if (completion_callback) {
-              completion_callback(CommandBuffer::Status::kCompleted);
+              completion_callback(status);
             }
           }));
-  if (!added_fence) {
-    return fml::Status(fml::StatusCode::kCancelled, "Failed to add fence.");
+  if (!added_completion) {
+    completion->WaitFor(submit_value);
+    return fml::Status(fml::StatusCode::kCancelled,
+                       "Failed to add timeline completion.");
   }
   reset.Release();
   return fml::Status();

@@ -4,6 +4,8 @@
 
 #include "impeller/renderer/backend/vulkan/test/mock_vulkan.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <utility>
@@ -42,7 +44,10 @@ struct MockSwapchainKHR {
   size_t current_image = 0;
 };
 
-struct MockSemaphore {};
+struct MockSemaphore {
+  explicit MockSemaphore(uint64_t initial_value = 0u) : counter(initial_value) {}
+  std::atomic_uint64_t counter;
+};
 
 struct MockFramebuffer {};
 
@@ -204,12 +209,28 @@ VkResult vkEnumerateDeviceExtensionProperties(
     uint32_t* pPropertyCount,
     VkExtensionProperties* pProperties) {
   if (!pProperties) {
-    *pPropertyCount = 1;
+    *pPropertyCount = 2;
   } else {
     strcpy(pProperties[0].extensionName, "VK_KHR_swapchain");
     pProperties[0].specVersion = 0;
+    strcpy(pProperties[1].extensionName, "VK_KHR_timeline_semaphore");
+    pProperties[1].specVersion = 0;
   }
   return VK_SUCCESS;
+}
+
+void vkGetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice,
+                                  VkPhysicalDeviceFeatures2* pFeatures) {
+  auto* next = reinterpret_cast<VkBaseOutStructure*>(pFeatures->pNext);
+  while (next != nullptr) {
+    if (next->sType ==
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES) {
+      auto* timeline =
+          reinterpret_cast<VkPhysicalDeviceTimelineSemaphoreFeatures*>(next);
+      timeline->timelineSemaphore = VK_TRUE;
+    }
+    next = next->pNext;
+  }
 }
 
 VkResult vkCreateDevice(VkPhysicalDevice physicalDevice,
@@ -516,6 +537,31 @@ VkResult vkQueueSubmit(VkQueue queue,
                        uint32_t submitCount,
                        const VkSubmitInfo* pSubmits,
                        VkFence fence) {
+  for (uint32_t submit_index = 0; submit_index < submitCount; submit_index++) {
+    const VkTimelineSemaphoreSubmitInfo* timeline_info = nullptr;
+    auto* next = reinterpret_cast<const VkBaseInStructure*>(
+        pSubmits[submit_index].pNext);
+    while (next != nullptr) {
+      if (next->sType == VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO) {
+        timeline_info =
+            reinterpret_cast<const VkTimelineSemaphoreSubmitInfo*>(next);
+        break;
+      }
+      next = next->pNext;
+    }
+    if (!timeline_info) {
+      continue;
+    }
+    for (uint32_t semaphore_index = 0;
+         semaphore_index < pSubmits[submit_index].signalSemaphoreCount;
+         semaphore_index++) {
+      auto* semaphore = reinterpret_cast<MockSemaphore*>(
+          pSubmits[submit_index].pSignalSemaphores[semaphore_index]);
+      semaphore->counter.store(
+          timeline_info->pSignalSemaphoreValues[semaphore_index],
+          std::memory_order_release);
+    }
+  }
   return VK_SUCCESS;
 }
 
@@ -721,7 +767,20 @@ VkResult vkCreateSemaphore(VkDevice device,
                            const VkSemaphoreCreateInfo* pCreateInfo,
                            const VkAllocationCallbacks* pAllocator,
                            VkSemaphore* pSemaphore) {
-  *pSemaphore = reinterpret_cast<VkSemaphore>(new MockSemaphore());
+  uint64_t initial_value = 0u;
+  auto* next = reinterpret_cast<const VkBaseInStructure*>(pCreateInfo->pNext);
+  while (next != nullptr) {
+    if (next->sType == VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO) {
+      auto* type_info =
+          reinterpret_cast<const VkSemaphoreTypeCreateInfo*>(next);
+      if (type_info->semaphoreType == VK_SEMAPHORE_TYPE_TIMELINE) {
+        initial_value = type_info->initialValue;
+      }
+      break;
+    }
+    next = next->pNext;
+  }
+  *pSemaphore = reinterpret_cast<VkSemaphore>(new MockSemaphore(initial_value));
   return VK_SUCCESS;
 }
 
@@ -729,6 +788,38 @@ void vkDestroySemaphore(VkDevice device,
                         VkSemaphore semaphore,
                         const VkAllocationCallbacks* pAllocator) {
   delete reinterpret_cast<MockSemaphore*>(semaphore);
+}
+
+VkResult vkWaitSemaphoresKHR(VkDevice device,
+                             const VkSemaphoreWaitInfo* pWaitInfo,
+                             uint64_t timeout) {
+  for (uint32_t i = 0; i < pWaitInfo->semaphoreCount; i++) {
+    auto* semaphore =
+        reinterpret_cast<MockSemaphore*>(pWaitInfo->pSemaphores[i]);
+    semaphore->counter.store(
+        std::max(semaphore->counter.load(std::memory_order_acquire),
+                 pWaitInfo->pValues[i]),
+        std::memory_order_release);
+  }
+  return VK_SUCCESS;
+}
+
+VkResult vkGetSemaphoreCounterValueKHR(VkDevice device,
+                                       VkSemaphore semaphore,
+                                       uint64_t* pValue) {
+  auto* mock_semaphore = reinterpret_cast<MockSemaphore*>(semaphore);
+  *pValue = mock_semaphore->counter.load(std::memory_order_acquire);
+  return VK_SUCCESS;
+}
+
+VkResult vkSignalSemaphoreKHR(VkDevice device,
+                              const VkSemaphoreSignalInfo* pSignalInfo) {
+  auto* semaphore = reinterpret_cast<MockSemaphore*>(pSignalInfo->semaphore);
+  semaphore->counter.store(
+      std::max(semaphore->counter.load(std::memory_order_acquire),
+               pSignalInfo->value),
+      std::memory_order_release);
+  return VK_SUCCESS;
 }
 
 VkResult vkAcquireNextImageKHR(VkDevice device,
@@ -774,6 +865,10 @@ PFN_vkVoidFunction GetMockVulkanProcAddress(VkInstance instance,
         vkEnumerateInstanceLayerProperties);
   } else if (strcmp("vkEnumeratePhysicalDevices", pName) == 0) {
     return reinterpret_cast<PFN_vkVoidFunction>(vkEnumeratePhysicalDevices);
+  } else if (strcmp("vkGetPhysicalDeviceFeatures2", pName) == 0) {
+    return reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceFeatures2);
+  } else if (strcmp("vkGetPhysicalDeviceFeatures2KHR", pName) == 0) {
+    return reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceFeatures2);
   } else if (strcmp("vkGetPhysicalDeviceFormatProperties", pName) == 0) {
     return reinterpret_cast<PFN_vkVoidFunction>(
         vkGetPhysicalDeviceFormatProperties);
@@ -907,6 +1002,12 @@ PFN_vkVoidFunction GetMockVulkanProcAddress(VkInstance instance,
     return reinterpret_cast<PFN_vkVoidFunction>(vkCreateSemaphore);
   } else if (strcmp("vkDestroySemaphore", pName) == 0) {
     return reinterpret_cast<PFN_vkVoidFunction>(vkDestroySemaphore);
+  } else if (strcmp("vkWaitSemaphoresKHR", pName) == 0) {
+    return reinterpret_cast<PFN_vkVoidFunction>(vkWaitSemaphoresKHR);
+  } else if (strcmp("vkGetSemaphoreCounterValueKHR", pName) == 0) {
+    return reinterpret_cast<PFN_vkVoidFunction>(vkGetSemaphoreCounterValueKHR);
+  } else if (strcmp("vkSignalSemaphoreKHR", pName) == 0) {
+    return reinterpret_cast<PFN_vkVoidFunction>(vkSignalSemaphoreKHR);
   } else if (strcmp("vkDestroySurfaceKHR", pName) == 0) {
     return reinterpret_cast<PFN_vkVoidFunction>(vkDestroySurfaceKHR);
   } else if (strcmp("vkAcquireNextImageKHR", pName) == 0) {

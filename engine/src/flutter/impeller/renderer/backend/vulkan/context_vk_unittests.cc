@@ -261,7 +261,7 @@ TEST(ContextVKTest, HasDefaultColorFormat) {
   ASSERT_NE(capabilites_vk->GetDefaultColorFormat(), PixelFormat::kUnknown);
 }
 
-TEST(ContextVKTest, EmbedderOverridesUsesInstanceExtensions) {
+TEST(ContextVKTest, EmbedderOverridesRequiresTimelineDeviceExtension) {
   ContextVK::EmbedderData data;
   auto other_context = MockVulkanContextBuilder().Build();
 
@@ -270,8 +270,8 @@ TEST(ContextVKTest, EmbedderOverridesUsesInstanceExtensions) {
   data.physical_device = other_context->GetPhysicalDevice();
   data.queue = VkQueue{};
   data.queue_family_index = 0;
-  // Missing surface extension.
-  data.instance_extensions = {};
+  data.instance_extensions = {"VK_KHR_surface",
+                              "VK_KHR_portability_enumeration"};
   data.device_extensions = {"VK_KHR_swapchain"};
 
   ScopedValidationDisable scoped;
@@ -291,7 +291,8 @@ TEST(ContextVKTest, EmbedderOverrides) {
   data.queue_family_index = 0;
   data.instance_extensions = {"VK_KHR_surface",
                               "VK_KHR_portability_enumeration"};
-  data.device_extensions = {"VK_KHR_swapchain"};
+  data.device_extensions = {"VK_KHR_swapchain",
+                            VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
 
   auto context = MockVulkanContextBuilder().SetEmbedderData(data).Build();
 
@@ -317,7 +318,7 @@ TEST(ContextVKTest, BatchSubmitCommandBuffersOnArm) {
   EXPECT_TRUE(context->EnqueueCommandBuffer(context->CreateCommandBuffer()));
 
   // If command buffers are batch submitted, we should have created them but not
-  // created the fence to track them after enqueing.
+  // submitted them after enqueueing.
   auto functions = GetMockVulkanFunctions(context->GetDevice());
   EXPECT_TRUE(std::find(functions->begin(), functions->end(),
                         "vkAllocateCommandBuffers") != functions->end());
@@ -326,10 +327,11 @@ TEST(ContextVKTest, BatchSubmitCommandBuffersOnArm) {
 
   context->FlushCommandBuffers();
 
-  // After flushing, the fence should be created.
+  // After flushing, timeline completion still must not allocate per-submit
+  // VkFence objects.
   functions = GetMockVulkanFunctions(context->GetDevice());
   EXPECT_TRUE(std::find(functions->begin(), functions->end(),
-                        "vkCreateFence") != functions->end());
+                        "vkCreateFence") == functions->end());
 }
 
 TEST(ContextVKTest, BatchSubmitCommandBuffersOnNonArm) {
@@ -345,8 +347,8 @@ TEST(ContextVKTest, BatchSubmitCommandBuffersOnNonArm) {
   EXPECT_TRUE(context->EnqueueCommandBuffer(context->CreateCommandBuffer()));
   EXPECT_TRUE(context->EnqueueCommandBuffer(context->CreateCommandBuffer()));
 
-  // If command buffers are batched and not submitted, we should have created
-  // them and a corresponding fence immediately.
+  // If command buffers are not batched, enqueue submits immediately without a
+  // per-submit VkFence.
   auto functions = GetMockVulkanFunctions(context->GetDevice());
   EXPECT_TRUE(std::find(functions->begin(), functions->end(),
                         "vkAllocateCommandBuffers") != functions->end());
@@ -376,6 +378,7 @@ TEST(ContextVKTest, AHBSwapchainCapabilitiesCanBeMissing) {
   data.queue_family_index = 0;
   data.instance_extensions = {"VK_KHR_surface", "VK_KHR_android_surface"};
   data.device_extensions = {"VK_KHR_swapchain",
+                            VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
                             VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME,
                             VK_KHR_EXTERNAL_FENCE_EXTENSION_NAME,
                             VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,

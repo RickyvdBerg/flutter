@@ -180,6 +180,8 @@ static const char* GetExtensionName(RequiredCommonDeviceExtensionVK ext) {
   switch (ext) {
     case RequiredCommonDeviceExtensionVK::kKHRSwapchain:
       return VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+    case RequiredCommonDeviceExtensionVK::kKHRTimelineSemaphore:
+      return VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME;
     case RequiredCommonDeviceExtensionVK::kLast:
       return "Unknown";
   }
@@ -458,6 +460,12 @@ CapabilitiesVK::GetEnabledDeviceFeatures(
     VALIDATION_LOG << "Device doesn't support the required queues.";
     return std::nullopt;
   }
+  if (!IsExtensionInList(enabled_extensions.value(),
+                         RequiredCommonDeviceExtensionVK::
+                             kKHRTimelineSemaphore)) {
+    VALIDATION_LOG << "Device doesn't enable VK_KHR_timeline_semaphore.";
+    return std::nullopt;
+  }
 
   PhysicalDeviceFeatures supported_chain;
 
@@ -524,6 +532,21 @@ CapabilitiesVK::GetEnabledDeviceFeatures(
 
     required.uniformAndStorageBuffer16BitAccess =
         supported.uniformAndStorageBuffer16BitAccess;
+  }
+
+  // VK_KHR_timeline_semaphore. Avio's Vulkan path requires this extension so
+  // queue completion can be represented by a persistent monotonic timeline
+  // instead of per-submit VkFence allocation.
+  {
+    auto& required =
+        required_chain.get<vk::PhysicalDeviceTimelineSemaphoreFeatures>();
+    const auto& supported =
+        supported_chain.get<vk::PhysicalDeviceTimelineSemaphoreFeatures>();
+    if (!supported.timelineSemaphore) {
+      VALIDATION_LOG << "Device doesn't support timeline semaphores.";
+      return std::nullopt;
+    }
+    required.timelineSemaphore = VK_TRUE;
   }
 
   return required_chain;

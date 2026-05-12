@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 
 #include "flutter/common/graphics/gl_context_switch.h"
 #include "flutter/display_list/geometry/dl_region.h"
@@ -39,6 +40,7 @@ class GPUSurfaceVulkanImpeller final : public Surface {
   std::shared_ptr<impeller::Context> impeller_context_;
   std::shared_ptr<impeller::AiksContext> aiks_context_;
   std::shared_ptr<impeller::SwapchainTransientsVK> transients_;
+  std::optional<impeller::TextureDescriptor> transients_desc_;
   bool is_valid_ = false;
   bool disable_partial_repaint_ = false;
   // Accumulated damage for each back buffer; keyed by VkImage handle

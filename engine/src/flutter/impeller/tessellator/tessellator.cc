@@ -243,10 +243,31 @@ static int kPrecomputedDivisions[kPrecomputedDivisionCount] = {
     // clang-format on
 };
 
+static constexpr Scalar kSmallCurveTolerance = 0.025f;
+static constexpr Scalar kSmallCurveToleranceCutoff = 96.0f;
+
+static size_t ComputeQuadrantDivisionsForTolerance(Scalar pixel_radius,
+                                                   Scalar tolerance) {
+  if (pixel_radius <= tolerance) {
+    return 1;
+  }
+  double k = tolerance / pixel_radius;
+  return ceil(kPiOver4 / std::acos(1 - k));
+}
+
 static size_t ComputeQuadrantDivisions(Scalar pixel_radius) {
   if (pixel_radius <= 0.0) {
     return 1;
   }
+
+  // The precomputed table above was generated for the historical 0.1px error
+  // budget. Small UI curves make that error visible, so use a tighter dynamic
+  // budget there until these primitives can use Impeller's SDF path.
+  if (pixel_radius <= kSmallCurveToleranceCutoff) {
+    return ComputeQuadrantDivisionsForTolerance(pixel_radius,
+                                                kSmallCurveTolerance);
+  }
+
   int radius_index = ceil(pixel_radius);
   if (radius_index < kPrecomputedDivisionCount) {
     return kPrecomputedDivisions[radius_index];
@@ -295,8 +316,8 @@ static size_t ComputeQuadrantDivisions(Scalar pixel_radius) {
   //   N = ceil(kPi / 4 / sqrt(2 * k))
   // Since we have precomputed the divisions for radii up to 1024, we can
   // afford to be more accurate using the acos formula here for larger radii.
-  double k = Tessellator::kCircleTolerance / pixel_radius;
-  return ceil(kPiOver4 / std::acos(1 - k));
+  return ComputeQuadrantDivisionsForTolerance(pixel_radius,
+                                              Tessellator::kCircleTolerance);
 }
 
 void Tessellator::Trigs::init(size_t divisions) {
@@ -359,7 +380,7 @@ EllipticalVertexGenerator Tessellator::StrokedCircle(
     Scalar half_width) {
   if (half_width > 0) {
     auto divisions = ComputeQuadrantDivisions(
-        view_transform.GetMaxBasisLengthXY() * radius + half_width);
+        view_transform.GetMaxBasisLengthXY() * (radius + half_width));
     return EllipticalVertexGenerator(Tessellator::GenerateStrokedCircle,
                                      GetTrigsForDivisions(divisions),
                                      PrimitiveType::kTriangleStrip, 8,

@@ -15,7 +15,6 @@ impeller_component("vulkan_unittests") {
     "context_vk_unittests.cc",
     "descriptor_pool_vk_unittests.cc",
     "driver_info_vk_unittests.cc",
-    "fence_waiter_vk_unittests.cc",
     "formats_vk_unittests.cc",
     "pipeline_cache_data_vk_unittests.cc",
     "render_pass_builder_vk_unittests.cc",
@@ -29,6 +28,7 @@ impeller_component("vulkan_unittests") {
     "test/mock_vulkan_unittests.cc",
     "test/sampler_library_vk_unittests.cc",
     "test/swapchain_unittests.cc",
+    "timeline_completion_vk_unittests.cc",
   ]
   deps = [
     ":vulkan",
@@ -68,8 +68,6 @@ impeller_component("vulkan") {
     "device_holder_vk.h",
     "driver_info_vk.cc",
     "driver_info_vk.h",
-    "fence_waiter_vk.cc",
-    "fence_waiter_vk.h",
     "formats_vk.cc",
     "formats_vk.h",
     "gpu_tracer_vk.cc",
@@ -119,6 +117,8 @@ impeller_component("vulkan") {
     "texture_source_vk.h",
     "texture_vk.cc",
     "texture_vk.h",
+    "timeline_completion_vk.cc",
+    "timeline_completion_vk.h",
     "tracked_objects_vk.cc",
     "tracked_objects_vk.h",
     "vertex_descriptor_vk.cc",

@@ -27,6 +27,7 @@ namespace flutter {
 
 namespace {
 constexpr size_t kMaxTrackedDamageImages = 16u;
+constexpr bool kEnableEmbedderVulkanMSAA = true;
 }  // namespace
 
 class WrappedTextureSourceVK : public impeller::TextureSourceVK {
@@ -229,10 +230,12 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
       return nullptr;
     }
 
-    if (transients_ == nullptr) {
+    if (!transients_ || !transients_desc_.has_value() ||
+        transients_desc_.value() != desc) {
       transients_ = std::make_shared<impeller::SwapchainTransientsVK>(
           impeller_context_, desc,
-          /*enable_msaa=*/false);
+          /*enable_msaa=*/kEnableEmbedderVulkanMSAA);
+      transients_desc_ = desc;
     }
 
     auto wrapped_onscreen = std::make_shared<WrappedTextureSourceVK>(

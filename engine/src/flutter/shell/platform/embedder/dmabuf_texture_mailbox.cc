@@ -6,42 +6,48 @@
 
 namespace flutter {
 
+namespace {
+
+void RunReleaseCallback(DmabufMailboxEntry& entry) {
+  if (entry.release_callback) {
+    auto callback = std::move(entry.release_callback);
+    callback();
+  }
+}
+
+}  // namespace
+
 DmabufTextureMailbox::DmabufTextureMailbox() = default;
 
 DmabufTextureMailbox::~DmabufTextureMailbox() {
-  // Collect callbacks under the lock, then fire them outside the lock to
-  // avoid deadlock if a callback re-enters the mailbox.
-  std::vector<std::function<void()>> callbacks;
+  std::vector<DmabufMailboxEntry> drained_entries;
   {
     std::scoped_lock lock(mutex_);
+    drained_entries.reserve(entries_.size());
     for (auto& [id, entry] : entries_) {
-      if (entry.release_callback) {
-        callbacks.push_back(std::move(entry.release_callback));
-      }
+      drained_entries.push_back(std::move(entry));
     }
     entries_.clear();
   }
-  for (auto& cb : callbacks) {
-    cb();
+  for (auto& entry : drained_entries) {
+    RunReleaseCallback(entry);
   }
 }
 
 void DmabufTextureMailbox::Store(int64_t texture_id, DmabufMailboxEntry entry) {
-  std::function<void()> old_release_callback;
+  std::optional<DmabufMailboxEntry> replaced_entry;
   {
     std::scoped_lock lock(mutex_);
     auto it = entries_.find(texture_id);
     if (it != entries_.end()) {
-      // Previous entry was never consumed — capture its release callback
-      // to fire outside the lock (avoids deadlock if callback re-enters).
-      old_release_callback = std::move(it->second.release_callback);
+      replaced_entry.emplace(std::move(it->second));
       it->second = std::move(entry);
     } else {
       entries_.emplace(texture_id, std::move(entry));
     }
   }
-  if (old_release_callback) {
-    old_release_callback();
+  if (replaced_entry.has_value()) {
+    RunReleaseCallback(replaced_entry.value());
   }
 }
 
@@ -67,18 +73,18 @@ std::vector<DlIRect> DmabufTextureMailbox::PeekDamage(int64_t texture_id) {
 }
 
 void DmabufTextureMailbox::Remove(int64_t texture_id) {
-  std::function<void()> release_callback;
+  std::optional<DmabufMailboxEntry> removed_entry;
   {
     std::scoped_lock lock(mutex_);
     auto it = entries_.find(texture_id);
     if (it == entries_.end()) {
       return;
     }
-    release_callback = std::move(it->second.release_callback);
+    removed_entry.emplace(std::move(it->second));
     entries_.erase(it);
   }
-  if (release_callback) {
-    release_callback();
+  if (removed_entry.has_value()) {
+    RunReleaseCallback(removed_entry.value());
   }
 }
 

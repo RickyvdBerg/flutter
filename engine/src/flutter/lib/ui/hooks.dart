@@ -414,6 +414,16 @@ void _drawFrame() {
 }
 
 @pragma('vm:entry-point')
+void _beginFrameForDisplay(int microseconds, int displayId, List<dynamic> viewIds) {
+  PlatformDispatcher.instance._beginFrameForDisplay(microseconds, displayId, viewIds.cast<int>());
+}
+
+@pragma('vm:entry-point')
+void _drawFrameForDisplay() {
+  PlatformDispatcher.instance._drawFrameForDisplay();
+}
+
+@pragma('vm:entry-point')
 bool _onError(Object error, StackTrace? stackTrace) {
   return PlatformDispatcher.instance._dispatchError(error, stackTrace ?? StackTrace.empty);
 }

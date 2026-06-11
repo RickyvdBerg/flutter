@@ -307,6 +307,20 @@ bool RuntimeController::BeginFrame(fml::TimePoint frame_time,
   return false;
 }
 
+bool RuntimeController::BeginFrameForDisplay(
+    int64_t display_id,
+    const std::set<int64_t>& view_ids,
+    fml::TimePoint frame_time,
+    uint64_t frame_number) {
+  MarkAsFrameBorder();
+  if (auto* platform_configuration = GetPlatformConfigurationIfAvailable()) {
+    platform_configuration->BeginFrameForDisplay(display_id, view_ids,
+                                                 frame_time, frame_number);
+    return true;
+  }
+  return false;
+}
+
 bool RuntimeController::ReportTimings(std::vector<int64_t> timings) {
   if (auto* platform_configuration = GetPlatformConfigurationIfAvailable()) {
     platform_configuration->ReportTimings(std::move(timings));

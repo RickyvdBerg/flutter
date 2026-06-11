@@ -20,13 +20,31 @@ namespace flutter {
 
 static const auto kRootViewIdentifier = EmbedderExternalView::ViewIdentifier{};
 
+namespace {
+
+constexpr int64_t kShellLayerBreakToUnderlay = -901001;
+constexpr int64_t kShellLayerBreakToOverlay = -901002;
+constexpr int64_t kShellLayerBreakToPerWindowChrome = -901003;
+
+bool IsShellLayerBoundaryMarker(int64_t view_id) {
+  return view_id == kShellLayerBreakToUnderlay ||
+         view_id == kShellLayerBreakToOverlay ||
+         view_id == kShellLayerBreakToPerWindowChrome;
+}
+
+}  // namespace
+
 EmbedderExternalViewEmbedder::EmbedderExternalViewEmbedder(
     bool avoid_backing_store_cache,
     const CreateRenderTargetCallback& create_render_target_callback,
-    const PresentCallback& present_callback)
+    const PresentCallback& present_callback,
+    const GetShellVisualsCallback& get_shell_visuals_callback,
+    const GetShellSourcesCallback& get_shell_sources_callback)
     : avoid_backing_store_cache_(avoid_backing_store_cache),
       create_render_target_callback_(create_render_target_callback),
-      present_callback_(present_callback) {
+      present_callback_(present_callback),
+      get_shell_visuals_callback_(get_shell_visuals_callback),
+      get_shell_sources_callback_(get_shell_sources_callback) {
   FML_DCHECK(create_render_target_callback_);
   FML_DCHECK(present_callback_);
 }
@@ -35,6 +53,7 @@ EmbedderExternalViewEmbedder::~EmbedderExternalViewEmbedder() = default;
 
 void EmbedderExternalViewEmbedder::CollectView(int64_t view_id) {
   render_target_caches_.erase(view_id);
+  retained_presented_layers_.erase(view_id);
 }
 
 void EmbedderExternalViewEmbedder::SetSurfaceTransformationCallback(
@@ -53,6 +72,7 @@ DlMatrix EmbedderExternalViewEmbedder::GetSurfaceTransformation() const {
 void EmbedderExternalViewEmbedder::Reset() {
   pending_views_.clear();
   composition_order_.clear();
+  has_shell_layer_boundary_markers_ = false;
 }
 
 // |ExternalViewEmbedder|
@@ -80,10 +100,18 @@ void EmbedderExternalViewEmbedder::PrepareFlutterView(
   composition_order_.push_back(kRootViewIdentifier);
 }
 
+bool EmbedderExternalViewEmbedder::SupportsMetadataFrameDamageForCurrentFrame()
+    const {
+  return !has_shell_layer_boundary_markers_;
+}
+
 // |ExternalViewEmbedder|
 void EmbedderExternalViewEmbedder::PrerollCompositeEmbeddedView(
     int64_t view_id,
     std::unique_ptr<EmbeddedViewParams> params) {
+  if (IsShellLayerBoundaryMarker(view_id)) {
+    has_shell_layer_boundary_markers_ = true;
+  }
   auto vid = EmbedderExternalView::ViewIdentifier(view_id);
   FML_DCHECK(pending_views_.count(vid) == 0);
 
@@ -609,7 +637,8 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
 #endif  //  !SLIMPELLER
 
   {
-    auto presentation_time_optional = frame->submit_info().presentation_time;
+    const auto submit_info = frame->submit_info();
+    auto presentation_time_optional = submit_info.presentation_time;
     uint64_t presentation_time =
         presentation_time_optional.has_value()
             ? presentation_time_optional->ToEpochDelta().ToNanoseconds()
@@ -618,13 +647,24 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
     // Submit the scribbled layer to the embedder for presentation.
     //
     // @warning: Embedder may trample on our OpenGL context here.
-    EmbedderLayers presented_layers(
+    auto presented_layers = std::make_shared<EmbedderLayers>(
         pending_frame_size_, pending_device_pixel_ratio_,
-        pending_surface_transformation_, presentation_time);
+        pending_surface_transformation_, presentation_time,
+        submit_info.frame_damage);
 
-    builder.PushLayers(presented_layers);
+    builder.PushLayers(*presented_layers);
 
-    presented_layers.InvokePresentCallback(flutter_view_id, present_callback_);
+    auto retained = retained_presented_layers_.find(flutter_view_id);
+    auto retained_layers =
+        retained == retained_presented_layers_.end()
+            ? std::shared_ptr<const EmbedderLayers>()
+            : std::static_pointer_cast<const EmbedderLayers>(retained->second);
+    presented_layers->InvokePresentCallback(flutter_view_id,
+                                            std::move(retained_layers),
+                                            &get_shell_visuals_callback_,
+                                            &get_shell_sources_callback_,
+                                            present_callback_);
+    retained_presented_layers_[flutter_view_id] = std::move(presented_layers);
   }
 
   // See why this is necessary in the comment where this collection in

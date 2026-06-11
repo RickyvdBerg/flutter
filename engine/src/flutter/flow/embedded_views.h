@@ -484,6 +484,13 @@ class ExternalViewEmbedder {
   virtual void PrepareFlutterView(DlISize frame_size,
                                   double device_pixel_ratio) = 0;
 
+  // Whether metadata-only frame-damage diffing is safe for the current frame.
+  // Embedders that introduce synthetic platform-view boundaries can opt out of
+  // this path while still using the normal full-repaint external-view flow.
+  virtual bool SupportsMetadataFrameDamageForCurrentFrame() const {
+    return true;
+  }
+
   // Submits the content stored since |PrepareFlutterView| to the specified
   // Flutter view.
   //

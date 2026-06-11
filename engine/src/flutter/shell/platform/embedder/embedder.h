@@ -628,6 +628,25 @@ typedef bool (*TextureFrameCallback)(void* /* user data */,
                                      size_t /* height */,
                                      FlutterOpenGLTexture* /* texture out */);
 typedef void (*VsyncCallback)(void* /* user data */, intptr_t /* baton */);
+
+/// Unique identifier for a display. Forward-declared here so that
+/// `FlutterVsyncForDisplayCallback` can reference it; the canonical
+/// definition is below with the display structures.
+typedef uint64_t FlutterEngineDisplayId;
+
+/// Per-display vsync callback. The engine calls this when it needs a vsync
+/// event for a specific display. The baton must be returned via
+/// `FlutterEngineOnVsyncForDisplay` with the same `display_id`.
+///
+/// When set in `FlutterProjectArgs`, this callback takes priority over
+/// `vsync_callback`. The engine will call this with `display_id` indicating
+/// which display needs a vsync. For single-display setups or when the display
+/// is unknown, `display_id` will be `kFlutterDefaultDisplayId` (0).
+typedef void (*FlutterVsyncForDisplayCallback)(
+    void* /* user data */,
+    intptr_t /* baton */,
+    FlutterEngineDisplayId /* display_id */);
+
 typedef void (*OnPreEngineRestartCallback)(void* /* user data */);
 
 /// A structure to represent the width and height.
@@ -1047,7 +1066,9 @@ typedef struct {
 /// Display refers to a graphics hardware system consisting of a framebuffer,
 /// typically a monitor or a screen. This ID is unique per display and is
 /// stable until the Flutter application restarts.
-typedef uint64_t FlutterEngineDisplayId;
+///
+/// Note: `FlutterEngineDisplayId` is forward-declared earlier in this file
+/// (near `FlutterVsyncForDisplayCallback`) so the typedef is not repeated here.
 
 typedef struct {
   /// The size of this struct. Must be sizeof(FlutterWindowMetricsEvent).
@@ -1936,6 +1957,13 @@ typedef struct {
   ///
   /// @attention     This field is required.
   FlutterTaskRunnerPostTaskCallback post_task_callback;
+  /// May be called from any thread while the engine is blocked waiting for an
+  /// immediate frame and needs the embedder to make queued engine tasks on this
+  /// runner progress synchronously. Embedders with custom task runners can
+  /// implement this to drain only the tasks already posted by the engine.
+  ///
+  /// @attention     This field is optional.
+  VoidCallback drain_tasks_now_callback;
   /// A unique identifier for the task runner. If multiple task runners service
   /// tasks on the same thread, their identifiers must match.
   size_t identifier;
@@ -2165,6 +2193,20 @@ typedef enum {
   kFlutterLayerContentTypePlatformView,
 } FlutterLayerContentType;
 
+/// The logical compositor role of Flutter-produced content.
+///
+/// In the current transitional contract, the primary Flutter backing store is
+/// explicitly treated as the shell overlay layer instead of an implicit
+/// "everything layer".
+typedef enum {
+  kFlutterShellLayerRoleUnknown,
+  kFlutterShellLayerRoleBackground,
+  kFlutterShellLayerRoleUnderlay,
+  kFlutterShellLayerRoleOverlay,
+  kFlutterShellLayerRolePerWindowChrome,
+  kFlutterShellLayerRoleEmbeddedContent,
+} FlutterShellLayerRole;
+
 /// A region represented by a collection of non-overlapping rectangles.
 typedef struct {
   /// The size of this struct. Must be sizeof(FlutterRegion).
@@ -2185,6 +2227,15 @@ typedef struct {
   /// outside of this area are transparent and the embedder may choose not
   /// to render them. Coordinates are in physical pixels.
   FlutterRegion* paint_region;
+
+  /// The area of the backing store that changed since the last presented
+  /// frame. NULL if damage is unknown (embedder should assume full damage).
+  /// Coordinates are in physical pixels.
+  ///
+  /// This describes frame-to-frame delta (analogous to
+  /// EGL_KHR_swap_buffers_with_damage). It is metadata for composition
+  /// decisions and does not imply partial rasterization.
+  FlutterRegion* frame_damage;
 } FlutterBackingStorePresentInfo;
 
 typedef struct {
@@ -2214,7 +2265,73 @@ typedef struct {
   // Time in nanoseconds at which this frame is scheduled to be presented. 0 if
   // not known. See FlutterEngineGetCurrentTime().
   uint64_t presentation_time;
+
+  /// The logical compositor role of this layer.
+  FlutterShellLayerRole shell_layer_role;
+
+  /// Stable compositor-provided identifier for shell visuals carried by this
+  /// layer. Zero when the layer has no explicit visual identity.
+  uint64_t shell_visual_identifier;
+
+  /// Compositor-provided visual generation for shell visuals carried by this
+  /// layer. Zero when no explicit visual generation is attached.
+  uint64_t shell_visual_generation;
+
 } FlutterLayer;
+
+typedef struct {
+  /// This size of this struct. Must be sizeof(FlutterShellVisualInfo).
+  size_t struct_size;
+
+  /// The logical shell role represented by this visual.
+  FlutterShellLayerRole shell_layer_role;
+
+  /// Stable compositor-provided identifier for this shell visual.
+  uint64_t shell_visual_identifier;
+
+  /// Monotonic compositor-provided visual generation for this shell visual.
+  uint64_t shell_visual_generation;
+
+  /// The exact visual rect inside the shell backing store. For per-window
+  /// chrome this is the titlebar source rect that should be cropped out of the
+  /// backing store before compositor placement.
+  FlutterRect source_rect;
+} FlutterShellVisualInfo;
+
+typedef struct {
+  /// This size of this struct. Must be sizeof(FlutterShellVisuals).
+  size_t struct_size;
+
+  /// Borrowed array of shell visual descriptors valid for the duration of the
+  /// callback.
+  const FlutterShellVisualInfo* shell_visuals;
+
+  /// The count of `shell_visuals`.
+  size_t shell_visuals_count;
+} FlutterShellVisuals;
+
+typedef struct {
+  /// This size of this struct. Must be sizeof(FlutterShellSourceInfo).
+  size_t struct_size;
+
+  /// The logical shell role for this source channel.
+  FlutterShellLayerRole shell_layer_role;
+
+  /// The exact source rect for this channel inside the backing store.
+  FlutterRect source_rect;
+} FlutterShellSourceInfo;
+
+typedef struct {
+  /// This size of this struct. Must be sizeof(FlutterShellSources).
+  size_t struct_size;
+
+  /// Borrowed array of shell source descriptors valid for the duration of the
+  /// callback.
+  const FlutterShellSourceInfo* shell_sources;
+
+  /// The count of `shell_sources`.
+  size_t shell_sources_count;
+} FlutterShellSources;
 
 typedef struct {
   /// The size of this struct.
@@ -2232,6 +2349,32 @@ typedef struct {
 
   /// The |FlutterCompositor.user_data|.
   void* user_data;
+
+  /// The logical role of the shell frame bundle carried by this present
+  /// callback.
+  FlutterShellLayerRole shell_layer_role;
+
+  /// The number of Flutter backing-store layers in this callback.
+  size_t shell_backing_store_count;
+
+  /// A monotonic present-callback sequence number for this shell bundle.
+  ///
+  /// This preserves callback ordering only. Exact shell-layer generations
+  /// remain layer-local (for example, the transitional single-layer path uses
+  /// the backing-store generation as the exact shell generation).
+  uint64_t shell_present_sequence;
+
+  /// The explicit shell background layer, or NULL if absent.
+  const FlutterLayer* shell_background_layer;
+
+  /// The explicit shell underlay layer, or NULL if absent.
+  const FlutterLayer* shell_underlay_layer;
+
+  /// The explicit shell overlay layer, or NULL if absent.
+  const FlutterLayer* shell_overlay_layer;
+
+  /// The explicit per-window chrome layer, or NULL if absent.
+  const FlutterLayer* shell_per_window_chrome_layer;
 } FlutterPresentViewInfo;
 
 typedef bool (*FlutterBackingStoreCreateCallback)(
@@ -2252,6 +2395,22 @@ typedef bool (*FlutterLayersPresentCallback)(const FlutterLayer** layers,
 /// The |FlutterPresentViewInfo| will be deallocated once the callback returns.
 typedef bool (*FlutterPresentViewCallback)(
     const FlutterPresentViewInfo* /* present info */);
+
+/// Callback invoked by the engine to query explicit shell visual metadata for a
+/// specific view. The returned pointers only need to remain valid until the
+/// callback returns.
+typedef bool (*FlutterShellVisualsCallback)(
+    FlutterViewId view_id,
+    FlutterShellVisuals* shell_visuals_out,
+    void* user_data);
+
+/// Callback invoked by the engine to query explicit shell source-channel
+/// metadata for a specific view. The returned pointers only need to remain
+/// valid until the callback returns.
+typedef bool (*FlutterShellSourcesCallback)(
+    FlutterViewId view_id,
+    FlutterShellSources* shell_sources_out,
+    void* user_data);
 
 typedef struct {
   /// This size of this struct. Must be sizeof(FlutterCompositor).
@@ -2309,6 +2468,18 @@ typedef struct {
   ///
   /// The callback should return true if the operation was successful.
   FlutterPresentViewCallback present_view_callback;
+
+  /// Callback invoked by the engine to query explicit shell visual metadata for
+  /// a specific view. This is used to expose structured shell visuals such as
+  /// per-window chrome without smuggling identity through platform-view marker
+  /// IDs.
+  FlutterShellVisualsCallback get_shell_visuals_callback;
+
+  /// Callback invoked by the engine to query explicit shell source-channel
+  /// metadata for a specific view. This makes the source-channel contract
+  /// explicit even when the current raster path still uses internal split
+  /// markers to produce separate backing stores.
+  FlutterShellSourcesCallback get_shell_sources_callback;
 } FlutterCompositor;
 
 typedef struct {
@@ -2383,6 +2554,11 @@ typedef enum {
   ///    2. The display is drawable, e.g. it isn't being mirrored from another
   ///    connected display or sleeping.
   kFlutterEngineDisplaysUpdateTypeStartup,
+  /// `FlutterEngineDisplay`s changed after startup (hotplug, unplug, mode
+  /// change, scale change, or active-display set change).
+  ///
+  /// Embedders should pass the complete set of currently active displays.
+  kFlutterEngineDisplaysUpdateTypeUpdate,
   kFlutterEngineDisplaysUpdateTypeCount,
 } FlutterEngineDisplaysUpdateType;
 
@@ -2828,6 +3004,18 @@ typedef struct {
   /// If true, the engine will decode images in wide gamut color spaces
   /// (Display P3) when supported. If false, images are decoded to sRGB.
   bool enable_wide_gamut;
+
+  /// Per-display vsync callback. When set, this callback is used instead of
+  /// `vsync_callback`. The engine passes a `display_id` indicating which
+  /// display needs a vsync event. The baton must be returned via
+  /// `FlutterEngineOnVsyncForDisplay`.
+  ///
+  /// This enables multi-monitor setups where each display has its own refresh
+  /// rate. Views assigned to a display (via `FlutterEngineSetViewDisplay`) will
+  /// only be rendered on that display's vsync.
+  ///
+  /// If this is null, the engine falls back to `vsync_callback`.
+  FlutterVsyncForDisplayCallback vsync_for_display_callback;
 } FlutterProjectArgs;
 
 typedef struct {
@@ -3472,6 +3660,55 @@ FlutterEngineResult FlutterEngineOnVsync(FLUTTER_API_SYMBOL(FlutterEngine)
                                          uint64_t frame_target_time_nanos);
 
 //------------------------------------------------------------------------------
+/// @brief      Notify the engine of a vsync event for a specific display.
+///             This is the per-display variant of `FlutterEngineOnVsync`.
+///
+///             The baton passed here must be one that was provided by the
+///             `FlutterVsyncForDisplayCallback`. The `display_id` must match
+///             the display that the baton was issued for.
+///
+///             Only the views assigned to this display (via
+///             `FlutterEngineSetViewDisplay`) will be rendered on this frame.
+///
+/// @param[in]  engine                   A running engine instance.
+/// @param[in]  baton                    The baton from the vsync callback.
+/// @param[in]  display_id               The display this vsync is for.
+/// @param[in]  frame_start_time_nanos   The start time of the frame in nanos.
+/// @param[in]  frame_target_time_nanos  The target time for the frame in nanos.
+///
+/// @return     The result of the call.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineOnVsyncForDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    intptr_t baton,
+    FlutterEngineDisplayId display_id,
+    uint64_t frame_start_time_nanos,
+    uint64_t frame_target_time_nanos);
+
+//------------------------------------------------------------------------------
+/// @brief      Assign a view to a display for per-display vsync rendering.
+///
+///             After this call, the view will only be rendered on the specified
+///             display's vsync events. The display must have been previously
+///             registered via `FlutterEngineNotifyDisplayUpdate`.
+///
+///             A view can be reassigned to a different display at any time
+///             (e.g., when a window is dragged between monitors).
+///
+/// @param[in]  engine      A running engine instance.
+/// @param[in]  view_id     The view to assign.
+/// @param[in]  display_id  The display to assign the view to.
+///
+/// @return     The result of the call.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineSetViewDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterViewId view_id,
+    FlutterEngineDisplayId display_id);
+
+//------------------------------------------------------------------------------
 /// @brief      Reloads the system fonts in engine.
 ///
 /// @param[in]  engine.                  A running engine instance.
@@ -3712,7 +3949,25 @@ FlutterEngineResult FlutterEngineNotifyDisplayUpdate(
     size_t display_count);
 
 //------------------------------------------------------------------------------
+/// @brief      Intent for compositor-driven shell frame requests.
+///
+///             This is the narrow ABI seam between the compositor and the
+///             engine. All request kinds are compositor-directed; the engine
+///             only executes the requested shell work.
+typedef enum {
+  /// Build a fresh shell scene and rasterize it.
+  kFlutterEngineFrameRequestKindRebuild = 0,
+  /// Reuse the latest shell scene and rasterize it again.
+  kFlutterEngineFrameRequestKindReuseLatest = 1,
+  /// Reuse the latest shell scene after shell-owned texture invalidation.
+  kFlutterEngineFrameRequestKindTextureOnlyInvalidation = 2,
+} FlutterEngineFrameRequestKind;
+
+//------------------------------------------------------------------------------
 /// @brief      Schedule a new frame to redraw the content.
+///
+///             Equivalent to `FlutterEngineScheduleFrameWithRequestKind` with
+///             `kFlutterEngineFrameRequestKindRebuild`.
 ///
 /// @param[in]  engine     A running engine instance.
 ///
@@ -3721,6 +3976,57 @@ FlutterEngineResult FlutterEngineNotifyDisplayUpdate(
 FLUTTER_EXPORT
 FlutterEngineResult FlutterEngineScheduleFrame(FLUTTER_API_SYMBOL(FlutterEngine)
                                                    engine);
+
+//------------------------------------------------------------------------------
+/// @brief      Schedule a new frame with an explicit compositor-directed
+///             request kind.
+///
+/// @param[in]  engine        A running engine instance.
+/// @param[in]  request_kind  The shell work the compositor wants the engine to
+///                           perform.
+///
+/// @return the result of the call made to the engine.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineScheduleFrameWithRequestKind(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineFrameRequestKind request_kind);
+
+//------------------------------------------------------------------------------
+/// @brief      Schedule a new frame for a specific display.
+///
+///             This is the per-display variant of
+///             `FlutterEngineScheduleFrame` and only wakes the specified
+///             display pipeline in per-display mode. This is equivalent to
+///             `FlutterEngineScheduleFrameForDisplayWithRequestKind` with
+///             `kFlutterEngineFrameRequestKindRebuild`.
+///
+/// @param[in]  engine      A running engine instance.
+/// @param[in]  display_id  Display to schedule.
+///
+/// @return the result of the call made to the engine.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineScheduleFrameForDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id);
+
+//------------------------------------------------------------------------------
+/// @brief      Schedule a new frame for a specific display with an explicit
+///             compositor-directed request kind.
+///
+/// @param[in]  engine        A running engine instance.
+/// @param[in]  display_id    Display to schedule.
+/// @param[in]  request_kind  The shell work the compositor wants the engine to
+///                           perform.
+///
+/// @return the result of the call made to the engine.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineScheduleFrameForDisplayWithRequestKind(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id,
+    FlutterEngineFrameRequestKind request_kind);
 
 //------------------------------------------------------------------------------
 /// @brief      Schedule a callback to be called after the next frame is drawn.
@@ -3828,6 +4134,16 @@ typedef FlutterEngineResult (*FlutterEngineOnVsyncFnPtr)(
     intptr_t baton,
     uint64_t frame_start_time_nanos,
     uint64_t frame_target_time_nanos);
+typedef FlutterEngineResult (*FlutterEngineOnVsyncForDisplayFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    intptr_t baton,
+    FlutterEngineDisplayId display_id,
+    uint64_t frame_start_time_nanos,
+    uint64_t frame_target_time_nanos);
+typedef FlutterEngineResult (*FlutterEngineSetViewDisplayFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterViewId view_id,
+    FlutterEngineDisplayId display_id);
 typedef FlutterEngineResult (*FlutterEngineReloadSystemFontsFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine);
 typedef void (*FlutterEngineTraceEventDurationBeginFnPtr)(const char* name);
@@ -3863,6 +4179,17 @@ typedef FlutterEngineResult (*FlutterEngineNotifyDisplayUpdateFnPtr)(
     size_t display_count);
 typedef FlutterEngineResult (*FlutterEngineScheduleFrameFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine);
+typedef FlutterEngineResult (*FlutterEngineScheduleFrameWithRequestKindFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineFrameRequestKind request_kind);
+typedef FlutterEngineResult (*FlutterEngineScheduleFrameForDisplayFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id);
+typedef FlutterEngineResult (
+    *FlutterEngineScheduleFrameForDisplayWithRequestKindFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id,
+    FlutterEngineFrameRequestKind request_kind);
 typedef FlutterEngineResult (*FlutterEngineSetNextFrameCallbackFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     VoidCallback callback,
@@ -3935,9 +4262,15 @@ typedef struct {
   FlutterEngineRemoveViewFnPtr RemoveView;
   FlutterEngineSendViewFocusEventFnPtr SendViewFocusEvent;
   FlutterEngineSendSemanticsActionFnPtr SendSemanticsAction;
+  FlutterEngineOnVsyncForDisplayFnPtr OnVsyncForDisplay;
+  FlutterEngineSetViewDisplayFnPtr SetViewDisplay;
 #ifdef __linux__
   FlutterEnginePublishDmabufTextureFnPtr PublishDmabufTexture;
 #endif  // __linux__
+  FlutterEngineScheduleFrameForDisplayFnPtr ScheduleFrameForDisplay;
+  FlutterEngineScheduleFrameWithRequestKindFnPtr ScheduleFrameWithRequestKind;
+  FlutterEngineScheduleFrameForDisplayWithRequestKindFnPtr
+      ScheduleFrameForDisplayWithRequestKind;
 } FlutterEngineProcTable;
 
 //------------------------------------------------------------------------------

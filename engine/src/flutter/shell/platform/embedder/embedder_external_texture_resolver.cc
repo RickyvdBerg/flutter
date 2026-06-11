@@ -9,6 +9,9 @@
 #include <utility>
 
 #ifdef __linux__
+#include <set>
+#include <unistd.h>
+
 #include "flutter/fml/logging.h"
 #include "flutter/shell/platform/embedder/dmabuf_texture_mailbox.h"
 #include "impeller/display_list/aiks_context.h"
@@ -47,6 +50,80 @@ class EmbedderExternalTextureDmabuf final : public Texture {
   std::unique_ptr<DmabufMailboxEntry> current_entry_;
   sk_sp<DlImage> last_image_;
 
+  static void CloseTransferredDescriptorFds(
+      const impeller::DmabufDescriptor& desc) {
+    std::set<int> transferred_fds;
+    for (uint32_t i = 0; i < desc.num_planes && i < 4; i++) {
+      if (desc.planes[i].fd >= 0) {
+        transferred_fds.insert(desc.planes[i].fd);
+      }
+    }
+    if (desc.acquire_fence_fd >= 0) {
+      transferred_fds.insert(desc.acquire_fence_fd);
+    }
+    for (int fd : transferred_fds) {
+      close(fd);
+    }
+  }
+
+  std::shared_ptr<impeller::DmabufTextureSourceVK> MaterializeTextureSource(
+      const std::shared_ptr<impeller::Context>& impeller_context,
+      DmabufMailboxEntry* entry) {
+    if (!impeller_context || !entry) {
+      return nullptr;
+    }
+
+    if (entry->texture_source && entry->texture_source->IsValid()) {
+      return entry->texture_source;
+    }
+
+    if (!entry->pending_descriptor.has_value()) {
+      return nullptr;
+    }
+
+    const auto& pending_desc = entry->pending_descriptor.value();
+    impeller::DmabufDescriptor desc;
+    desc.width = pending_desc.width;
+    desc.height = pending_desc.height;
+    desc.drm_format = pending_desc.drm_format;
+    desc.drm_modifier = pending_desc.drm_modifier;
+    desc.num_planes = pending_desc.num_planes;
+    if (desc.num_planes == 0 || desc.num_planes > 4) {
+      entry->pending_descriptor.reset();
+      return nullptr;
+    }
+
+    auto& mutable_pending_desc = entry->pending_descriptor.value();
+    for (uint32_t i = 0; i < desc.num_planes; i++) {
+      if (!mutable_pending_desc.plane_fds[i].is_valid()) {
+        entry->pending_descriptor.reset();
+        return nullptr;
+      }
+      desc.planes[i].fd = mutable_pending_desc.plane_fds[i].release();
+      desc.planes[i].offset = mutable_pending_desc.offsets[i];
+      desc.planes[i].stride = mutable_pending_desc.strides[i];
+    }
+    if (mutable_pending_desc.acquire_fence_fd.is_valid()) {
+      desc.acquire_fence_fd = mutable_pending_desc.acquire_fence_fd.release();
+    }
+
+    auto texture_source =
+        std::make_shared<impeller::DmabufTextureSourceVK>(impeller_context,
+                                                          desc);
+    if (!texture_source->IsValid()) {
+      CloseTransferredDescriptorFds(desc);
+      entry->pending_descriptor.reset();
+      return nullptr;
+    }
+
+    if (entry->release_callback) {
+      texture_source->SetReleaseCallback(std::move(entry->release_callback));
+    }
+    entry->texture_source = texture_source;
+    entry->pending_descriptor.reset();
+    return texture_source;
+  }
+
   // |flutter::Texture|
   void Paint(PaintContext& context,
              const DlRect& bounds,
@@ -57,7 +134,7 @@ class EmbedderExternalTextureDmabuf final : public Texture {
       std::scoped_lock lock(state_mutex_);
       image = last_image_;
     }
-    if (image == nullptr) {
+    if (!image) {
       image = ResolveTexture(context);
     }
 
@@ -76,27 +153,38 @@ class EmbedderExternalTextureDmabuf final : public Texture {
 
   sk_sp<DlImage> ResolveTexture(PaintContext& context) {
     auto entry = mailbox_->Consume(Id());
-    if (!entry || !entry->texture_source || !entry->texture_source->IsValid()) {
+    if (!entry) {
       // No new frame; reuse the last image if we have one.
       std::scoped_lock lock(state_mutex_);
       return last_image_;
     }
 
-    // Create a TextureVK from the DmabufTextureSourceVK.
+    // Materialize the texture source lazily on the raster thread so dropped
+    // mailbox updates don't churn Vulkan imports.
     auto impeller_context =
         context.aiks_context ? context.aiks_context->GetContext() : nullptr;
     if (!impeller_context) {
+      if (entry->release_callback) {
+        auto callback = std::move(entry->release_callback);
+        callback();
+      }
       std::scoped_lock lock(state_mutex_);
       return last_image_;
     }
 
-    if (entry->release_callback) {
-      entry->texture_source->SetReleaseCallback(
-          std::move(entry->release_callback));
+    auto texture_source =
+        MaterializeTextureSource(impeller_context, entry.get());
+    if (!texture_source || !texture_source->IsValid()) {
+      if (entry->release_callback) {
+        auto callback = std::move(entry->release_callback);
+        callback();
+      }
+      std::scoped_lock lock(state_mutex_);
+      return last_image_;
     }
 
-    auto texture = std::make_shared<impeller::TextureVK>(impeller_context,
-                                                         entry->texture_source);
+    auto texture =
+        std::make_shared<impeller::TextureVK>(impeller_context, texture_source);
     auto image = impeller::DlImageImpeller::Make(std::move(texture));
 
     {
@@ -110,6 +198,7 @@ class EmbedderExternalTextureDmabuf final : public Texture {
   // |flutter::Texture|
   void MarkNewFrameAvailable() override {
     std::scoped_lock lock(state_mutex_);
+    current_entry_.reset();
     last_image_ = nullptr;
     SetNewFrameFlag();
   }

@@ -3,16 +3,47 @@
 // found in the LICENSE file.
 
 #include <future>
+
+// Allow access to fml::MessageLoop::GetCurrent() for the synchronous resize
+// wait loop which must pump platform thread tasks.
+#define FML_USED_ON_EMBEDDER
+
 #include "fml/task_runner.h"
 #include "impeller/core/runtime_types.h"
 #include "impeller/renderer/context.h"
 #define RAPIDJSON_HAS_STDSTRING 1
 #include "flutter/shell/common/shell.h"
 
+#include <chrono>
+#include <cstdio>
 #include <memory>
 #include <sstream>
+#include <thread>
 #include <utility>
 #include <vector>
+
+#ifdef __linux__
+#include <execinfo.h>
+#include <signal.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+// --- Signal-based userspace backtrace for raster thread stall diagnosis ---
+// The watchdog thread sends SIGUSR1 to the raster thread; the signal handler
+// captures backtrace() into a shared buffer that the watchdog then logs.
+static std::atomic<int> g_bt_ready{0};   // 0=idle, 1=requested, 2=done
+static constexpr int kMaxBtFrames = 64;
+static void*  g_bt_frames[kMaxBtFrames];
+static int    g_bt_count = 0;
+
+static void RasterStallSigHandler(int /*sig*/) {
+  if (g_bt_ready.load(std::memory_order_acquire) != 1) {
+    return;  // spurious
+  }
+  g_bt_count = backtrace(g_bt_frames, kMaxBtFrames);
+  g_bt_ready.store(2, std::memory_order_release);
+}
+#endif  // __linux__
 
 #include "flutter/assets/directory_asset_bundle.h"
 #include "flutter/common/constants.h"
@@ -30,6 +61,7 @@
 #include "flutter/runtime/dart_vm.h"
 #include "flutter/shell/common/base64.h"
 #include "flutter/shell/common/engine.h"
+#include "flutter/shell/platform/embedder/embedder_task_runner.h"
 #include "flutter/shell/common/skia_event_tracer_impl.h"
 #include "flutter/shell/common/switches.h"
 #include "flutter/shell/common/vsync_waiter.h"
@@ -612,7 +644,23 @@ Shell::Shell(DartVMRef vm,
                  std::placeholders::_1, std::placeholders::_2)};
 }
 
+void Shell::StopRasterDiagnosticsWatchdog() {
+  if (raster_watchdog_running_) {
+    raster_watchdog_running_->store(false, std::memory_order_release);
+  }
+
+  if (raster_watchdog_thread_.joinable()) {
+    raster_watchdog_thread_.join();
+  }
+
+  raster_watchdog_running_.reset();
+  raster_heartbeat_seq_.reset();
+  raster_thread_tid_.reset();
+}
+
 Shell::~Shell() {
+  StopRasterDiagnosticsWatchdog();
+
 #if !SLIMPELLER
   PersistentCache::GetCacheForProcess()->RemoveWorkerTaskRunner(
       task_runners_.GetIOTaskRunner());
@@ -913,6 +961,132 @@ bool Shell::Setup(std::unique_ptr<PlatformView> platform_view,
   }
 
   is_set_up_ = true;
+
+  // Keep heavyweight raster diagnostics strictly opt-in so production runs do
+  // not pay logging/thread overhead in hot paths.
+  if (settings_.verbose_logging) {
+    raster_watchdog_running_ = std::make_shared<std::atomic<bool>>(true);
+    raster_heartbeat_seq_ = std::make_shared<std::atomic<uint64_t>>(0);
+    raster_thread_tid_ = std::make_shared<std::atomic<int32_t>>(0);
+
+    auto running = raster_watchdog_running_;
+    auto heartbeat_seq = raster_heartbeat_seq_;
+    auto raster_tid = raster_thread_tid_;
+    auto runner = task_runners_.GetRasterTaskRunner();
+
+    // First task: record the raster thread's tid and install signal handler.
+    runner->PostTask([running, raster_tid]() {
+#ifdef __linux__
+      if (!running->load(std::memory_order_acquire)) {
+        return;
+      }
+      int32_t tid = static_cast<int32_t>(syscall(SYS_gettid));
+      raster_tid->store(tid, std::memory_order_release);
+      // Install SIGUSR1 handler on this thread for backtrace capture.
+      struct sigaction sa = {};
+      sa.sa_handler = RasterStallSigHandler;
+      sa.sa_flags = SA_RESTART;
+      sigaction(SIGUSR1, &sa, nullptr);
+      FML_LOG(IMPORTANT) << "Raster heartbeat: tid=" << tid << " starting";
+#else
+      FML_LOG(IMPORTANT) << "Raster heartbeat: starting";
+#endif
+    });
+
+    // Self-rescheduling heartbeat: bumps the progress counter.
+    struct Heartbeat {
+      static void Tick(fml::RefPtr<fml::TaskRunner> r,
+                       const std::shared_ptr<std::atomic<bool>>& running,
+                       const std::shared_ptr<std::atomic<uint64_t>>&
+                           heartbeat_seq) {
+        if (!running->load(std::memory_order_acquire)) {
+          return;
+        }
+
+        heartbeat_seq->fetch_add(1, std::memory_order_release);
+        r->PostDelayedTask([r, running, heartbeat_seq]() {
+                             Tick(r, running, heartbeat_seq);
+                           },
+                           fml::TimeDelta::FromSeconds(2));
+      }
+    };
+    runner->PostDelayedTask(
+        [runner, running, heartbeat_seq]() {
+          Heartbeat::Tick(runner, running, heartbeat_seq);
+        },
+        fml::TimeDelta::FromSeconds(2));
+
+#ifdef __linux__
+    // Watchdog thread: polls the heartbeat counter every 5s.
+    // When the raster thread stalls, captures wchan + userspace backtrace.
+    raster_watchdog_thread_ =
+        std::thread([running, heartbeat_seq, raster_tid]() {
+      uint64_t last_seen = 0;
+      bool stall_reported = false;
+      while (running->load(std::memory_order_acquire)) {
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        if (!running->load(std::memory_order_acquire)) {
+          break;
+        }
+        uint64_t current = heartbeat_seq->load(std::memory_order_acquire);
+        int32_t tid = raster_tid->load(std::memory_order_acquire);
+        if (current == last_seen && tid > 0) {
+          if (!stall_reported) {
+            stall_reported = true;
+            FML_LOG(IMPORTANT)
+                << "WATCHDOG: raster thread tid=" << tid
+                << " stalled (heartbeat stuck at seq=" << current << ")";
+
+            // Read /proc/self/task/<tid>/wchan
+            char path[128];
+            snprintf(path, sizeof(path), "/proc/self/task/%d/wchan", tid);
+            FILE* f = fopen(path, "r");
+            if (f) {
+              char buf[256] = {};
+              size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+              fclose(f);
+              buf[n] = '\0';
+              FML_LOG(IMPORTANT)
+                  << "WATCHDOG: raster thread wchan: " << buf;
+            }
+
+            // Capture userspace backtrace via SIGUSR1 signal.
+            g_bt_ready.store(1, std::memory_order_release);
+            syscall(SYS_tgkill, getpid(), tid, SIGUSR1);
+            // Spin briefly for the handler to fill the buffer.
+            for (int i = 0; i < 200; i++) {
+              if (g_bt_ready.load(std::memory_order_acquire) == 2) {
+                break;
+              }
+              std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            if (g_bt_ready.load(std::memory_order_acquire) == 2) {
+              char** syms = backtrace_symbols(g_bt_frames, g_bt_count);
+              if (syms) {
+                std::ostringstream oss;
+                oss << "WATCHDOG: raster thread userspace backtrace ("
+                    << g_bt_count << " frames):\n";
+                for (int i = 0; i < g_bt_count; i++) {
+                  oss << "  [" << i << "] " << syms[i] << "\n";
+                }
+                FML_LOG(IMPORTANT) << oss.str();
+                free(syms);
+              }
+            } else {
+              FML_LOG(IMPORTANT)
+                  << "WATCHDOG: backtrace capture timed out "
+                  << "(signal may not have been delivered)";
+            }
+            g_bt_ready.store(0, std::memory_order_release);
+          }
+        } else {
+          stall_reported = false;
+        }
+        last_seen = current;
+      }
+    });
+#endif  // __linux__
+  }
 
 #if !SLIMPELLER
   PersistentCache::GetCacheForProcess()->AddWorkerTaskRunner(
@@ -1407,6 +1581,26 @@ void Shell::OnAnimatorBeginFrame(fml::TimePoint frame_target_time,
 }
 
 // |Animator::Delegate|
+void Shell::OnAnimatorBeginFrameForDisplay(
+    fml::TimePoint frame_target_time,
+    uint64_t frame_number,
+    int64_t display_id,
+    const std::set<int64_t>& view_ids) {
+  FML_DCHECK(is_set_up_);
+  FML_DCHECK(task_runners_.GetUITaskRunner()->RunsTasksOnCurrentThread());
+
+  // record the target time for use by rasterizer.
+  {
+    std::scoped_lock time_recorder_lock(time_recorder_mutex_);
+    latest_frame_target_time_.emplace(frame_target_time);
+  }
+  if (engine_) {
+    engine_->BeginFrameForDisplay(display_id, view_ids, frame_target_time,
+                                  frame_number);
+  }
+}
+
+// |Animator::Delegate|
 void Shell::OnAnimatorNotifyIdle(fml::TimeDelta deadline) {
   FML_DCHECK(is_set_up_);
   FML_DCHECK(task_runners_.GetUITaskRunner()->RunsTasksOnCurrentThread());
@@ -1893,7 +2087,11 @@ bool Shell::WaitForResizeFrame(uint64_t configure_serial, uint32_t timeout_ms) {
         return true;
       }
     }
-    fml::MessageLoop::GetCurrent().RunExpiredTasksNow();
+    if (fml::MessageLoop::IsInitializedForCurrentThread()) {
+      fml::MessageLoop::GetCurrent().RunExpiredTasksNow();
+    } else {
+      EmbedderTaskRunner::DrainTasksNowFor(task_runners_.GetPlatformTaskRunner());
+    }
   }
 
   std::scoped_lock lock(resize_sync_mutex_);

@@ -5,6 +5,7 @@
 #define FML_USED_ON_EMBEDDER
 #define RAPIDJSON_HAS_STDSTRING 1
 
+#include <atomic>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -1399,8 +1400,8 @@ std::shared_ptr<impeller::SwapchainTransientsVK> GetCachedSwapchainTransientsVK(
   SwapchainTransientsCacheKey key = {
       .context = context.get(),
       .format = static_cast<int>(desc.format),
-      .width = desc.size.width,
-      .height = desc.size.height,
+      .width = static_cast<int>(desc.size.width),
+      .height = static_cast<int>(desc.size.height),
       .enable_msaa = enable_msaa,
   };
 
@@ -1754,6 +1755,10 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
       SAFE_ACCESS(compositor, present_layers_callback, nullptr);
   auto c_present_view_callback =
       SAFE_ACCESS(compositor, present_view_callback, nullptr);
+  auto c_get_shell_visuals_callback =
+      SAFE_ACCESS(compositor, get_shell_visuals_callback, nullptr);
+  auto c_get_shell_sources_callback =
+      SAFE_ACCESS(compositor, get_shell_sources_callback, nullptr);
   bool avoid_backing_store_cache =
       SAFE_ACCESS(compositor, avoid_backing_store_cache, false);
 
@@ -1784,6 +1789,49 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
           };
 
   flutter::EmbedderExternalViewEmbedder::PresentCallback present_callback;
+  flutter::EmbedderExternalViewEmbedder::GetShellVisualsCallback
+      get_shell_visuals_callback;
+  flutter::EmbedderExternalViewEmbedder::GetShellSourcesCallback
+      get_shell_sources_callback;
+  if (c_get_shell_visuals_callback) {
+    get_shell_visuals_callback =
+        [c_get_shell_visuals_callback, user_data = compositor->user_data](
+            FlutterViewId view_id) {
+          FlutterShellVisuals shell_visuals = {
+              .struct_size = sizeof(FlutterShellVisuals),
+              .shell_visuals = nullptr,
+              .shell_visuals_count = 0,
+          };
+          if (!c_get_shell_visuals_callback(view_id, &shell_visuals, user_data) ||
+              shell_visuals.shell_visuals == nullptr ||
+              shell_visuals.shell_visuals_count == 0) {
+            return std::vector<FlutterShellVisualInfo>{};
+          }
+          return std::vector<FlutterShellVisualInfo>(
+              shell_visuals.shell_visuals,
+              shell_visuals.shell_visuals + shell_visuals.shell_visuals_count);
+        };
+  }
+  if (c_get_shell_sources_callback) {
+    get_shell_sources_callback =
+        [c_get_shell_sources_callback, user_data = compositor->user_data](
+            FlutterViewId view_id) {
+          FlutterShellSources shell_sources = {
+              .struct_size = sizeof(FlutterShellSources),
+              .shell_sources = nullptr,
+              .shell_sources_count = 0,
+          };
+          if (!c_get_shell_sources_callback(view_id, &shell_sources, user_data) ||
+              shell_sources.shell_sources == nullptr ||
+              shell_sources.shell_sources_count == 0) {
+            return std::vector<FlutterShellSourceInfo>{};
+          }
+          return std::vector<FlutterShellSourceInfo>(
+              shell_sources.shell_sources,
+              shell_sources.shell_sources + shell_sources.shell_sources_count);
+        };
+  }
+
   if (c_present_callback) {
     present_callback = [c_present_callback, user_data = compositor->user_data](
                            FlutterViewId view_id, const auto& layers) {
@@ -1793,10 +1841,60 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
     };
   } else {
     FML_DCHECK(c_present_view_callback != nullptr);
+    auto shell_present_sequence =
+        std::make_shared<std::atomic<uint64_t>>(1u);
     present_callback = [c_present_view_callback,
-                        user_data = compositor->user_data](
+                        user_data = compositor->user_data,
+                        shell_present_sequence](
                            FlutterViewId view_id, const auto& layers) {
       TRACE_EVENT0("flutter", "FlutterCompositorPresentLayers");
+
+      size_t shell_backing_store_count = 0;
+      FlutterShellLayerRole shell_layer_role = kFlutterShellLayerRoleUnknown;
+      const FlutterLayer* shell_background_layer = nullptr;
+      const FlutterLayer* shell_underlay_layer = nullptr;
+      const FlutterLayer* shell_overlay_layer = nullptr;
+      const FlutterLayer* shell_per_window_chrome_layer = nullptr;
+      for (const auto* layer : layers) {
+        if (layer == nullptr ||
+            layer->type != kFlutterLayerContentTypeBackingStore) {
+          continue;
+        }
+        shell_backing_store_count++;
+        switch (layer->shell_layer_role) {
+          case kFlutterShellLayerRoleBackground:
+            if (shell_background_layer == nullptr) {
+              shell_background_layer = layer;
+            }
+            break;
+          case kFlutterShellLayerRoleUnderlay:
+            if (shell_underlay_layer == nullptr) {
+              shell_underlay_layer = layer;
+            }
+            break;
+          case kFlutterShellLayerRoleOverlay:
+            if (shell_overlay_layer == nullptr) {
+              shell_overlay_layer = layer;
+            }
+            break;
+          case kFlutterShellLayerRolePerWindowChrome:
+            if (shell_per_window_chrome_layer == nullptr) {
+              shell_per_window_chrome_layer = layer;
+            }
+            break;
+          case kFlutterShellLayerRoleUnknown:
+          case kFlutterShellLayerRoleEmbeddedContent:
+            break;
+        }
+        if (shell_layer_role == kFlutterShellLayerRoleUnknown &&
+            layer->shell_layer_role != kFlutterShellLayerRoleUnknown) {
+          shell_layer_role = layer->shell_layer_role;
+        }
+      }
+      if (shell_backing_store_count > 0 &&
+          shell_layer_role == kFlutterShellLayerRoleUnknown) {
+        shell_layer_role = kFlutterShellLayerRoleOverlay;
+      }
 
       FlutterPresentViewInfo info = {
           .struct_size = sizeof(FlutterPresentViewInfo),
@@ -1804,6 +1902,14 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
           .layers = const_cast<const FlutterLayer**>(layers.data()),
           .layers_count = layers.size(),
           .user_data = user_data,
+          .shell_layer_role = shell_layer_role,
+          .shell_backing_store_count = shell_backing_store_count,
+          .shell_present_sequence =
+              shell_present_sequence->fetch_add(1, std::memory_order_relaxed),
+          .shell_background_layer = shell_background_layer,
+          .shell_underlay_layer = shell_underlay_layer,
+          .shell_overlay_layer = shell_overlay_layer,
+          .shell_per_window_chrome_layer = shell_per_window_chrome_layer,
       };
 
       return c_present_view_callback(&info);
@@ -1812,7 +1918,7 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
 
   return std::make_unique<flutter::EmbedderExternalViewEmbedder>(
       avoid_backing_store_cache, create_render_target_callback,
-      present_callback);
+      present_callback, get_shell_visuals_callback, get_shell_sources_callback);
 }
 
 // Translates embedder metrics to engine metrics, or returns a string on error.
@@ -2408,6 +2514,17 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
     };
   }
 
+  flutter::VsyncWaiterEmbedder::VsyncForDisplayCallback
+      vsync_for_display_callback = nullptr;
+  if (SAFE_ACCESS(args, vsync_for_display_callback, nullptr) != nullptr) {
+    vsync_for_display_callback =
+        [ptr = args->vsync_for_display_callback, user_data](
+            intptr_t baton, flutter::VsyncWaiter::DisplayId display_id) {
+          return ptr(user_data, baton,
+                     static_cast<FlutterEngineDisplayId>(display_id));
+        };
+  }
+
   flutter::PlatformViewEmbedder::ComputePlatformResolvedLocaleCallback
       compute_platform_resolved_locale_callback = nullptr;
   if (SAFE_ACCESS(args, compute_platform_resolved_locale_callback, nullptr) !=
@@ -2510,6 +2627,7 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
           on_pre_engine_restart_callback,             //
           channel_update_callback,                    //
           view_focus_change_request_callback,         //
+          vsync_for_display_callback,                 //
       };
 
   impeller::Flags impeller_flags;
@@ -3613,6 +3731,60 @@ FlutterEngineResult FlutterEngineOnVsync(FLUTTER_API_SYMBOL(FlutterEngine)
   return kSuccess;
 }
 
+FlutterEngineResult FlutterEngineOnVsyncForDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    intptr_t baton,
+    FlutterEngineDisplayId display_id,
+    uint64_t frame_start_time_nanos,
+    uint64_t frame_target_time_nanos) {
+  if (engine == nullptr) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid engine handle.");
+  }
+
+  const auto display_id_str = std::to_string(display_id);
+  TRACE_EVENT1("flutter", "FlutterEngineOnVsyncForDisplay", "display_id",
+               display_id_str.c_str());
+
+  auto start_time = fml::TimePoint::FromEpochDelta(
+      fml::TimeDelta::FromNanoseconds(frame_start_time_nanos));
+
+  auto target_time = fml::TimePoint::FromEpochDelta(
+      fml::TimeDelta::FromNanoseconds(frame_target_time_nanos));
+
+  if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)
+           ->OnVsyncEventForDisplay(baton, static_cast<int64_t>(display_id),
+                                    start_time, target_time)) {
+    return LOG_EMBEDDER_ERROR(
+        kInternalInconsistency,
+        "Could not notify the running engine instance of a per-display Vsync "
+        "event.");
+  }
+
+  return kSuccess;
+}
+
+FlutterEngineResult FlutterEngineSetViewDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterViewId view_id,
+    FlutterEngineDisplayId display_id) {
+  if (engine == nullptr) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid engine handle.");
+  }
+
+  TRACE_EVENT2_INT("flutter", "FlutterEngineSetViewDisplay", "view_id", view_id,
+                   "display_id", display_id);
+
+  if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)->SetViewDisplay(
+          static_cast<int64_t>(view_id),
+          static_cast<int64_t>(display_id))) {
+    return LOG_EMBEDDER_ERROR(
+        kInternalInconsistency,
+        "Could not assign view to display in the running engine instance.");
+  }
+
+  return kSuccess;
+}
+
 FlutterEngineResult FlutterEngineReloadSystemFonts(
     FLUTTER_API_SYMBOL(FlutterEngine) engine) {
   if (engine == nullptr) {
@@ -3989,6 +4161,9 @@ FlutterEngineResult FlutterEngineNotifyDisplayUpdate(
 
   switch (update_type) {
     case kFlutterEngineDisplaysUpdateTypeStartup: {
+      [[fallthrough]];
+    }
+    case kFlutterEngineDisplaysUpdateTypeUpdate: {
       std::vector<std::unique_ptr<flutter::Display>> displays;
       const auto* display = embedder_displays;
       for (size_t i = 0; i < display_count; i++) {
@@ -4013,14 +4188,77 @@ FlutterEngineResult FlutterEngineNotifyDisplayUpdate(
 
 FlutterEngineResult FlutterEngineScheduleFrame(FLUTTER_API_SYMBOL(FlutterEngine)
                                                    engine) {
+  return FlutterEngineScheduleFrameWithRequestKind(
+      engine, kFlutterEngineFrameRequestKindRebuild);
+}
+
+FlutterEngineResult FlutterEngineScheduleFrameWithRequestKind(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineFrameRequestKind request_kind) {
   if (engine == nullptr) {
     return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid engine handle.");
   }
 
-  return reinterpret_cast<flutter::EmbedderEngine*>(engine)->ScheduleFrame()
+  bool regenerate_layer_trees = true;
+  switch (request_kind) {
+    case kFlutterEngineFrameRequestKindRebuild:
+      regenerate_layer_trees = true;
+      break;
+    case kFlutterEngineFrameRequestKindReuseLatest:
+    case kFlutterEngineFrameRequestKindTextureOnlyInvalidation:
+      regenerate_layer_trees = false;
+      break;
+    default:
+      return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                                "Invalid FlutterEngineFrameRequestKind.");
+  }
+
+  return reinterpret_cast<flutter::EmbedderEngine*>(engine)
+                 ->ScheduleFrame(regenerate_layer_trees)
              ? kSuccess
              : LOG_EMBEDDER_ERROR(kInvalidArguments,
                                   "Could not schedule frame.");
+}
+
+FlutterEngineResult FlutterEngineScheduleFrameForDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id) {
+  return FlutterEngineScheduleFrameForDisplayWithRequestKind(
+      engine, display_id, kFlutterEngineFrameRequestKindRebuild);
+}
+
+FlutterEngineResult FlutterEngineScheduleFrameForDisplayWithRequestKind(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id,
+    FlutterEngineFrameRequestKind request_kind) {
+  if (engine == nullptr) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid engine handle.");
+  }
+
+  bool regenerate_layer_trees = true;
+  switch (request_kind) {
+    case kFlutterEngineFrameRequestKindRebuild:
+      regenerate_layer_trees = true;
+      break;
+    case kFlutterEngineFrameRequestKindReuseLatest:
+    case kFlutterEngineFrameRequestKindTextureOnlyInvalidation:
+      regenerate_layer_trees = false;
+      break;
+    default:
+      return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                                "Invalid FlutterEngineFrameRequestKind.");
+  }
+
+  TRACE_EVENT2_INT("flutter",
+                   "FlutterEngineScheduleFrameForDisplayWithRequestKind",
+                   "display_id", display_id, "request_kind", request_kind);
+
+  return reinterpret_cast<flutter::EmbedderEngine*>(engine)
+                 ->ScheduleFrameForDisplay(static_cast<int64_t>(display_id),
+                                           regenerate_layer_trees)
+             ? kSuccess
+             : LOG_EMBEDDER_ERROR(kInvalidArguments,
+                                  "Could not schedule frame for display.");
 }
 
 FlutterEngineResult FlutterEngineSetNextFrameCallback(
@@ -4090,6 +4328,8 @@ FlutterEngineResult FlutterEngineGetProcAddresses(
   SET_PROC(DispatchSemanticsAction, FlutterEngineDispatchSemanticsAction);
   SET_PROC(SendSemanticsAction, FlutterEngineSendSemanticsAction);
   SET_PROC(OnVsync, FlutterEngineOnVsync);
+  SET_PROC(OnVsyncForDisplay, FlutterEngineOnVsyncForDisplay);
+  SET_PROC(SetViewDisplay, FlutterEngineSetViewDisplay);
   SET_PROC(ReloadSystemFonts, FlutterEngineReloadSystemFonts);
   SET_PROC(TraceEventDurationBegin, FlutterEngineTraceEventDurationBegin);
   SET_PROC(TraceEventDurationEnd, FlutterEngineTraceEventDurationEnd);
@@ -4112,6 +4352,11 @@ FlutterEngineResult FlutterEngineGetProcAddresses(
 #ifdef __linux__
   SET_PROC(PublishDmabufTexture, FlutterEnginePublishDmabufTexture);
 #endif
+  SET_PROC(ScheduleFrameForDisplay, FlutterEngineScheduleFrameForDisplay);
+  SET_PROC(ScheduleFrameWithRequestKind,
+           FlutterEngineScheduleFrameWithRequestKind);
+  SET_PROC(ScheduleFrameForDisplayWithRequestKind,
+           FlutterEngineScheduleFrameForDisplayWithRequestKind);
 #undef SET_PROC
 
   return kSuccess;

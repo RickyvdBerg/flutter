@@ -6,8 +6,10 @@
 #define FLUTTER_SHELL_PLATFORM_EMBEDDER_EMBEDDER_LAYERS_H_
 
 #include <memory>
+#include <optional>
 #include <vector>
 
+#include "flutter/display_list/geometry/dl_region.h"
 #include "flutter/flow/embedded_views.h"
 #include "flutter/fml/macros.h"
 #include "flutter/shell/platform/embedder/embedder.h"
@@ -16,10 +18,16 @@ namespace flutter {
 
 class EmbedderLayers {
  public:
+  using GetShellVisualsCallback =
+      std::function<std::vector<FlutterShellVisualInfo>(FlutterViewId view_id)>;
+  using GetShellSourcesCallback =
+      std::function<std::vector<FlutterShellSourceInfo>(FlutterViewId view_id)>;
+
   EmbedderLayers(DlISize frame_size,
                  double device_pixel_ratio,
                  DlMatrix root_surface_transformation,
-                 uint64_t presentation_time);
+                 uint64_t presentation_time,
+                 std::optional<DlRegion> frame_damage = std::nullopt);
 
   ~EmbedderLayers();
 
@@ -33,7 +41,10 @@ class EmbedderLayers {
       std::function<bool(FlutterViewId view_id,
                          const std::vector<const FlutterLayer*>& layers)>;
   void InvokePresentCallback(FlutterViewId view_id,
-                             const PresentCallback& callback) const;
+                             std::shared_ptr<const EmbedderLayers> retained_layers,
+                             const GetShellVisualsCallback* get_shell_visuals_callback,
+                             const GetShellSourcesCallback* get_shell_sources_callback,
+                             const PresentCallback& callback);
 
  private:
   const DlISize frame_size_;
@@ -49,7 +60,12 @@ class EmbedderLayers {
   std::vector<std::unique_ptr<FlutterRegion>> regions_referenced_;
   std::vector<std::unique_ptr<std::vector<FlutterRect>>> rects_referenced_;
   std::vector<FlutterLayer> presented_layers_;
+  std::shared_ptr<const EmbedderLayers> retained_layers_dependency_;
   uint64_t presentation_time_;
+  std::optional<DlRegion> frame_damage_;
+  FlutterShellLayerRole next_backing_store_role_ =
+      kFlutterShellLayerRoleBackground;
+  bool saw_shell_layer_boundary_ = false;
 
   FML_DISALLOW_COPY_AND_ASSIGN(EmbedderLayers);
 };

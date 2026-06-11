@@ -60,6 +60,8 @@ class PlatformViewEmbedder final : public PlatformView {
     ChanneUpdateCallback on_channel_update;                     // optional
     ViewFocusChangeRequestCallback
         view_focus_change_request_callback;  // optional
+    VsyncWaiterEmbedder::VsyncForDisplayCallback
+        vsync_for_display_callback;  // optional
   };
 
   // Create a platform view that sets up a software rasterizer.

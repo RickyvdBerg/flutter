@@ -1546,7 +1546,18 @@ mixin WidgetsBinding
       if (!dirtyViewIds.contains(renderView.flutterView.viewId)) {
         continue;
       }
-      final int viewDisplayId = renderView.flutterView.display.id;
+      final int viewDisplayId;
+      try {
+        viewDisplayId = renderView.flutterView.display.id;
+      } on Object {
+        // The view's display is not (yet) registered with the platform
+        // dispatcher — display updates from the embedder can lag view
+        // creation. Scoping is impossible without a display id; this must
+        // degrade to the global path, never escape into scheduleFrame
+        // (an escaped error here breaks every ticker and gesture for the
+        // rest of the session).
+        return null;
+      }
       if (displayId == null) {
         displayId = viewDisplayId;
       } else if (displayId != viewDisplayId) {

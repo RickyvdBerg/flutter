@@ -35,13 +35,14 @@ class CommandEncoderFactoryVK;
 class CommandEncoderVK;
 class CommandPoolRecyclerVK;
 class DebugReportVK;
-class FenceWaiterVK;
 class ResourceManagerVK;
 class SurfaceContextVK;
 class GPUTracerVK;
 class DescriptorPoolRecyclerVK;
 class CommandQueueVK;
 class DescriptorPoolVK;
+class TimelineCompletionVK;
+class TransientsPoolVK;
 
 class IdleWaiterVK : public IdleWaiter {
  public:
@@ -215,11 +216,19 @@ class ContextVK final : public Context,
 
   vk::PhysicalDevice GetPhysicalDevice() const;
 
-  std::shared_ptr<FenceWaiterVK> GetFenceWaiter() const;
+  std::shared_ptr<TimelineCompletionVK> GetTimelineCompletion() const;
 
   std::shared_ptr<ResourceManagerVK> GetResourceManager() const;
 
   std::shared_ptr<CommandPoolRecyclerVK> GetCommandPoolRecycler() const;
+
+  /// @brief  Process-wide pool of `SwapchainTransientsVK` keyed by
+  ///         `(width, height, color format, MSAA enabled)`. Used by
+  ///         embedder render-target paths that must request a new
+  ///         backing store every frame and would otherwise re-allocate
+  ///         the MSAA + depth/stencil attachments per render. The pool
+  ///         lifetime is bound to this context.
+  std::shared_ptr<TransientsPoolVK> GetSwapchainTransientsPool() const;
 
   std::shared_ptr<DescriptorPoolRecyclerVK> GetDescriptorPoolRecycler() const;
 
@@ -287,12 +296,16 @@ class ContextVK final : public Context,
   std::shared_ptr<YUVConversionLibraryVK> yuv_conversion_library_;
   QueuesVK queues_;
   std::shared_ptr<const Capabilities> device_capabilities_;
-  std::shared_ptr<FenceWaiterVK> fence_waiter_;
   std::shared_ptr<GpuSubmissionTracker> submission_tracker_ =
       std::make_shared<GpuSubmissionTracker>();
   std::shared_ptr<ResourceManagerVK> resource_manager_;
+  std::shared_ptr<TimelineCompletionVK> timeline_completion_;
   std::shared_ptr<DescriptorPoolRecyclerVK> descriptor_pool_recycler_;
   std::shared_ptr<CommandPoolRecyclerVK> command_pool_recycler_;
+  // Declared after `resource_manager_` and `timeline_completion_` so that, on
+  // destruction, the cached transient textures are released before the
+  // resource manager / timeline callbacks that drive their cleanup.
+  std::shared_ptr<TransientsPoolVK> swapchain_transients_pool_;
   std::string device_name_;
   std::shared_ptr<fml::ConcurrentMessageLoop> raster_message_loop_;
   std::shared_ptr<GPUTracerVK> gpu_tracer_;

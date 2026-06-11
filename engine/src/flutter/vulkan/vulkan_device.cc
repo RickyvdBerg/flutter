@@ -8,6 +8,8 @@
 #include <map>
 #include <vector>
 
+#include "flutter/fml/build_config.h"
+
 #include "flutter/vulkan/procs/vulkan_proc_table.h"
 #include "vulkan_surface.h"
 #include "vulkan_utilities.h"
@@ -69,6 +71,12 @@ VulkanDevice::VulkanDevice(VulkanProcTable& p_vk,
       VK_FUCHSIA_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
       VK_FUCHSIA_BUFFER_COLLECTION_EXTENSION_NAME,
 #endif
+#if FML_OS_LINUX
+      // Avio's Impeller Vulkan backend requires timeline semaphores
+      // (impeller timeline_completion_vk). Hosts/ICDs used in testing
+      // (SwiftShader, lavapipe) support Vulkan 1.2+ where this is core.
+      VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
+#endif
   };
 
   auto enabled_layers =
@@ -81,9 +89,23 @@ VulkanDevice::VulkanDevice(VulkanProcTable& p_vk,
     layers.push_back(enabled_layers[i].c_str());
   }
 
+#if FML_OS_LINUX
+  // The timeline semaphore feature must be explicitly enabled at device
+  // creation for the extension above to be usable.
+  VkPhysicalDeviceTimelineSemaphoreFeatures timeline_semaphore_features = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES,
+      .pNext = nullptr,
+      .timelineSemaphore = VK_TRUE,
+  };
+#endif
+
   const VkDeviceCreateInfo create_info = {
       .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+#if FML_OS_LINUX
+      .pNext = &timeline_semaphore_features,
+#else
       .pNext = nullptr,
+#endif
       .flags = 0,
       .queueCreateInfoCount = 1,
       .pQueueCreateInfos = &queue_create,

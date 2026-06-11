@@ -17,6 +17,15 @@
 
 namespace flutter::testing {
 
+namespace {
+// The test Vulkan device (vulkan/vulkan_device.cc) enables timeline
+// semaphores, which the Impeller Vulkan backend requires; the embedder
+// must declare the extension for the capabilities check to accept it.
+const char* kEnabledDeviceExtensions[] = {
+    VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
+};
+}  // namespace
+
 EmbedderTestContextVulkan::EmbedderTestContextVulkan(std::string assets_path)
     : EmbedderTestContext(std::move(assets_path)), surface_() {
   vulkan_context_ = fml::MakeRefCounted<TestVulkanContext>();
@@ -29,6 +38,9 @@ EmbedderTestContextVulkan::EmbedderTestContextVulkan(std::string assets_path)
       .device = vulkan_context_->device_->GetHandle(),
       .queue_family_index = vulkan_context_->device_->GetGraphicsQueueIndex(),
       .queue = vulkan_context_->device_->GetQueueHandle(),
+      .enabled_device_extension_count =
+          sizeof(kEnabledDeviceExtensions) / sizeof(const char*),
+      .enabled_device_extensions = kEnabledDeviceExtensions,
       .get_instance_proc_address_callback =
           EmbedderTestContextVulkan::InstanceProcAddr,
       .get_next_image_callback =

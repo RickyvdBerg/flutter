@@ -33,6 +33,7 @@ Contract for what these patches may and may not do:
 | 18 | [framework] Fall back to global frame path when a view's display is unregistered | permanent framework fix | none |
 | 19 | [framework] Guard the remaining display lookup in dirty-view forwarding | permanent framework fix | none |
 | 20 | [framework] Make MouseTracker device-update phase exception-safe | upstreamable bugfix | submit upstream |
+| 21 | Make DlRegion total over empty rect inputs | upstreamable bugfix (latent upstream infinite loop) | submit upstream |
 
 ## Known baseline debt
 

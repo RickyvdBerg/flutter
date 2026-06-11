@@ -4,33 +4,12 @@
 
 #include "impeller/renderer/backend/vulkan/resource_manager_vk.h"
 
-#include <atomic>
-
 #include "flutter/fml/cpu_affinity.h"
 #include "flutter/fml/thread.h"
 #include "flutter/fml/trace_event.h"
 #include "fml/logging.h"
 
 namespace impeller {
-
-namespace {
-
-std::atomic<uint64_t> g_reclaim_enqueued_total = 0u;
-std::atomic<uint64_t> g_reclaim_drained_total = 0u;
-std::atomic<uint64_t> g_reclaim_batches_total = 0u;
-std::atomic<uint64_t> g_reclaim_queue_high_water = 0u;
-
-constexpr uint64_t kReclaimLogEveryBatches = 256u;
-
-void UpdateMax(std::atomic<uint64_t>& target, uint64_t value) {
-  uint64_t observed = target.load(std::memory_order_relaxed);
-  while (value > observed &&
-         !target.compare_exchange_weak(observed, value,
-                                       std::memory_order_relaxed)) {
-  }
-}
-
-}  // namespace
 
 std::shared_ptr<ResourceManagerVK> ResourceManagerVK::Create() {
   // It will be tempting to refactor this to create the waiter thread in the
@@ -87,22 +66,6 @@ void ResourceManagerVK::Start() {
     // Claim all resources while tracing.
     {
       TRACE_EVENT0("Impeller", "ReclaimResources");
-      if (!resources_to_collect.empty()) {
-        const auto drained_count = static_cast<uint64_t>(resources_to_collect.size());
-        const auto drained_total =
-            g_reclaim_drained_total.fetch_add(drained_count, std::memory_order_relaxed) +
-            drained_count;
-        const auto batches_total =
-            g_reclaim_batches_total.fetch_add(1u, std::memory_order_relaxed) + 1u;
-        if ((batches_total % kReclaimLogEveryBatches) == 0u) {
-          FML_LOG(INFO) << "Impeller Vulkan reclaim diagnostics: batches="
-                        << batches_total << " drained_total=" << drained_total
-                        << " enqueued_total="
-                        << g_reclaim_enqueued_total.load(std::memory_order_relaxed)
-                        << " queue_high_water="
-                        << g_reclaim_queue_high_water.load(std::memory_order_relaxed);
-        }
-      }
       resources_to_collect.clear();  // Redundant because of scope but here so
                                      // we can add a trace around it.
     }
@@ -116,10 +79,7 @@ void ResourceManagerVK::Reclaim(std::unique_ptr<ResourceVK> resource) {
   {
     std::scoped_lock lock(reclaimables_mutex_);
     reclaimables_.emplace_back(std::move(resource));
-    UpdateMax(g_reclaim_queue_high_water,
-              static_cast<uint64_t>(reclaimables_.size()));
   }
-  g_reclaim_enqueued_total.fetch_add(1u, std::memory_order_relaxed);
   reclaimables_cv_.notify_one();
 }
 

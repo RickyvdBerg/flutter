@@ -61,7 +61,6 @@ static void RasterStallSigHandler(int /*sig*/) {
 #include "flutter/runtime/dart_vm.h"
 #include "flutter/shell/common/base64.h"
 #include "flutter/shell/common/engine.h"
-#include "flutter/shell/platform/embedder/embedder_task_runner.h"
 #include "flutter/shell/common/skia_event_tracer_impl.h"
 #include "flutter/shell/common/switches.h"
 #include "flutter/shell/common/vsync_waiter.h"
@@ -2072,43 +2071,6 @@ bool Shell::ShouldDiscardLayerTree(int64_t view_id,
   auto expected_frame_constraints = ExpectedFrameConstraints(view_id);
   return !expected_frame_constraints.IsSatisfiedBy(
       Size(tree.frame_size().width, tree.frame_size().height));
-}
-
-void Shell::OnResizeFramePresented(uint64_t configure_serial) {
-  if (configure_serial == 0) {
-    return;
-  }
-  std::scoped_lock lock(resize_sync_mutex_);
-  completed_configure_serial_ = configure_serial;
-  resize_sync_cv_.notify_one();
-}
-
-bool Shell::WaitForResizeFrame(uint64_t configure_serial, uint32_t timeout_ms) {
-  auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-
-  while (std::chrono::steady_clock::now() < deadline) {
-    {
-      std::unique_lock lock(resize_sync_mutex_);
-      if (completed_configure_serial_ >= configure_serial) {
-        return true;
-      }
-      // Wake periodically so the platform thread can continue servicing
-      // engine-posted tasks while this synchronous API is waiting.
-      resize_sync_cv_.wait_for(lock, std::chrono::milliseconds(1));
-      if (completed_configure_serial_ >= configure_serial) {
-        return true;
-      }
-    }
-    if (fml::MessageLoop::IsInitializedForCurrentThread()) {
-      fml::MessageLoop::GetCurrent().RunExpiredTasksNow();
-    } else {
-      EmbedderTaskRunner::DrainTasksNowFor(task_runners_.GetPlatformTaskRunner());
-    }
-  }
-
-  std::scoped_lock lock(resize_sync_mutex_);
-  return completed_configure_serial_ >= configure_serial;
 }
 
 // |ServiceProtocol::Handler|

@@ -10,8 +10,6 @@
 namespace flutter {
 
 std::atomic_intptr_t EmbedderTaskRunner::next_unique_id_ = 0;
-std::mutex EmbedderTaskRunner::active_runners_mutex_;
-std::unordered_set<const fml::TaskRunner*> EmbedderTaskRunner::active_runners_;
 
 EmbedderTaskRunner::EmbedderTaskRunner(DispatchTable table,
                                        size_t embedder_identifier)
@@ -20,20 +18,12 @@ EmbedderTaskRunner::EmbedderTaskRunner(DispatchTable table,
       dispatch_table_(std::move(table)),
       placeholder_id_(fml::TaskQueueId(fml::TaskQueueId::kInvalid)),
       unique_id_(next_unique_id_++) {
-  {
-    std::scoped_lock lock(active_runners_mutex_);
-    active_runners_.insert(this);
-  }
   FML_DCHECK(dispatch_table_.post_task_callback);
   FML_DCHECK(dispatch_table_.runs_task_on_current_thread_callback);
   FML_DCHECK(dispatch_table_.destruction_callback);
 }
 
 EmbedderTaskRunner::~EmbedderTaskRunner() {
-  {
-    std::scoped_lock lock(active_runners_mutex_);
-    active_runners_.erase(this);
-  }
   dispatch_table_.destruction_callback();
 }
 
@@ -91,28 +81,6 @@ bool EmbedderTaskRunner::PostTask(uint64_t baton) {
   FML_DCHECK(task);
   task();
   return true;
-}
-
-bool EmbedderTaskRunner::DrainTasksNow() {
-  if (!dispatch_table_.drain_tasks_now_callback) {
-    return false;
-  }
-  dispatch_table_.drain_tasks_now_callback();
-  return true;
-}
-
-bool EmbedderTaskRunner::DrainTasksNowFor(
-    const fml::RefPtr<fml::TaskRunner>& task_runner) {
-  if (!task_runner) {
-    return false;
-  }
-  {
-    std::scoped_lock lock(active_runners_mutex_);
-    if (active_runners_.find(task_runner.get()) == active_runners_.end()) {
-      return false;
-    }
-  }
-  return static_cast<EmbedderTaskRunner*>(task_runner.get())->DrainTasksNow();
 }
 
 // |fml::TaskRunner|

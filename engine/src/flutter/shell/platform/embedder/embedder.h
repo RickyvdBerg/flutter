@@ -1957,13 +1957,6 @@ typedef struct {
   ///
   /// @attention     This field is required.
   FlutterTaskRunnerPostTaskCallback post_task_callback;
-  /// May be called from any thread while the engine is blocked waiting for an
-  /// immediate frame and needs the embedder to make queued engine tasks on this
-  /// runner progress synchronously. Embedders with custom task runners can
-  /// implement this to drain only the tasks already posted by the engine.
-  ///
-  /// @attention     This field is optional.
-  VoidCallback drain_tasks_now_callback;
   /// A unique identifier for the task runner. If multiple task runners service
   /// tasks on the same thread, their identifiers must match.
   size_t identifier;
@@ -3257,21 +3250,6 @@ FLUTTER_EXPORT
 FlutterEngineResult FlutterEngineSendWindowMetricsEvent(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     const FlutterWindowMetricsEvent* event);
-
-/// Sends window metrics and blocks until raster completes at the new size,
-/// or until timeout_ms expires. Must be called from the platform thread.
-///
-/// The @p configure_serial parameter takes precedence over any value set on
-/// the event's configure_serial field.
-///
-/// Returns kSuccess if a frame was presented before timeout.
-/// Returns kInternalInconsistency on timeout or error.
-FLUTTER_EXPORT
-FlutterEngineResult FlutterEngineRenderViewImmediate(
-    FLUTTER_API_SYMBOL(FlutterEngine) engine,
-    const FlutterWindowMetricsEvent* event,
-    uint64_t configure_serial,
-    uint32_t timeout_ms);
 
 FLUTTER_EXPORT
 FlutterEngineResult FlutterEngineSendPointerEvent(

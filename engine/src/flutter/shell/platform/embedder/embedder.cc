@@ -2927,44 +2927,6 @@ FlutterEngineResult FlutterEngineSendWindowMetricsEvent(
                                   "Viewport metrics were invalid.");
 }
 
-FlutterEngineResult FlutterEngineRenderViewImmediate(
-    FLUTTER_API_SYMBOL(FlutterEngine) engine,
-    const FlutterWindowMetricsEvent* flutter_metrics,
-    uint64_t configure_serial,
-    uint32_t timeout_ms) {
-  if (engine == nullptr || flutter_metrics == nullptr) {
-    return LOG_EMBEDDER_ERROR(kInvalidArguments,
-                              "Invalid engine or metrics handle.");
-  }
-  if (configure_serial == 0) {
-    return LOG_EMBEDDER_ERROR(kInvalidArguments,
-                              "configure_serial must be non-zero.");
-  }
-
-  auto& shell = reinterpret_cast<flutter::EmbedderEngine*>(engine)->GetShell();
-
-  // Set configure_serial on a mutable copy of the event.
-  FlutterWindowMetricsEvent event_copy = *flutter_metrics;
-  event_copy.configure_serial = configure_serial;
-
-  // Send window metrics through the normal path.
-  // With merged UI+Platform threads, RunNowAndFlushMessages runs
-  // Engine::SetViewportMetrics -> ScheduleImmediateFrame inline.
-  // The Dart build and pipeline produce happen synchronously.
-  // Only the raster-thread work remains after this returns.
-  FlutterEngineResult result =
-      FlutterEngineSendWindowMetricsEvent(engine, &event_copy);
-  if (result != kSuccess) {
-    return result;
-  }
-
-  // Block until raster thread signals completion, or timeout.
-  bool completed = shell.WaitForResizeFrame(configure_serial, timeout_ms);
-  return completed ? kSuccess
-                   : LOG_EMBEDDER_ERROR(kInternalInconsistency,
-                                        "Synchronous resize timed out.");
-}
-
 // Returns the flutter::PointerData::Change for the given FlutterPointerPhase.
 inline flutter::PointerData::Change ToPointerDataChange(
     FlutterPointerPhase phase) {

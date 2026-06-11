@@ -458,10 +458,6 @@ class Shell final : public PlatformView::Delegate,
   const std::shared_ptr<PlatformMessageHandler>& GetPlatformMessageHandler()
       const override;
 
-  // Block until the raster thread completes a frame with the given serial,
-  // or until timeout_ms expires. Returns true if completed before timeout.
-  bool WaitForResizeFrame(uint64_t configure_serial, uint32_t timeout_ms);
-
   const std::weak_ptr<VsyncWaiter> GetVsyncWaiter() const;
 
   const std::shared_ptr<fml::ConcurrentTaskRunner>
@@ -579,14 +575,6 @@ class Shell final : public PlatformView::Delegate,
 
   // Used to communicate the right frame bounds via service protocol.
   double device_pixel_ratio_ = 0.0;
-
-  // --- Synchronous resize state ---
-  // Separate mutex from resize_mutex_ because resize_sync_mutex_ is held
-  // during CV wait (potentially blocking for ms), while resize_mutex_ is
-  // held only briefly for expected_frame_constraints_ access.
-  std::mutex resize_sync_mutex_;
-  std::condition_variable resize_sync_cv_;
-  uint64_t completed_configure_serial_ = 0;  // written on raster, read on platform
 
   // Cached refresh rate used by the performance overlay.
   std::optional<fml::Milliseconds> cached_display_refresh_rate_;
@@ -819,9 +807,6 @@ class Shell final : public PlatformView::Delegate,
   // |Rasterizer::Delegate|
   bool ShouldDiscardLayerTree(int64_t view_id,
                               const flutter::LayerTree& tree) override;
-
-  // |Rasterizer::Delegate|
-  void OnResizeFramePresented(uint64_t configure_serial) override;
 
   // |ServiceProtocol::Handler|
   fml::RefPtr<fml::TaskRunner> GetServiceProtocolHandlerTaskRunner(

@@ -183,4 +183,50 @@ sk_sp<GrDirectContext> TestVulkanContext::GetGrDirectContext() const {
   return context_;
 }
 
+VkDevice TestVulkanContext::GetDeviceHandle() const {
+  return device_->GetHandle();
+}
+
+VkImageView TestVulkanContext::CreateImageView(VkImage image,
+                                                VkFormat format,
+                                                const SkISize& size) const {
+  auto vkCreateImageView = reinterpret_cast<PFN_vkCreateImageView>(
+      vk_->GetDeviceProcAddr(device_->GetHandle(), "vkCreateImageView"));
+  if (!vkCreateImageView) {
+    FML_LOG(ERROR) << "Could not load vkCreateImageView.";
+    return VK_NULL_HANDLE;
+  }
+
+  VkImageViewCreateInfo view_info = {};
+  view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  view_info.image = image;
+  view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  view_info.format = format;
+  view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  view_info.subresourceRange.baseMipLevel = 0;
+  view_info.subresourceRange.levelCount = 1;
+  view_info.subresourceRange.baseArrayLayer = 0;
+  view_info.subresourceRange.layerCount = 1;
+
+  VkImageView image_view = VK_NULL_HANDLE;
+  VkResult result =
+      vkCreateImageView(device_->GetHandle(), &view_info, nullptr, &image_view);
+  if (result != VK_SUCCESS) {
+    FML_LOG(ERROR) << "Could not create VkImageView.";
+    return VK_NULL_HANDLE;
+  }
+  return image_view;
+}
+
+void TestVulkanContext::DestroyImageView(VkImageView view) const {
+  if (view == VK_NULL_HANDLE) {
+    return;
+  }
+  auto vkDestroyImageView = reinterpret_cast<PFN_vkDestroyImageView>(
+      vk_->GetDeviceProcAddr(device_->GetHandle(), "vkDestroyImageView"));
+  if (vkDestroyImageView) {
+    vkDestroyImageView(device_->GetHandle(), view, nullptr);
+  }
+}
+
 }  // namespace flutter::testing

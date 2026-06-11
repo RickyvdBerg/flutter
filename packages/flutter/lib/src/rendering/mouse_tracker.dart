@@ -201,11 +201,20 @@ class MouseTracker extends ChangeNotifier {
       _debugDuringDeviceUpdate = true;
       return true;
     }());
-    task();
-    assert(() {
-      _debugDuringDeviceUpdate = false;
-      return true;
-    }());
+    try {
+      task();
+    } finally {
+      // The reset must survive exceptions thrown by enter/exit/hover
+      // handlers (or anything they transitively invoke, e.g. setState →
+      // frame scheduling). Without the finally, one escaped exception
+      // leaves the flag set and every subsequent pointer event fails the
+      // assert above — permanently disabling mouse interaction for the
+      // session in debug builds.
+      assert(() {
+        _debugDuringDeviceUpdate = false;
+        return true;
+      }());
+    }
   }
 
   // Whether an observed event might update a device.

@@ -77,6 +77,19 @@ Contract for what these patches may and may not do:
 - `FML_LOG(IMPORTANT)` "high-water" probes remain in
   `lib/ui/window/platform_configuration.cc` and `shell/common/animator.cc`
   (engine-contract §10 hot-path-logging debt; remove in a follow-up patch).
+- `on_empty_frame_callback` never fires at runtime
+  (`flutter_empty_frame_callback_total=0` across full sessions) even though
+  the wiring is intact: starved per-display frame requests appear to abort
+  at PipelineFull *before* BeginFrame, so neither present nor empty-frame
+  delivery occurs and Avio's 200 ms watchdog does the retiring instead
+  (`Cleared timed-out in-flight Flutter frame request` warnings). Works,
+  but contract §3.5's mechanism isn't the one actually covering its
+  scenario — investigate or formally bless the watchdog.
+- Avio-side follow-up (rendering-plan step 4): scene assembly latches
+  window elements on a newly-hosting output without their chrome binding;
+  `synthesize_window_chrome_binding` in `presentation/latch.rs` papers over
+  it from the chrome view's latest accepted entry. Attach bindings properly
+  at assembly time and the synthesis becomes a cold fallback.
 
 ## Rebase runbook (quarterly, at upstream stable cutoffs)
 

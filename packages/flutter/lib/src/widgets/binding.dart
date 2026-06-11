@@ -1462,6 +1462,10 @@ mixin WidgetsBinding
   /// queried lazily from [PipelineOwner.hasDirtyForFrame].
   final Set<int> _dirtyBuildViewIds = <int>{};
 
+  /// Whether a dirty element could not be attributed to a [RenderView]
+  /// since the registry was last cleared. Forces the global frame path.
+  bool _hasUnattributableDirtyBuild = false;
+
   void _trackDirtyElementForViewScopedScheduling(Element element) {
     // Walk to the nearest RenderView ancestor.  Cheap if View is a
     // close ancestor (the common case for chrome ornaments / output
@@ -1469,10 +1473,18 @@ mixin WidgetsBinding
     final RenderView? renderView =
         element.findAncestorRenderObjectOfType<RenderView>();
     if (renderView == null) {
-      // Element has no RenderView ancestor — pre-mount or detached.
-      // Cannot attribute; the next scheduleFrame falls back to global
-      // because [_dirtyBuildViewIds] won't reflect it. That is the
-      // safe, conservative behaviour for unattributable dirty marks.
+      // Element has no RenderView ancestor — pre-mount or detached (e.g. a
+      // chrome ornament migrating between output view trees). Force the
+      // next frame request onto the global path; a scoped request resolved
+      // from the *other* dirty views would silently exclude this element's
+      // eventual view and starve its first composite.
+      _hasUnattributableDirtyBuild = true;
+      if (hasScheduledFrame) {
+        // Widen any in-flight scoped request: the legacy global path sets
+        // pending_frame_all_views=true in the engine animator, which
+        // supersedes the pending view-id subset.
+        platformDispatcher.scheduleFrame();
+      }
       return;
     }
     final int viewId = renderView.flutterView.viewId;
@@ -1503,6 +1515,11 @@ mixin WidgetsBinding
   /// or `null` to fall through to the legacy global scheduler.
   ({int displayId, List<int> viewIds})? _resolveScopedFrameRequest() {
     if (renderViews.isEmpty) {
+      return null;
+    }
+    if (_hasUnattributableDirtyBuild) {
+      // At least one dirty element had no resolvable view; only the global
+      // path is guaranteed to cover it.
       return null;
     }
     final dirtyViewIds = <int>{};
@@ -1718,6 +1735,7 @@ mixin WidgetsBinding
       // composite, semantics).  Any new dirties from
       // post-frame callbacks repopulate the set for the next frame.
       _dirtyBuildViewIds.clear();
+      _hasUnattributableDirtyBuild = false;
     }
     if (!kReleaseMode) {
       if (_needToReportFirstFrame && sendFramesToEngine) {

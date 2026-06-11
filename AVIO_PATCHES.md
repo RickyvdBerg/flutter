@@ -29,6 +29,8 @@ Contract for what these patches may and may not do:
 | 14 | [framework] Wire engine per-display scoped frame callbacks into framework | permanent framework extension | none |
 | 15 | [framework] Route Dart-originated scheduleFrame through per-display scoped engine API | permanent framework extension | none |
 | 16 | [framework] Fix Phase 2 ordering bug — register dirty view BEFORE first scheduleFrame | permanent framework fix | none |
+| 17 | [framework] Make unattributable dirty marks force the global frame path | permanent framework fix | none |
+| 18 | [framework] Fall back to global frame path when a view's display is unregistered | permanent framework fix | none |
 
 ## Known baseline debt
 

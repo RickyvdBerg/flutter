@@ -3251,6 +3251,90 @@ FlutterEngineResult FlutterEngineMarkExternalTextureFrameAvailable(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     int64_t texture_identifier);
 
+#ifdef __linux__
+
+//------------------------------------------------------------------------------
+/// @brief      Describes a single plane of a DMA-BUF buffer.
+///
+typedef struct {
+  /// File descriptor for this plane's DMA-BUF.
+  int fd;
+  /// Byte offset from the start of the DMA-BUF to this plane's data.
+  uint32_t offset;
+  /// Byte stride between rows for this plane.
+  uint32_t stride;
+} FlutterDmabufPlane;
+
+//------------------------------------------------------------------------------
+/// @brief      Describes a DMA-BUF texture to be imported by the engine.
+///
+///             The engine takes ownership of all file descriptors on success.
+///             On failure, the caller retains ownership and must close them.
+///
+typedef struct {
+  /// The size of this struct. Must be sizeof(FlutterDmabufDescriptor).
+  size_t struct_size;
+  /// Width of the texture in pixels.
+  uint32_t width;
+  /// Height of the texture in pixels.
+  uint32_t height;
+  /// DRM pixel format (fourcc code), e.g. DRM_FORMAT_ARGB8888.
+  uint32_t drm_format;
+  /// DRM format modifier (e.g. DRM_FORMAT_MOD_LINEAR). Use
+  /// DRM_FORMAT_MOD_INVALID if unknown.
+  uint64_t drm_modifier;
+  /// Number of planes (1-4).
+  uint32_t num_planes;
+  /// Per-plane descriptors.
+  FlutterDmabufPlane planes[4];
+  /// Acquire fence fd. The engine will wait on this fence before reading the
+  /// texture. Set to -1 if no fence is needed.
+  int acquire_fence_fd;
+} FlutterDmabufDescriptor;
+
+//------------------------------------------------------------------------------
+/// @brief      Callback invoked by the engine when it is done reading a
+///             DMA-BUF texture and the embedder may reuse or close the
+///             buffer.
+///
+typedef void (*FlutterDmabufReleaseCallback)(void* user_data);
+
+//------------------------------------------------------------------------------
+/// @brief      Push a DMA-BUF texture into the engine for the given texture
+///             identifier. The engine imports the DMA-BUF into its Vulkan
+///             backend and uses it for rendering. The texture must have been
+///             previously registered via FlutterEngineRegisterExternalTexture.
+///
+///             This is a push-based API: the embedder pushes frames, and the
+///             engine pulls from an internal mailbox when rendering.
+///
+///             On success, the engine takes ownership of all file descriptors
+///             in the descriptor. The release_callback will be invoked (with
+///             user_data) when the engine is done reading the texture.
+///
+///             On failure, the caller retains ownership of all file
+///             descriptors and the release_callback will NOT be invoked.
+///
+/// @param[in]  engine              A running engine instance.
+/// @param[in]  texture_identifier  The identifier of the texture (previously
+///                                 registered).
+/// @param[in]  descriptor          The DMA-BUF descriptor.
+/// @param[in]  release_callback    Called when the engine is done with the
+///                                 texture. May be NULL.
+/// @param[in]  user_data           Passed to release_callback.
+///
+/// @return     The result of the call.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEnginePublishDmabufTexture(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    int64_t texture_identifier,
+    const FlutterDmabufDescriptor* descriptor,
+    FlutterDmabufReleaseCallback release_callback,
+    void* user_data);
+
+#endif  // __linux__
+
 //------------------------------------------------------------------------------
 /// @brief      Enable or disable accessibility semantics.
 ///
@@ -3763,6 +3847,15 @@ typedef FlutterEngineResult (*FlutterEngineSendViewFocusEventFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     const FlutterViewFocusEvent* event);
 
+#ifdef __linux__
+typedef FlutterEngineResult (*FlutterEnginePublishDmabufTextureFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    int64_t texture_identifier,
+    const FlutterDmabufDescriptor* descriptor,
+    FlutterDmabufReleaseCallback release_callback,
+    void* user_data);
+#endif  // __linux__
+
 /// Function-pointer-based versions of the APIs above.
 typedef struct {
   /// The size of this struct. Must be sizeof(FlutterEngineProcs).
@@ -3812,6 +3905,9 @@ typedef struct {
   FlutterEngineRemoveViewFnPtr RemoveView;
   FlutterEngineSendViewFocusEventFnPtr SendViewFocusEvent;
   FlutterEngineSendSemanticsActionFnPtr SendSemanticsAction;
+#ifdef __linux__
+  FlutterEnginePublishDmabufTextureFnPtr PublishDmabufTexture;
+#endif  // __linux__
 } FlutterEngineProcTable;
 
 //------------------------------------------------------------------------------

@@ -66,7 +66,14 @@ void TrackedObjectsVK::Track(
                    texture.get() == tracked_textures_.back().get())) {
     return;
   }
+  if (auto sem = texture->ConsumeAcquireSemaphore()) {
+    wait_semaphores_.push_back(std::move(*sem));
+  }
   tracked_textures_.emplace_back(texture);
+}
+
+std::vector<WaitSemaphore> TrackedObjectsVK::TakeWaitSemaphores() {
+  return std::move(wait_semaphores_);
 }
 
 vk::CommandBuffer TrackedObjectsVK::GetCommandBuffer() const {

@@ -60,10 +60,30 @@ fml::Status CommandQueueVK::Submit(
     return fml::Status(fml::StatusCode::kCancelled, "Failed to create fence.");
   }
 
-  // This will be called immediately by FenceWaiterVK::AddFence.
-  auto submit_callback = [&context, &vk_buffers](vk::Fence submit_fence) {
+  // Collect wait semaphores from all tracked objects (e.g. DMA-BUF
+  // acquire fences imported as VkSemaphores).
+  std::vector<vk::Semaphore> wait_semaphore_handles;
+  std::vector<vk::PipelineStageFlags> wait_stage_masks;
+  std::vector<WaitSemaphore> wait_semaphores_storage;
+  for (auto& objs : tracked_objects) {
+    for (auto& sem : objs->TakeWaitSemaphores()) {
+      wait_semaphore_handles.push_back(*sem.semaphore);
+      wait_stage_masks.push_back(sem.wait_stage);
+      wait_semaphores_storage.push_back(std::move(sem));
+    }
+  }
+
+  // FenceWaiterVK invokes this synchronously while the vectors above remain
+  // alive. Queue submission and fence registration therefore form one
+  // operation, while the owned semaphore wrappers remain retained below.
+  auto submit_callback = [&context, &vk_buffers, &wait_semaphore_handles,
+                          &wait_stage_masks](vk::Fence submit_fence) {
     vk::SubmitInfo submit_info;
     submit_info.setCommandBuffers(vk_buffers);
+    if (!wait_semaphore_handles.empty()) {
+      submit_info.setWaitSemaphores(wait_semaphore_handles);
+      submit_info.setWaitDstStageMask(wait_stage_masks);
+    }
     auto status =
         context->GetGraphicsQueue()->Submit(submit_info, submit_fence);
     if (status != vk::Result::eSuccess) {
@@ -80,20 +100,20 @@ fml::Status CommandQueueVK::Submit(
   uint64_t submission_id = tracker->RecordSubmission();
 
   // This will be called later when the command completes.
-  auto fence_complete_callback = [completion_callback, tracker, submission_id,
-                                  tracked_objects =
-                                      std::move(tracked_objects)]() mutable {
-    // Ensure tracked objects are destructed before calling any final
-    // callbacks.
-    tracked_objects.clear();
-    tracker->RecordCompletion(submission_id);
-    if (completion_callback) {
-      completion_callback(CommandBuffer::Status::kCompleted);
-    }
-  };
+  auto fence_complete_callback =
+      [completion_callback, tracker, submission_id,
+       tracked_objects = std::move(tracked_objects),
+       wait_semaphores_storage = std::move(wait_semaphores_storage)]() mutable {
+        // Ensure tracked objects and semaphores are destructed before calling
+        // any final callbacks.
+        wait_semaphores_storage.clear();
+        tracked_objects.clear();
+        tracker->RecordCompletion(submission_id);
+        if (completion_callback) {
+          completion_callback(CommandBuffer::Status::kCompleted);
+        }
+      };
 
-  // Submit will proceed, call callback with true when it is done and do not
-  // call when `reset` is collected.
   auto fence_status = context->GetFenceWaiter()->AddFence(
       std::move(fence), submit_callback, std::move(fence_complete_callback));
   if (!fence_status.ok()) {

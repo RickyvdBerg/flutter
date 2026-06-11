@@ -384,6 +384,11 @@ class CapabilitiesVK final : public Capabilities,
   /// are available.
   bool SupportsExternalSemaphoreExtensions() const;
 
+  /// Whether the DMA-BUF import extensions (VK_KHR_external_memory_fd,
+  /// VK_EXT_external_memory_dma_buf, VK_EXT_image_drm_format_modifier) are
+  /// available.
+  bool SupportsDmabufImport() const;
+
   //----------------------------------------------------------------------------
   /// @brief      Get the fixed compression rate supported by the context for
   ///             the given format and usage.
@@ -432,6 +437,7 @@ class CapabilitiesVK final : public Capabilities,
   bool supports_texture_compression_etc2_ = false;
   bool supports_texture_compression_astc_ = false;
   bool supports_texture_compression_astc_hdr_ = false;
+  bool supports_dmabuf_import_ = false;
   bool is_valid_ = false;
 
   // The embedder.h API is responsible for providing the instance and device

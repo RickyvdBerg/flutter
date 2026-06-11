@@ -7,6 +7,11 @@
 #include "flutter/fml/make_copyable.h"
 #include "flutter/shell/platform/embedder/vsync_waiter_embedder.h"
 
+#ifdef __linux__
+#include "impeller/renderer/backend/vulkan/context_vk.h"
+#include "impeller/renderer/backend/vulkan/linux/dmabuf_texture_source_vk.h"
+#endif
+
 namespace flutter {
 
 struct ShellArgs {
@@ -35,7 +40,18 @@ EmbedderEngine::EmbedderEngine(
       shell_args_(std::make_unique<ShellArgs>(settings,
                                               on_create_platform_view,
                                               on_create_rasterizer)),
-      external_texture_resolver_(std::move(external_texture_resolver)) {}
+      external_texture_resolver_(std::move(external_texture_resolver))
+#ifdef __linux__
+      ,
+      dmabuf_mailbox_(std::make_unique<DmabufTextureMailbox>())
+#endif
+{
+#ifdef __linux__
+  if (external_texture_resolver_) {
+    external_texture_resolver_->SetDmabufMailbox(dmabuf_mailbox_.get());
+  }
+#endif
+}
 
 EmbedderEngine::~EmbedderEngine() = default;
 
@@ -348,5 +364,47 @@ Shell& EmbedderEngine::GetShell() {
   FML_DCHECK(shell_);
   return *shell_.get();
 }
+
+#ifdef __linux__
+bool EmbedderEngine::PublishDmabufTexture(
+    int64_t texture_id,
+    const impeller::DmabufDescriptor& desc,
+    std::function<void()> release_callback) {
+  if (!IsValid()) {
+    return false;
+  }
+
+  // Get the Impeller context from the platform view.
+  auto platform_view = shell_->GetPlatformView();
+  if (!platform_view) {
+    return false;
+  }
+
+  auto context = platform_view->GetImpellerContext();
+  if (!context) {
+    return false;
+  }
+
+  auto texture_source =
+      std::make_shared<impeller::DmabufTextureSourceVK>(context, desc);
+  if (!texture_source->IsValid()) {
+    return false;
+  }
+
+  DmabufMailboxEntry entry;
+  entry.texture_source = std::move(texture_source);
+  entry.release_callback = std::move(release_callback);
+
+  dmabuf_mailbox_->Store(texture_id, std::move(entry));
+
+  // Poke the compositor to trigger a re-render.
+  MarkTextureFrameAvailable(texture_id);
+  return true;
+}
+
+DmabufTextureMailbox* EmbedderEngine::GetDmabufMailbox() const {
+  return dmabuf_mailbox_.get();
+}
+#endif  // __linux__
 
 }  // namespace flutter

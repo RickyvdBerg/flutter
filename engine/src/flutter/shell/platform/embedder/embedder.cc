@@ -66,6 +66,11 @@ extern const intptr_t kPlatformStrongDillSize;
 #include "flutter/shell/platform/embedder/embedder_thread_host.h"
 #include "flutter/shell/platform/embedder/pixel_formats.h"
 #include "flutter/shell/platform/embedder/platform_view_embedder.h"
+
+#ifdef __linux__
+#include "impeller/renderer/backend/vulkan/linux/dmabuf_texture_source_vk.h"
+#endif
+
 #include "rapidjson/rapidjson.h"
 #include "rapidjson/writer.h"
 
@@ -3326,6 +3331,68 @@ FlutterEngineResult FlutterEngineMarkExternalTextureFrameAvailable(
   return kSuccess;
 }
 
+#ifdef __linux__
+FlutterEngineResult FlutterEnginePublishDmabufTexture(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    int64_t texture_identifier,
+    const FlutterDmabufDescriptor* descriptor,
+    FlutterDmabufReleaseCallback release_callback,
+    void* user_data) {
+  if (engine == nullptr) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid engine handle.");
+  }
+  if (texture_identifier == 0) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid texture identifier.");
+  }
+  if (descriptor == nullptr) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                              "DMA-BUF descriptor was null.");
+  }
+  if (descriptor->struct_size != sizeof(FlutterDmabufDescriptor)) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                              "Invalid DMA-BUF descriptor struct size.");
+  }
+  if (descriptor->num_planes == 0 || descriptor->num_planes > 4) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                              "Invalid number of DMA-BUF planes.");
+  }
+  if (descriptor->width == 0 || descriptor->height == 0) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                              "Invalid DMA-BUF dimensions.");
+  }
+
+  // Convert the C API descriptor to the Impeller descriptor.
+  impeller::DmabufDescriptor desc;
+  desc.width = descriptor->width;
+  desc.height = descriptor->height;
+  desc.drm_format = descriptor->drm_format;
+  desc.drm_modifier = descriptor->drm_modifier;
+  desc.num_planes = descriptor->num_planes;
+  for (uint32_t i = 0; i < descriptor->num_planes; i++) {
+    desc.planes[i].fd = descriptor->planes[i].fd;
+    desc.planes[i].offset = descriptor->planes[i].offset;
+    desc.planes[i].stride = descriptor->planes[i].stride;
+  }
+  desc.acquire_fence_fd = descriptor->acquire_fence_fd;
+
+  // Wrap the C release callback into a std::function.
+  std::function<void()> release_fn;
+  if (release_callback) {
+    release_fn = [release_callback, user_data]() {
+      release_callback(user_data);
+    };
+  }
+
+  if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)
+           ->PublishDmabufTexture(texture_identifier, desc,
+                                  std::move(release_fn))) {
+    return LOG_EMBEDDER_ERROR(kInternalInconsistency,
+                              "Could not publish DMA-BUF texture.");
+  }
+  return kSuccess;
+}
+#endif  // __linux__
+
 FlutterEngineResult FlutterEngineUpdateSemanticsEnabled(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     bool enabled) {
@@ -3910,6 +3977,9 @@ FlutterEngineResult FlutterEngineGetProcAddresses(
   SET_PROC(AddView, FlutterEngineAddView);
   SET_PROC(RemoveView, FlutterEngineRemoveView);
   SET_PROC(SendViewFocusEvent, FlutterEngineSendViewFocusEvent);
+#ifdef __linux__
+  SET_PROC(PublishDmabufTexture, FlutterEnginePublishDmabufTexture);
+#endif
 #undef SET_PROC
 
   return kSuccess;

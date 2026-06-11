@@ -6,6 +6,7 @@
 #define FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_TEXTURE_SOURCE_VK_H_
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "flutter/fml/status.h"
@@ -23,6 +24,13 @@ namespace impeller {
 struct FramebufferAndRenderPass {
   SharedHandleVK<vk::Framebuffer> framebuffer = nullptr;
   SharedHandleVK<vk::RenderPass> render_pass = nullptr;
+};
+
+/// @brief      Describes a VkSemaphore that a queue submission must wait on
+///             before executing commands that reference the associated texture.
+struct WaitSemaphore {
+  vk::UniqueSemaphore semaphore;
+  vk::PipelineStageFlags wait_stage;
 };
 
 //------------------------------------------------------------------------------
@@ -135,6 +143,8 @@ class TextureSourceVK {
   /// @return     Whether or not this is a swapchain image.
   ///
   virtual bool IsSwapchainImage() const = 0;
+
+  virtual std::optional<WaitSemaphore> ConsumeAcquireSemaphore() const;
 
   // These methods should only be used by render_pass_vk.h
 

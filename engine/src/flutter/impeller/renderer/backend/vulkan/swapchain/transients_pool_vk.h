@@ -9,7 +9,6 @@
 #include <list>
 #include <memory>
 #include <mutex>
-#include <unordered_map>
 
 #include "impeller/base/thread.h"
 #include "impeller/core/formats.h"
@@ -108,10 +107,6 @@ class TransientsPoolVK {
     }
   };
 
-  struct KeyHash {
-    size_t operator()(const Key& key) const noexcept;
-  };
-
   struct Entry {
     Key key;
     std::shared_ptr<SwapchainTransientsVK> transients;
@@ -139,8 +134,6 @@ class TransientsPoolVK {
   mutable std::mutex mutex_;
   // LRU order: front = most recently accessed, back = candidate for eviction.
   std::list<Entry> lru_ IPLR_GUARDED_BY(mutex_);
-  std::unordered_map<Key, std::list<Entry>::iterator, KeyHash> map_
-      IPLR_GUARDED_BY(mutex_);
   size_t total_bytes_ IPLR_GUARDED_BY(mutex_) = 0;
 };
 

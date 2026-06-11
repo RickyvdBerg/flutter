@@ -428,6 +428,15 @@ void RuntimeController::ScheduleFrame() {
   client_.ScheduleFrame();
 }
 
+// |PlatformConfigurationClient|
+void RuntimeController::ScheduleFrameForDisplayViews(
+    int64_t display_id,
+    const std::set<int64_t>& view_ids,
+    bool regenerate_layer_trees) {
+  client_.ScheduleFrameForDisplayViews(display_id, view_ids,
+                                       regenerate_layer_trees);
+}
+
 void RuntimeController::EndWarmUpFrame() {
   client_.OnAllViewsRendered();
 }

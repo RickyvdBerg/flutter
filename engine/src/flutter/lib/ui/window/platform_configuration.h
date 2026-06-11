@@ -82,6 +82,23 @@ class PlatformConfigurationClient {
   virtual void ScheduleFrame() = 0;
 
   //--------------------------------------------------------------------------
+  /// @brief      Requests a frame scoped to a specific subset of views on
+  ///             a specific display. Mirrors the embedder API
+  ///             `FlutterEngineScheduleFrameForDisplayViewsWithRequestKind`,
+  ///             but exposed through this client interface so Dart-originated
+  ///             frame requests (RendererBinding consulting its dirty-view
+  ///             registry) can narrow the engine's per-display frame to only
+  ///             the dirty views.
+  ///
+  ///             If the engine is not in per-display mode, implementations
+  ///             should fall back to the legacy global ScheduleFrame.
+  ///
+  virtual void ScheduleFrameForDisplayViews(
+      int64_t display_id,
+      const std::set<int64_t>& view_ids,
+      bool regenerate_layer_trees = true) = 0;
+
+  //--------------------------------------------------------------------------
   /// @brief    Called when a warm up frame has ended.
   ///
   ///           For more introduction, see `Animator::EndWarmUpFrame`.
@@ -668,6 +685,12 @@ class PlatformConfigurationNativeApi {
   static std::string DefaultRouteName();
 
   static void ScheduleFrame();
+
+  // Dart-callable view-scoped scheduleFrame. `view_ids` is a Dart `List<int>`
+  // (Dart_Handle) that this method converts to a `std::set<int64_t>` and
+  // forwards to `PlatformConfigurationClient::ScheduleFrameForDisplayViews`.
+  static void ScheduleFrameForDisplayViews(int64_t display_id,
+                                           Dart_Handle view_ids);
 
   static void EndWarmUpFrame();
 

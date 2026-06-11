@@ -3957,6 +3957,33 @@ FlutterEngineResult FlutterEngineScheduleFrameForDisplayWithRequestKind(
     FlutterEngineFrameRequestKind request_kind);
 
 //------------------------------------------------------------------------------
+/// @brief      Schedule a new frame for a subset of views on a specific display
+///             with an explicit compositor-directed request kind.
+///
+///             This is the view-scoped variant of
+///             `FlutterEngineScheduleFrameForDisplayWithRequestKind`. In
+///             per-display mode, only the supplied views participate in the
+///             next display frame. Outside per-display mode, the request falls
+///             back to the legacy global frame scheduler.
+///
+/// @param[in]  engine        A running engine instance.
+/// @param[in]  display_id    Display to schedule.
+/// @param[in]  view_ids      Views on the display that need a frame.
+/// @param[in]  view_ids_count Number of entries in `view_ids`.
+/// @param[in]  request_kind  The shell work the compositor wants the engine to
+///                           perform.
+///
+/// @return the result of the call made to the engine.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineScheduleFrameForDisplayViewsWithRequestKind(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id,
+    const FlutterViewId* view_ids,
+    size_t view_ids_count,
+    FlutterEngineFrameRequestKind request_kind);
+
+//------------------------------------------------------------------------------
 /// @brief      Schedule a callback to be called after the next frame is drawn.
 ///             This must be called from the platform thread. The callback is
 ///             executed only once from the raster thread; embedders must
@@ -4118,6 +4145,13 @@ typedef FlutterEngineResult (
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     FlutterEngineDisplayId display_id,
     FlutterEngineFrameRequestKind request_kind);
+typedef FlutterEngineResult (
+    *FlutterEngineScheduleFrameForDisplayViewsWithRequestKindFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id,
+    const FlutterViewId* view_ids,
+    size_t view_ids_count,
+    FlutterEngineFrameRequestKind request_kind);
 typedef FlutterEngineResult (*FlutterEngineSetNextFrameCallbackFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     VoidCallback callback,
@@ -4199,6 +4233,8 @@ typedef struct {
   FlutterEngineScheduleFrameWithRequestKindFnPtr ScheduleFrameWithRequestKind;
   FlutterEngineScheduleFrameForDisplayWithRequestKindFnPtr
       ScheduleFrameForDisplayWithRequestKind;
+  FlutterEngineScheduleFrameForDisplayViewsWithRequestKindFnPtr
+      ScheduleFrameForDisplayViewsWithRequestKind;
 } FlutterEngineProcTable;
 
 //------------------------------------------------------------------------------

@@ -99,6 +99,7 @@ typedef CanvasPath Path;
   V(NativeSemanticsFlags::initSemanticsFlags)                      \
   V(PlatformConfigurationNativeApi::DefaultRouteName)              \
   V(PlatformConfigurationNativeApi::ScheduleFrame)                 \
+  V(PlatformConfigurationNativeApi::ScheduleFrameForDisplayViews)  \
   V(PlatformConfigurationNativeApi::EndWarmUpFrame)                \
   V(PlatformConfigurationNativeApi::Render)                        \
   V(PlatformConfigurationNativeApi::UpdateSemantics)               \

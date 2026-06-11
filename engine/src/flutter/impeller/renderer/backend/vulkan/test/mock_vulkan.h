@@ -21,6 +21,15 @@ namespace testing {
 std::shared_ptr<std::vector<std::string>> GetMockVulkanFunctions(
     VkDevice device);
 
+std::vector<uint32_t> GetMockVulkanQueueSubmitBatchCounts();
+
+std::vector<std::vector<uint32_t>> GetMockVulkanQueueSubmitWaitCounts();
+
+std::vector<std::vector<uint32_t>> GetMockVulkanQueueSubmitSignalCounts();
+
+std::vector<std::vector<std::vector<uint64_t>>>
+GetMockVulkanQueueSubmitSignalValues();
+
 // A test-controlled version of |vk::Fence|.
 class MockFence final {
  public:

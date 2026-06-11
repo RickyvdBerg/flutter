@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "impeller/core/texture.h"
 #include "impeller/renderer/backend/vulkan/context_vk.h"
 #include "impeller/renderer/backend/vulkan/descriptor_pool_vk.h"
 #include "impeller/renderer/backend/vulkan/gpu_tracer_vk.h"
@@ -36,6 +37,8 @@ class TrackedObjectsVK {
 
   void Track(const std::shared_ptr<const DeviceBuffer>& buffer);
 
+  void Track(const std::shared_ptr<const Texture>& texture);
+
   void Track(const std::shared_ptr<const TextureSourceVK>& texture);
 
   vk::CommandBuffer GetCommandBuffer() const;
@@ -56,6 +59,7 @@ class TrackedObjectsVK {
   vk::UniqueCommandBuffer buffer_;
   std::vector<std::shared_ptr<SharedObjectVK>> tracked_objects_;
   std::vector<std::shared_ptr<const DeviceBuffer>> tracked_buffers_;
+  std::vector<std::shared_ptr<const Texture>> tracked_texture_wrappers_;
   std::vector<std::shared_ptr<const TextureSourceVK>> tracked_textures_;
   std::vector<WaitSemaphore> wait_semaphores_;
   std::unique_ptr<GPUProbe> probe_;

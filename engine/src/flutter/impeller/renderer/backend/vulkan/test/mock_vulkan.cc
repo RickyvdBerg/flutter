@@ -205,6 +205,10 @@ struct MockVulkanState {
   // When > 0, the next vkCreateImage for a fixed-rate-compressed image returns
   // VK_ERROR_COMPRESSION_EXHAUSTED_EXT and decrements (models PowerVR).
   int compression_exhausted_create_image_failures = 0;
+  std::vector<uint32_t> queue_submit_batch_counts;
+  std::vector<std::vector<uint32_t>> queue_submit_wait_counts;
+  std::vector<std::vector<uint32_t>> queue_submit_signal_counts;
+  std::vector<std::vector<std::vector<uint64_t>>> queue_submit_signal_values;
 };
 
 class MockVulkanStatePtr {
@@ -808,6 +812,50 @@ VkResult vkQueueSubmit(VkQueue queue,
                        VkFence fence) {
   const MockQueue* mock_queue = reinterpret_cast<const MockQueue*>(queue);
   mock_queue->device().AddCalledFunction("vkQueueSubmit");
+  if (g_mock_vulkan_state) {
+    GetMockVulkanState().queue_submit_batch_counts.push_back(submitCount);
+    std::vector<uint32_t> wait_counts;
+    std::vector<uint32_t> signal_counts;
+    std::vector<std::vector<uint64_t>> signal_values;
+    wait_counts.reserve(submitCount);
+    signal_counts.reserve(submitCount);
+    signal_values.reserve(submitCount);
+    for (uint32_t submit_index = 0; submit_index < submitCount;
+         submit_index++) {
+      wait_counts.push_back(pSubmits[submit_index].waitSemaphoreCount);
+      signal_counts.push_back(pSubmits[submit_index].signalSemaphoreCount);
+      std::vector<uint64_t> batch_signal_values;
+      const VkTimelineSemaphoreSubmitInfo* timeline_info = nullptr;
+      auto* next = reinterpret_cast<const VkBaseInStructure*>(
+          pSubmits[submit_index].pNext);
+      while (next != nullptr) {
+        if (next->sType == VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO) {
+          timeline_info =
+              reinterpret_cast<const VkTimelineSemaphoreSubmitInfo*>(next);
+          break;
+        }
+        next = next->pNext;
+      }
+      if (timeline_info != nullptr &&
+          timeline_info->pSignalSemaphoreValues != nullptr) {
+        batch_signal_values.reserve(
+            pSubmits[submit_index].signalSemaphoreCount);
+        for (uint32_t semaphore_index = 0;
+             semaphore_index < pSubmits[submit_index].signalSemaphoreCount;
+             semaphore_index++) {
+          batch_signal_values.push_back(
+              timeline_info->pSignalSemaphoreValues[semaphore_index]);
+        }
+      }
+      signal_values.push_back(std::move(batch_signal_values));
+    }
+    GetMockVulkanState().queue_submit_wait_counts.push_back(
+        std::move(wait_counts));
+    GetMockVulkanState().queue_submit_signal_counts.push_back(
+        std::move(signal_counts));
+    GetMockVulkanState().queue_submit_signal_values.push_back(
+        std::move(signal_values));
+  }
   for (uint32_t submit_index = 0; submit_index < submitCount; submit_index++) {
     const VkTimelineSemaphoreSubmitInfo* timeline_info = nullptr;
     auto* next = reinterpret_cast<const VkBaseInStructure*>(
@@ -1418,6 +1466,35 @@ std::shared_ptr<std::vector<std::string>> GetMockVulkanFunctions(
     VkDevice device) {
   MockDevice* mock_device = MockDevice::Unwrap(device);
   return mock_device->GetCalledFunctions();
+}
+
+std::vector<uint32_t> GetMockVulkanQueueSubmitBatchCounts() {
+  if (!g_mock_vulkan_state) {
+    return {};
+  }
+  return GetMockVulkanState().queue_submit_batch_counts;
+}
+
+std::vector<std::vector<uint32_t>> GetMockVulkanQueueSubmitWaitCounts() {
+  if (!g_mock_vulkan_state) {
+    return {};
+  }
+  return GetMockVulkanState().queue_submit_wait_counts;
+}
+
+std::vector<std::vector<uint32_t>> GetMockVulkanQueueSubmitSignalCounts() {
+  if (!g_mock_vulkan_state) {
+    return {};
+  }
+  return GetMockVulkanState().queue_submit_signal_counts;
+}
+
+std::vector<std::vector<std::vector<uint64_t>>>
+GetMockVulkanQueueSubmitSignalValues() {
+  if (!g_mock_vulkan_state) {
+    return {};
+  }
+  return GetMockVulkanState().queue_submit_signal_values;
 }
 
 void SetSwapchainImageSize(ISize size) {

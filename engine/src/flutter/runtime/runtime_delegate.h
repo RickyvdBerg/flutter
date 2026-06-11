@@ -6,6 +6,7 @@
 #define FLUTTER_RUNTIME_RUNTIME_DELEGATE_H_
 
 #include <memory>
+#include <set>
 #include <vector>
 
 #include "flutter/assets/asset_manager.h"
@@ -25,6 +26,17 @@ class RuntimeDelegate {
   virtual std::string DefaultRouteName() = 0;
 
   virtual void ScheduleFrame(bool regenerate_layer_trees = true) = 0;
+
+  // Schedules a frame for a specific subset of views on a specific display.
+  // Mirrors the embedder API
+  // `FlutterEngineScheduleFrameForDisplayViewsWithRequestKind`, but exposed
+  // through the platform-configuration client so Dart-originated requests
+  // (RendererBinding.scheduleFrame consulting its dirty-view registry) can
+  // narrow the engine's per-display frame to only the dirty views.
+  virtual void ScheduleFrameForDisplayViews(
+      int64_t display_id,
+      const std::set<int64_t>& view_ids,
+      bool regenerate_layer_trees = true) = 0;
 
   virtual void OnAllViewsRendered() = 0;
 

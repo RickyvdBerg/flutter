@@ -93,6 +93,15 @@ bool SwapchainTransientsVK::IsMSAAEnabled() const {
   return enable_msaa_;
 }
 
+bool SwapchainTransientsVK::IsIdle() const {
+  std::scoped_lock lock(init_mutex_);
+  const bool msaa_idle =
+      !cached_msaa_texture_ || cached_msaa_texture_.use_count() == 1u;
+  const bool depth_stencil_idle =
+      !cached_depth_stencil_ || cached_depth_stencil_.use_count() == 1u;
+  return msaa_idle && depth_stencil_idle;
+}
+
 const std::weak_ptr<Context>& SwapchainTransientsVK::GetContext() const {
   return context_;
 }

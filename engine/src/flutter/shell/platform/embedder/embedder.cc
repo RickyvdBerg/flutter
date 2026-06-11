@@ -4154,6 +4154,53 @@ FlutterEngineResult FlutterEngineScheduleFrameForDisplayWithRequestKind(
                                   "Could not schedule frame for display.");
 }
 
+FlutterEngineResult FlutterEngineScheduleFrameForDisplayViewsWithRequestKind(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterEngineDisplayId display_id,
+    const FlutterViewId* view_ids,
+    size_t view_ids_count,
+    FlutterEngineFrameRequestKind request_kind) {
+  if (engine == nullptr) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid engine handle.");
+  }
+
+  if (view_ids == nullptr || view_ids_count == 0) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid view ids.");
+  }
+
+  bool regenerate_layer_trees = true;
+  switch (request_kind) {
+    case kFlutterEngineFrameRequestKindRebuild:
+      regenerate_layer_trees = true;
+      break;
+    case kFlutterEngineFrameRequestKindReuseLatest:
+    case kFlutterEngineFrameRequestKindTextureOnlyInvalidation:
+      regenerate_layer_trees = false;
+      break;
+    default:
+      return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                                "Invalid FlutterEngineFrameRequestKind.");
+  }
+
+  std::set<int64_t> scoped_view_ids;
+  for (size_t i = 0; i < view_ids_count; ++i) {
+    scoped_view_ids.insert(static_cast<int64_t>(view_ids[i]));
+  }
+
+  TRACE_EVENT2_INT("flutter",
+                   "FlutterEngineScheduleFrameForDisplayViewsWithRequestKind",
+                   "display_id", display_id, "request_kind", request_kind);
+
+  return reinterpret_cast<flutter::EmbedderEngine*>(engine)
+                 ->ScheduleFrameForDisplayViews(static_cast<int64_t>(display_id),
+                                                std::move(scoped_view_ids),
+                                                regenerate_layer_trees)
+             ? kSuccess
+             : LOG_EMBEDDER_ERROR(
+                   kInvalidArguments,
+                   "Could not schedule frame for display views.");
+}
+
 FlutterEngineResult FlutterEngineSetNextFrameCallback(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     VoidCallback callback,
@@ -4250,6 +4297,8 @@ FlutterEngineResult FlutterEngineGetProcAddresses(
            FlutterEngineScheduleFrameWithRequestKind);
   SET_PROC(ScheduleFrameForDisplayWithRequestKind,
            FlutterEngineScheduleFrameForDisplayWithRequestKind);
+  SET_PROC(ScheduleFrameForDisplayViewsWithRequestKind,
+           FlutterEngineScheduleFrameForDisplayViewsWithRequestKind);
 #undef SET_PROC
 
   return kSuccess;

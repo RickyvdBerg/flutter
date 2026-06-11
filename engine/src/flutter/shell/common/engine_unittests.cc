@@ -111,6 +111,10 @@ class MockRuntimeDelegate : public RuntimeDelegate {
  public:
   MOCK_METHOD(std::string, DefaultRouteName, (), (override));
   MOCK_METHOD(void, ScheduleFrame, (bool), (override));
+  MOCK_METHOD(void,
+              ScheduleFrameForDisplayViews,
+              (int64_t, const std::set<int64_t>&, bool),
+              (override));
   MOCK_METHOD(void, OnAllViewsRendered, (), (override));
   MOCK_METHOD(void,
               Render,

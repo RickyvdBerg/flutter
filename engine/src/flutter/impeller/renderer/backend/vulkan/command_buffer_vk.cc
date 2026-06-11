@@ -154,6 +154,7 @@ bool CommandBufferVK::Track(const std::shared_ptr<const Texture>& texture) {
   if (!texture) {
     return true;
   }
+  tracked_objects_->Track(texture);
   return Track(TextureVK::Cast(*texture).GetTextureSource());
 }
 

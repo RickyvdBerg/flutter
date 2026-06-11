@@ -5,8 +5,11 @@
 #include "flutter/shell/gpu/gpu_surface_vulkan_impeller.h"
 
 #include <memory>
+#include <vector>
 
 #include "flow/surface_frame.h"
+#include "flutter/display_list/geometry/dl_geometry_types.h"
+#include "flutter/display_list/geometry/dl_region.h"
 #include "flutter/fml/make_copyable.h"
 #include "fml/trace_event.h"
 #include "impeller/core/formats.h"
@@ -21,6 +24,27 @@
 #include "impeller/typographer/backends/skia/typographer_context_skia.h"
 
 namespace flutter {
+
+namespace {
+
+std::vector<SkIRect> DamageRectsOrFull(
+    const SurfaceFrame::SubmitInfo& submit_info,
+    impeller::ISize target_size) {
+  std::vector<SkIRect> damage_rects;
+  if (submit_info.buffer_damage.has_value()) {
+    for (const auto& rect :
+         submit_info.buffer_damage->getRects(/*deband=*/true)) {
+      damage_rects.push_back(ToSkIRect(rect));
+    }
+  }
+  if (damage_rects.empty()) {
+    damage_rects.push_back(SkIRect::MakeWH(target_size.width,
+                                           target_size.height));
+  }
+  return damage_rects;
+}
+
+}  // namespace
 
 class WrappedTextureSourceVK : public impeller::TextureSourceVK {
  public:
@@ -104,13 +128,9 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
     }
 
     impeller::RenderTarget render_target = surface->GetRenderTarget();
-    auto cull_rect =
-        impeller::Rect::MakeSize(render_target.GetRenderTargetSize());
-
     SurfaceFrame::EncodeCallback encode_callback = [aiks_context =
                                                         aiks_context_,  //
-                                                    render_target,
-                                                    cull_rect  //
+                                                    render_target  //
     ](SurfaceFrame& surface_frame, DlCanvas* canvas) mutable -> bool {
       if (!aiks_context) {
         return false;
@@ -122,11 +142,14 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
         return false;
       }
 
+      const auto damage_rects =
+          DamageRectsOrFull(surface_frame.submit_info(),
+                            render_target.GetRenderTargetSize());
       return impeller::RenderToTarget(
           aiks_context->GetContentContext(),                                //
           render_target,                                                    //
           display_list,                                                     //
-          cull_rect,                                                        //
+          damage_rects,                                                     //
           /*reset_host_buffer=*/surface_frame.submit_info().frame_boundary  //
       );
     };
@@ -206,13 +229,14 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
     auto surface = impeller::SurfaceVK::WrapSwapchainImage(
         transients_, wrapped_onscreen, [&]() -> bool { return true; });
     impeller::RenderTarget render_target = surface->GetRenderTarget();
-    auto cull_rect =
-        impeller::Rect::MakeSize(render_target.GetRenderTargetSize());
+    uint64_t image_key = flutter_image.image;
 
-    SurfaceFrame::EncodeCallback encode_callback = [aiks_context =
-                                                        aiks_context_,  //
-                                                    render_target,
-                                                    cull_rect  //
+    SurfaceFrame::EncodeCallback encode_callback =
+        fml::MakeCopyable([aiks_context = aiks_context_,  //
+                           damage = damage_,
+                           disable_partial_repaint = disable_partial_repaint_,
+                           render_target,
+                           image_key   //
     ](SurfaceFrame& surface_frame, DlCanvas* canvas) mutable -> bool {
       if (!aiks_context) {
         return false;
@@ -224,13 +248,33 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
         return false;
       }
 
-      return impeller::RenderToTarget(aiks_context->GetContentContext(),  //
-                                      render_target,                      //
-                                      display_list,                       //
-                                      cull_rect,                          //
-                                      /*reset_host_buffer=*/true          //
+      if (!disable_partial_repaint && damage) {
+        for (auto& entry : *damage) {
+          if (entry.first != image_key) {
+            // Accumulate damage for other framebuffers.
+            if (surface_frame.submit_info().frame_damage) {
+              auto bounds =
+                  surface_frame.submit_info().frame_damage->bounds();
+              entry.second.join(ToSkIRect(bounds));
+            }
+          }
+        }
+        // Reset accumulated damage for current framebuffer.
+        (*damage)[image_key] = SkIRect::MakeEmpty();
+      }
+
+      const auto damage_rects =
+          DamageRectsOrFull(surface_frame.submit_info(),
+                            render_target.GetRenderTargetSize());
+
+      return impeller::RenderToTarget(
+          aiks_context->GetContentContext(),                                //
+          render_target,                                                    //
+          display_list,                                                     //
+          damage_rects,                                                     //
+          /*reset_host_buffer=*/surface_frame.submit_info().frame_boundary  //
       );
-    };
+    });
 
     SurfaceFrame::SubmitCallback submit_callback =
         [image = flutter_image, delegate = delegate_,
@@ -275,6 +319,16 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
     };
 
     SurfaceFrame::FramebufferInfo framebuffer_info{.supports_readback = true};
+
+    if (!disable_partial_repaint_) {
+      // Provide accumulated damage to rasterizer (area in current framebuffer
+      // that lags behind front buffer).
+      auto i = damage_->find(image_key);
+      if (i != damage_->end()) {
+        framebuffer_info.existing_damage = DlRegion(ToDlIRect(i->second));
+      }
+      framebuffer_info.supports_partial_repaint = true;
+    }
 
     return std::make_unique<SurfaceFrame>(nullptr,           // surface
                                           framebuffer_info,  // framebuffer info

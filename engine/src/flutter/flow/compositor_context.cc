@@ -6,41 +6,45 @@
 
 #include <optional>
 #include <utility>
+#include <vector>
+#include "flutter/display_list/geometry/dl_region.h"
+#include "flutter/flow/damage_coalesce.h"
 #include "flutter/flow/layers/layer_tree.h"
 
 namespace flutter {
 
-std::optional<DlRect> FrameDamage::ComputeClipRect(
+std::vector<DlIRect> FrameDamage::ComputeClipRects(
     flutter::LayerTree& layer_tree,
     bool has_raster_cache,
     bool impeller_enabled) {
-  if (layer_tree.root_layer()) {
-    PaintRegionMap empty_paint_region_map;
-    DiffContext context(layer_tree.frame_size(), layer_tree.paint_region_map(),
-                        prev_layer_tree_ ? prev_layer_tree_->paint_region_map()
-                                         : empty_paint_region_map,
-                        has_raster_cache, impeller_enabled);
-    context.PushCullRect(DlRect::MakeSize(layer_tree.frame_size()));
-    {
-      DiffContext::AutoSubtreeRestore subtree(&context);
-      const Layer* prev_root_layer = nullptr;
-      if (!prev_layer_tree_ ||
-          prev_layer_tree_->frame_size() != layer_tree.frame_size()) {
-        // If there is no previous layer tree assume the entire frame must be
-        // repainted.
-        context.MarkSubtreeDirty(DlRect::MakeSize(layer_tree.frame_size()));
-      } else {
-        prev_root_layer = prev_layer_tree_->root_layer();
-      }
-      layer_tree.root_layer()->Diff(&context, prev_root_layer);
-    }
-
-    damage_ =
-        context.ComputeDamage(additional_damage_, horizontal_clip_alignment_,
-                              vertical_clip_alignment_);
-    return DlRect::Make(damage_->buffer_damage);
+  if (!layer_tree.root_layer()) {
+    return {};
   }
-  return std::nullopt;
+  PaintRegionMap empty_paint_region_map;
+  DiffContext context(layer_tree.frame_size(), layer_tree.paint_region_map(),
+                      prev_layer_tree_ ? prev_layer_tree_->paint_region_map()
+                                       : empty_paint_region_map,
+                      has_raster_cache, impeller_enabled);
+  context.PushCullRect(DlRect::MakeSize(layer_tree.frame_size()));
+  {
+    DiffContext::AutoSubtreeRestore subtree(&context);
+    const Layer* prev_root_layer = nullptr;
+    if (!prev_layer_tree_ ||
+        prev_layer_tree_->frame_size() != layer_tree.frame_size()) {
+      // If there is no previous layer tree assume the entire frame must be
+      // repainted.
+      context.MarkSubtreeDirty(DlRect::MakeSize(layer_tree.frame_size()));
+    } else {
+      prev_root_layer = prev_layer_tree_->root_layer();
+    }
+    layer_tree.root_layer()->Diff(&context, prev_root_layer);
+  }
+
+  damage_ = context.ComputeDamage(additional_damage_,
+                                   horizontal_clip_alignment_,
+                                   vertical_clip_alignment_);
+  auto rects = damage_->buffer_damage.getRects(/*deband=*/true);
+  return CoalesceDamageRects(std::move(rects));
 }
 
 CompositorContext::CompositorContext()
@@ -117,20 +121,43 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
     FrameDamage* frame_damage) {
   TRACE_EVENT0("flutter", "CompositorContext::ScopedFrame::Raster");
 
-  std::optional<DlRect> clip_rect;
+  std::vector<DlIRect> clip_rects;
+  DlIRect clip_bounds = DlIRect::MakeLTRB(0, 0, 0, 0);
   if (frame_damage) {
-    clip_rect = frame_damage->ComputeClipRect(layer_tree, !ignore_raster_cache,
-                                              !gr_context_);
+    clip_rects = frame_damage->ComputeClipRects(
+        layer_tree, !ignore_raster_cache, !gr_context_);
+
+    if (!clip_rects.empty()) {
+      DlRegion rgn(clip_rects);
+      clip_bounds = rgn.bounds();
+    }
 
     if (aiks_context_ &&
-        !ShouldPerformPartialRepaint(clip_rect, layer_tree.frame_size())) {
-      clip_rect = std::nullopt;
+        !ShouldPerformPartialRepaint(clip_bounds, layer_tree.frame_size())) {
+      clip_rects.clear();
+      clip_bounds = DlIRect::MakeLTRB(0, 0, 0, 0);
       frame_damage->Reset();
     }
   }
 
-  bool root_needs_readback = layer_tree.Preroll(
-      *this, ignore_raster_cache, clip_rect ? *clip_rect : kGiantRect);
+  // Zero-damage skip: if frame_damage is empty, frame is identical
+  // to previous. Skip rendering entirely.
+  // Guard: only skip if buffer_damage also has a value (i.e., Reset()
+  // was not called to force a full repaint).
+  if (frame_damage && frame_damage->GetFrameDamage().has_value() &&
+      frame_damage->GetFrameDamage()->isEmpty() &&
+      frame_damage->GetBufferDamage().has_value()) {
+    return RasterStatus::kSuccess;
+  }
+
+  // Compute bounding rect for Preroll cull rect.
+  DlRect cull_rect = kGiantRect;
+  if (!clip_rects.empty()) {
+    cull_rect = DlRect::Make(clip_bounds);
+  }
+
+  bool root_needs_readback =
+      layer_tree.Preroll(*this, ignore_raster_cache, cull_rect);
   bool needs_save_layer = root_needs_readback && !surface_supports_readback();
   PostPrerollResult post_preroll_result = PostPrerollResult::kSuccess;
   if (view_embedder_ && raster_thread_merger_) {
@@ -146,9 +173,12 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
   }
 
   if (aiks_context_) {
-    PaintLayerTreeImpeller(layer_tree, clip_rect, ignore_raster_cache);
+    PaintLayerTreeImpeller(layer_tree, clip_bounds, ignore_raster_cache);
   } else {
-    PaintLayerTreeSkia(layer_tree, clip_rect, needs_save_layer,
+    // Skia path: use bounding rect (preserve existing behavior).
+    std::optional<DlRect> skia_clip =
+        clip_rects.empty() ? std::nullopt : std::make_optional(cull_rect);
+    PaintLayerTreeSkia(layer_tree, skia_clip, needs_save_layer,
                        ignore_raster_cache);
   }
   return RasterStatus::kSuccess;
@@ -182,17 +212,18 @@ void CompositorContext::ScopedFrame::PaintLayerTreeSkia(
 
 void CompositorContext::ScopedFrame::PaintLayerTreeImpeller(
     flutter::LayerTree& layer_tree,
-    std::optional<DlRect> clip_rect,
+    DlIRect clip_bounds,
     bool ignore_raster_cache) {
-  DlAutoCanvasRestore restore(canvas(), clip_rect.has_value());
-
-  if (canvas()) {
-    if (clip_rect) {
-      canvas()->ClipRect(clip_rect.value());
-    }
+  if (clip_bounds.IsEmpty()) {
+    // Full repaint - no clip.
+    layer_tree.Paint(*this, ignore_raster_cache);
+    return;
   }
 
-  // The canvas()->Restore() is taken care of by the DlAutoCanvasRestore
+  DlAutoCanvasRestore restore(canvas(), true);
+  if (canvas()) {
+    canvas()->ClipRect(DlRect::Make(clip_bounds));
+  }
   layer_tree.Paint(*this, ignore_raster_cache);
 }
 
@@ -210,17 +241,17 @@ void CompositorContext::ScopedFrame::PaintLayerTreeImpeller(
 constexpr float kImpellerRepaintRatio = 0.7f;
 
 bool CompositorContext::ShouldPerformPartialRepaint(
-    std::optional<DlRect> damage_rect,
+    DlIRect bounds,
     DlISize layer_tree_size) {
-  if (!damage_rect.has_value()) {
+  if (bounds.IsEmpty()) {
     return false;
   }
-  if (damage_rect->GetWidth() >= layer_tree_size.width &&
-      damage_rect->GetHeight() >= layer_tree_size.height) {
+  if (bounds.GetWidth() >= layer_tree_size.width &&
+      bounds.GetHeight() >= layer_tree_size.height) {
     return false;
   }
-  auto rx = damage_rect->GetWidth() / layer_tree_size.width;
-  auto ry = damage_rect->GetHeight() / layer_tree_size.height;
+  auto rx = static_cast<float>(bounds.GetWidth()) / layer_tree_size.width;
+  auto ry = static_cast<float>(bounds.GetHeight()) / layer_tree_size.height;
   return rx <= kImpellerRepaintRatio || ry <= kImpellerRepaintRatio;
 }
 

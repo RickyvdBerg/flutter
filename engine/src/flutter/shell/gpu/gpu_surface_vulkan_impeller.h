@@ -5,6 +5,9 @@
 #ifndef FLUTTER_SHELL_GPU_GPU_SURFACE_VULKAN_IMPELLER_H_
 #define FLUTTER_SHELL_GPU_GPU_SURFACE_VULKAN_IMPELLER_H_
 
+#include <map>
+#include <memory>
+
 #include "flutter/common/graphics/gl_context_switch.h"
 #include "flutter/flow/surface.h"
 #include "flutter/fml/macros.h"
@@ -13,6 +16,7 @@
 #include "flutter/impeller/renderer/context.h"
 #include "flutter/shell/gpu/gpu_surface_vulkan_delegate.h"
 #include "impeller/renderer/backend/vulkan/swapchain/swapchain_transients_vk.h"
+#include "third_party/skia/include/core/SkRect.h"
 
 namespace flutter {
 
@@ -43,6 +47,11 @@ class GPUSurfaceVulkanImpeller final : public Surface {
   /// The size of the textures in [transients_]
   impeller::ISize transients_size_ = {};
   bool is_valid_ = false;
+  bool disable_partial_repaint_ = false;
+  // Accumulated damage for each back buffer; keyed by VkImage handle
+  // (FlutterVulkanImageHandle / uint64_t).
+  std::shared_ptr<std::map<uint64_t, SkIRect>> damage_ =
+      std::make_shared<std::map<uint64_t, SkIRect>>();
 
   // |Surface|
   std::unique_ptr<SurfaceFrame> AcquireFrame(const DlISize& size) override;

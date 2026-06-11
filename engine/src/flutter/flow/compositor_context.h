@@ -56,8 +56,14 @@ class FrameDamage {
 
   // Adds additional damage (accumulated for double / triple buffering).
   // This is area that will be repainted alongside any changed part.
+  void AddAdditionalDamage(const DlRegion& damage) {
+    additional_damage_ = DlRegion::MakeUnion(additional_damage_, damage);
+  }
+
+  // Backward-compat overload for single-rect callers.
   void AddAdditionalDamage(const DlIRect& damage) {
-    additional_damage_ = additional_damage_.Union(damage);
+    additional_damage_ =
+        DlRegion::MakeUnion(additional_damage_, DlRegion(damage));
   }
 
   // Specifies clip rect alignment.
@@ -66,22 +72,22 @@ class FrameDamage {
     vertical_clip_alignment_ = vertical;
   }
 
-  // Calculates clip rect for current rasterization. This is diff of layer tree
-  // and previous layer tree + any additional provided damage.
-  // If previous layer tree is not specified, clip rect will be nullopt,
-  // but the paint region of layer_tree will be calculated so that it can be
-  // used for diffing of subsequent frames.
-  std::optional<DlRect> ComputeClipRect(flutter::LayerTree& layer_tree,
-                                        bool has_raster_cache,
-                                        bool impeller_enabled);
+  // Calculates clip rects for current rasterization. This is diff of layer
+  // tree and previous layer tree + any additional provided damage.
+  // If previous layer tree is not specified, returns empty vector (full
+  // repaint), but the paint region of layer_tree will be calculated so that
+  // it can be used for diffing of subsequent frames.
+  std::vector<DlIRect> ComputeClipRects(flutter::LayerTree& layer_tree,
+                                         bool has_raster_cache,
+                                         bool impeller_enabled);
 
   // See Damage::frame_damage.
-  std::optional<DlIRect> GetFrameDamage() const {
+  std::optional<DlRegion> GetFrameDamage() const {
     return damage_ ? std::make_optional(damage_->frame_damage) : std::nullopt;
   }
 
   // See Damage::buffer_damage.
-  std::optional<DlIRect> GetBufferDamage() {
+  std::optional<DlRegion> GetBufferDamage() {
     return (damage_ && !ignore_damage_)
                ? std::make_optional(damage_->buffer_damage)
                : std::nullopt;
@@ -94,7 +100,7 @@ class FrameDamage {
   void Reset() { ignore_damage_ = true; }
 
  private:
-  DlIRect additional_damage_;
+  DlRegion additional_damage_;
   std::optional<Damage> damage_;
   const LayerTree* prev_layer_tree_ = nullptr;
   int vertical_clip_alignment_ = 1;
@@ -145,7 +151,7 @@ class CompositorContext {
                             bool ignore_raster_cache);
 
     void PaintLayerTreeImpeller(flutter::LayerTree& layer_tree,
-                                std::optional<DlRect> clip_rect,
+                                DlIRect clip_bounds,
                                 bool ignore_raster_cache);
 
     CompositorContext& context_;
@@ -209,8 +215,9 @@ class CompositorContext {
   /// @brief  Whether Impeller shouild attempt a partial repaint.
   ///         The Impeller backend requires an additional blit pass, which may
   ///         not be worthwhile if the damage region is large.
-  static bool ShouldPerformPartialRepaint(std::optional<DlRect> damage_rect,
-                                          DlISize layer_tree_size);
+  static bool ShouldPerformPartialRepaint(
+      DlIRect bounds,
+      DlISize layer_tree_size);
 
   FML_DISALLOW_COPY_AND_ASSIGN(CompositorContext);
 };

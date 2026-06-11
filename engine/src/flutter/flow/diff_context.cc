@@ -101,37 +101,42 @@ void DiffContext::AlignRect(DlIRect& rect,
   rect = DlIRect::MakeLTRB(left, top, right, bottom);
 }
 
-Damage DiffContext::ComputeDamage(const DlIRect& accumulated_buffer_damage,
+Damage DiffContext::ComputeDamage(const DlRegion& additional_damage,
                                   int horizontal_clip_alignment,
                                   int vertical_clip_alignment) const {
-  DlRect buffer_damage = DlRect::Make(accumulated_buffer_damage).Union(damage_);
-  DlRect frame_damage(damage_);
+  DlRegion buffer_damage = DlRegion::MakeUnion(additional_damage, damage_);
+  DlRegion frame_damage = damage_;
 
   for (const auto& r : readbacks_) {
-    DlRect paint_rect = DlRect::Make(r.paint_rect);
-    DlRect readback_rect = DlRect::Make(r.readback_rect);
+    DlRegion paint_rgn(r.paint_rect);
+    DlRegion readback_rgn(r.readback_rect);
     // Changes either in readback or paint rect require repainting both readback
     // and paint rect.
-    if (paint_rect.IntersectsWithRect(frame_damage) ||
-        readback_rect.IntersectsWithRect(frame_damage)) {
-      frame_damage = frame_damage.Union(readback_rect).Union(paint_rect);
-      buffer_damage = buffer_damage.Union(readback_rect).Union(paint_rect);
+    if (frame_damage.intersects(r.paint_rect) ||
+        frame_damage.intersects(r.readback_rect)) {
+      auto combined = DlRegion::MakeUnion(paint_rgn, readback_rgn);
+      frame_damage = DlRegion::MakeUnion(frame_damage, combined);
+      buffer_damage = DlRegion::MakeUnion(buffer_damage, combined);
     }
   }
 
   DlIRect frame_clip = DlIRect::MakeSize(frame_size_);
+  DlRegion clip_region(frame_clip);
 
   Damage res;
-  res.buffer_damage =
-      DlIRect::RoundOut(buffer_damage).IntersectionOrEmpty(frame_clip);
-  res.frame_damage =
-      DlIRect::RoundOut(frame_damage).IntersectionOrEmpty(frame_clip);
+  res.frame_damage = DlRegion::MakeIntersection(frame_damage, clip_region);
+  res.buffer_damage = DlRegion::MakeIntersection(buffer_damage, clip_region);
 
   if (horizontal_clip_alignment > 1 || vertical_clip_alignment > 1) {
-    AlignRect(res.buffer_damage, horizontal_clip_alignment,
-              vertical_clip_alignment);
-    AlignRect(res.frame_damage, horizontal_clip_alignment,
-              vertical_clip_alignment);
+    auto align = [&](const DlRegion& rgn) -> DlRegion {
+      auto rects = rgn.getRects(true);
+      for (auto& rect : rects) {
+        AlignRect(rect, horizontal_clip_alignment, vertical_clip_alignment);
+      }
+      return DlRegion(rects);
+    };
+    res.frame_damage = align(res.frame_damage);
+    res.buffer_damage = align(res.buffer_damage);
   }
   return res;
 }
@@ -229,13 +234,16 @@ PaintRegion DiffContext::CurrentSubtreeRegion() const {
 
 void DiffContext::AddDamage(const PaintRegion& damage) {
   FML_DCHECK(damage.is_valid());
+  std::vector<DlIRect> irects;
+  irects.reserve(std::distance(damage.begin(), damage.end()));
   for (const auto& r : damage) {
-    damage_ = damage_.Union(r);
+    irects.push_back(DlIRect::RoundOut(r));
   }
+  damage_ = DlRegion::MakeUnion(damage_, DlRegion(irects));
 }
 
 void DiffContext::AddDamage(const DlRect& rect) {
-  damage_ = damage_.Union(rect);
+  damage_ = DlRegion::MakeUnion(damage_, DlRegion(DlIRect::RoundOut(rect)));
 }
 
 void DiffContext::SetLayerPaintRegion(const Layer* layer,

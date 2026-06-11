@@ -108,10 +108,10 @@ TEST_F(TextureLayerDiffTest, TextureInRetainedLayer) {
   tree2.root()->Add(container);  // retained layer
 
   auto damage = DiffLayerTree(tree1, MockLayerTree());
-  EXPECT_EQ(damage.frame_damage, DlIRect::MakeLTRB(0, 0, 100, 100));
+  EXPECT_EQ(damage.frame_damage.bounds(), DlIRect::MakeLTRB(0, 0, 100, 100));
 
   damage = DiffLayerTree(tree2, tree1);
-  EXPECT_EQ(damage.frame_damage, DlIRect::MakeLTRB(0, 0, 100, 100));
+  EXPECT_EQ(damage.frame_damage.bounds(), DlIRect::MakeLTRB(0, 0, 100, 100));
 }
 
 TEST_F(TextureLayerTest, OpacityInheritance) {

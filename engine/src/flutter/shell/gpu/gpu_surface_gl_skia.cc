@@ -5,6 +5,8 @@
 #include "flutter/shell/gpu/gpu_surface_gl_skia.h"
 
 #include "flutter/common/graphics/persistent_cache.h"
+#include "flutter/display_list/geometry/dl_geometry_types.h"
+#include "flutter/display_list/geometry/dl_region.h"
 #include "flutter/fml/base32.h"
 #include "flutter/fml/logging.h"
 #include "flutter/fml/trace_event.h"
@@ -263,8 +265,10 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceGLSkia::AcquireFrame(
       };
 
   framebuffer_info = delegate_->GLContextFramebufferInfo();
-  if (!framebuffer_info.existing_damage.has_value()) {
-    framebuffer_info.existing_damage = existing_damage_;
+  if (!framebuffer_info.existing_damage.has_value() &&
+      existing_damage_.has_value()) {
+    framebuffer_info.existing_damage =
+        DlRegion(ToDlIRect(existing_damage_.value()));
   }
   return std::make_unique<SurfaceFrame>(surface, framebuffer_info,
                                         encode_callback, submit_callback, size,
@@ -276,13 +280,24 @@ bool GPUSurfaceGLSkia::PresentSurface(const SurfaceFrame& frame) {
     return false;
   }
 
-  delegate_->GLContextSetDamageRegion(frame.submit_info().buffer_damage);
+  // Convert DlRegion to SkIRect for GL delegate API.
+  auto to_opt_skrect = [](const std::optional<DlRegion>& rgn)
+      -> std::optional<SkIRect> {
+    if (!rgn.has_value()) {
+      return std::nullopt;
+    }
+    return ToSkIRect(rgn->bounds());
+  };
+  auto sk_buffer_damage = to_opt_skrect(frame.submit_info().buffer_damage);
+  auto sk_frame_damage = to_opt_skrect(frame.submit_info().frame_damage);
+
+  delegate_->GLContextSetDamageRegion(sk_buffer_damage);
 
   GLPresentInfo present_info = {
       .fbo_id = fbo_id_,
-      .frame_damage = frame.submit_info().frame_damage,
+      .frame_damage = sk_frame_damage,
       .presentation_time = frame.submit_info().presentation_time,
-      .buffer_damage = frame.submit_info().buffer_damage,
+      .buffer_damage = sk_buffer_damage,
   };
   if (!delegate_->GLContextPresent(present_info)) {
     return false;

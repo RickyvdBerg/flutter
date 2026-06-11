@@ -7,6 +7,8 @@
 #include <GLES/gl.h>
 #include <utility>
 
+#include "flutter/display_list/geometry/dl_geometry_types.h"
+#include "flutter/display_list/geometry/dl_region.h"
 #include "flutter/fml/logging.h"
 #include "flutter/fml/memory/ref_ptr.h"
 #include "flutter/shell/platform/android/android_egl_surface.h"
@@ -136,7 +138,10 @@ SurfaceFrame::FramebufferInfo AndroidSurfaceGLSkia::GLContextFramebufferInfo()
   SurfaceFrame::FramebufferInfo res;
   res.supports_readback = true;
   res.supports_partial_repaint = onscreen_surface_->SupportsPartialRepaint();
-  res.existing_damage = onscreen_surface_->InitialDamage();
+  auto initial_damage = onscreen_surface_->InitialDamage();
+  if (initial_damage.has_value()) {
+    res.existing_damage = DlRegion(ToDlIRect(initial_damage.value()));
+  }
   // Some devices (Pixel2 XL) needs EGL_KHR_partial_update rect aligned to 4,
   // otherwise there are glitches
   // (https://github.com/flutter/flutter/issues/97482#)

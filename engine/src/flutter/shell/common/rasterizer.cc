@@ -818,10 +818,22 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
       return DrawSurfaceStatus::kRetry;
     }
 
+    // If frame damage is empty (zero-damage), skip submission.
+    // Note: compositor_context also checks zero-damage (preventing Paint),
+    // but this check is still needed to prevent the surface present/flip.
+    // Guard: only skip if buffer_damage also has a value (i.e., Reset()
+    // was not called to force a full repaint).
+    auto frame_dmg = damage ? damage->GetFrameDamage() : std::nullopt;
+    if (frame_dmg.has_value() && frame_dmg->isEmpty() &&
+        damage->GetBufferDamage().has_value()) {
+      NOT_SLIMPELLER(compositor_context_->raster_cache().EndFrame());
+      return DrawSurfaceStatus::kSuccess;
+    }
+
     SurfaceFrame::SubmitInfo submit_info;
     submit_info.presentation_time = presentation_time;
     if (damage) {
-      submit_info.frame_damage = damage->GetFrameDamage();
+      submit_info.frame_damage = std::move(frame_dmg);
       submit_info.buffer_damage = damage->GetBufferDamage();
     }
 

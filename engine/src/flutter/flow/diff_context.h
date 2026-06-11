@@ -10,6 +10,7 @@
 #include <optional>
 #include <vector>
 #include "display_list/utils/dl_matrix_clip_tracker.h"
+#include "flutter/display_list/geometry/dl_region.h"
 #include "flutter/flow/paint_region.h"
 #include "flutter/fml/macros.h"
 
@@ -24,14 +25,14 @@ struct Damage {
   // If embedder supports partial update, this is the region that needs to be
   // repainted.
   // Corresponds to "surface damage" from EGL_KHR_partial_update.
-  DlIRect frame_damage;
+  DlRegion frame_damage;
 
   // Reflects actual change to target framebuffer; This is frame_damage +
   // damage previously acumulated for target framebuffer.
   // All drawing will be clipped to this region. Knowing the affected area
   // upfront may be useful for tile based GPUs.
   // Corresponds to "buffer damage" from EGL_KHR_partial_update.
-  DlIRect buffer_damage;
+  DlRegion buffer_damage;
 };
 
 // Layer Unique Id to PaintRegion
@@ -139,7 +140,7 @@ class DiffContext {
   //
   // clip_alignment controls the alignment of resulting frame and surface
   // damage.
-  Damage ComputeDamage(const DlIRect& additional_damage,
+  Damage ComputeDamage(const DlRegion& additional_damage,
                        int horizontal_clip_alignment = 0,
                        int vertical_clip_alignment = 0) const;
 
@@ -242,7 +243,7 @@ class DiffContext {
   // Rect must be in device coordinates.
   DlRect ApplyFilterBoundsAdjustment(DlRect rect) const;
 
-  DlRect damage_;
+  DlRegion damage_;
 
   PaintRegionMap& this_frame_paint_region_map_;
   const PaintRegionMap& last_frame_paint_region_map_;

@@ -27,6 +27,43 @@ TEST(DisplayListRegion, SingleRectangle) {
   EXPECT_EQ(rects.front(), DlIRect::MakeLTRB(10, 10, 50, 50));
 }
 
+TEST(DisplayListRegion, EmptyRectsAreIgnored) {
+  // Empty rects must contribute nothing: not hang the span walk, not trip
+  // the active_end invariant, and not widen the region bounds.
+
+  // All-empty input produces an empty region.
+  DlRegion all_empty({
+      DlIRect::MakeLTRB(10, 10, 10, 30),
+      DlIRect::MakeLTRB(5, 50, 25, 50),
+  });
+  EXPECT_TRUE(all_empty.isEmpty());
+  EXPECT_TRUE(all_empty.getRects().empty());
+
+  // An empty rect whose top starts a new y-band after every non-empty rect
+  // has expired: the band would begin with nothing active and nothing
+  // insertable.
+  DlRegion trailing_empty({
+      DlIRect::MakeLTRB(0, 0, 10, 10),
+      DlIRect::MakeLTRB(5, 20, 5, 30),
+  });
+  auto trailing_rects = trailing_empty.getRects();
+  ASSERT_EQ(trailing_rects.size(), 1u);
+  EXPECT_EQ(trailing_rects.front(), DlIRect::MakeLTRB(0, 0, 10, 10));
+  EXPECT_EQ(trailing_empty.bounds(), DlIRect::MakeLTRB(0, 0, 10, 10));
+
+  // Empty rects interleaved with valid ones inside a band.
+  DlRegion interleaved({
+      DlIRect::MakeLTRB(0, 0, 10, 10),
+      DlIRect::MakeLTRB(15, 0, 15, 10),
+      DlIRect::MakeLTRB(20, 0, 30, 10),
+  });
+  std::vector<DlIRect> expected{
+      DlIRect::MakeLTRB(0, 0, 10, 10),
+      DlIRect::MakeLTRB(20, 0, 30, 10),
+  };
+  EXPECT_EQ(interleaved.getRects(), expected);
+}
+
 TEST(DisplayListRegion, NonOverlappingRectangles1) {
   std::vector<DlIRect> rects_in;
   for (int i = 0; i < 10; ++i) {

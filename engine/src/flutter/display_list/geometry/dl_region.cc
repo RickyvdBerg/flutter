@@ -252,11 +252,22 @@ void DlRegion::setRects(const std::vector<DlIRect>& unsorted_rects) {
   // setRects can only be called on empty regions.
   FML_DCHECK(lines_.empty());
 
-  size_t count = unsorted_rects.size();
-  std::vector<const DlIRect*> rects(count);
-  for (size_t i = 0; i < count; i++) {
-    rects[i] = &unsorted_rects[i];
-    bounds_ = bounds_.Union(unsorted_rects[i]);
+  // Filter empty rects: they contribute no spans, must not widen bounds_,
+  // and break the span walk's invariant that every y-band starting at an
+  // input rect inserts at least one rect — an input list whose tail is all
+  // empty rects reaches `active_end == 0` (the FML_DCHECK below).
+  std::vector<const DlIRect*> rects;
+  rects.reserve(unsorted_rects.size());
+  for (const DlIRect& rect : unsorted_rects) {
+    if (rect.IsEmpty()) {
+      continue;
+    }
+    rects.push_back(&rect);
+    bounds_ = bounds_.Union(rect);
+  }
+  const size_t count = rects.size();
+  if (count == 0) {
+    return;
   }
   std::sort(rects.begin(), rects.end(), [](const DlIRect* a, const DlIRect* b) {
     if (a->GetTop() < b->GetTop()) {

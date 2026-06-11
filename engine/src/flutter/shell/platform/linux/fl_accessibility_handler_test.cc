@@ -2,7 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Workaround missing C code compatibility in ATK header.
+// GLib's C++ helpers use templates, so they must be included before the
+// ATK aggregate header is wrapped in C linkage below.
+#include <glib-object.h>
+#include <glib.h>
+
+// Workaround missing C++ linkage compatibility in ATK header.
 // Fixed in https://gitlab.gnome.org/GNOME/at-spi2-core/-/merge_requests/219
 extern "C" {
 #include <atk/atk.h>

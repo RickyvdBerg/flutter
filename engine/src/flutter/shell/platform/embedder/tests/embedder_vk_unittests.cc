@@ -158,6 +158,9 @@ TEST_F(EmbedderTest, VulkanImpellerCompositorPresentCallbackFires) {
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
 
   fml::CountDownLatch latch(1);
+  fml::CountDownLatch collect_latch(1);
+  context.GetCompositor().AddOnCollectRenderTargetCallback(
+      [&collect_latch] { collect_latch.CountDown(); });
   context.GetCompositor().SetNextPresentCallback(
       [&](FlutterViewId view_id, const FlutterLayer** layers,
           size_t layers_count) {
@@ -183,6 +186,8 @@ TEST_F(EmbedderTest, VulkanImpellerCompositorPresentCallbackFires) {
             kSuccess);
 
   latch.Wait();
+  engine.reset();
+  collect_latch.Wait();
 }
 
 TEST_F(EmbedderTest, VulkanImpellerCompositorRendersScene) {
@@ -197,6 +202,9 @@ TEST_F(EmbedderTest, VulkanImpellerCompositorRendersScene) {
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
 
   auto rendered_scene = context.GetNextSceneImage();
+  fml::CountDownLatch collect_latch(1);
+  context.GetCompositor().AddOnCollectRenderTargetCallback(
+      [&collect_latch] { collect_latch.CountDown(); });
 
   auto engine = builder.LaunchEngine();
   ASSERT_TRUE(engine.is_valid());
@@ -214,6 +222,8 @@ TEST_F(EmbedderTest, VulkanImpellerCompositorRendersScene) {
   // reference images are captured with SwiftShader.
   auto scene_image = rendered_scene.get();
   ASSERT_TRUE(scene_image);
+  engine.reset();
+  collect_latch.Wait();
 }
 
 TEST_F(EmbedderTest,
@@ -231,6 +241,9 @@ TEST_F(EmbedderTest,
   // Verify that compositor present_view fires with valid layers, while
   // the root surface get_next_image/present_image callbacks are never called.
   fml::CountDownLatch latch(1);
+  fml::CountDownLatch collect_latch(1);
+  context.GetCompositor().AddOnCollectRenderTargetCallback(
+      [&collect_latch] { collect_latch.CountDown(); });
   context.GetCompositor().SetNextPresentCallback(
       [&](FlutterViewId view_id, const FlutterLayer** layers,
           size_t layers_count) {
@@ -258,6 +271,8 @@ TEST_F(EmbedderTest,
   // entirely — no VkImage acquisition or presentation.
   EXPECT_EQ(context.GetNextImageCallCount(), 0u);
   EXPECT_EQ(context.GetSurfacePresentCount(), 0u);
+  engine.reset();
+  collect_latch.Wait();
 }
 
 }  // namespace testing

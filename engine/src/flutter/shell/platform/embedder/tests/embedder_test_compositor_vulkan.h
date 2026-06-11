@@ -8,6 +8,7 @@
 #include "flutter/fml/macros.h"
 #include "flutter/shell/platform/embedder/embedder.h"
 #include "flutter/shell/platform/embedder/tests/embedder_test_compositor.h"
+#include "flutter/testing/test_vulkan_context.h"
 
 namespace flutter {
 namespace testing {
@@ -15,7 +16,7 @@ namespace testing {
 class EmbedderTestCompositorVulkan : public EmbedderTestCompositor {
  public:
   EmbedderTestCompositorVulkan(DlISize surface_size,
-                               sk_sp<GrDirectContext> context);
+                               fml::RefPtr<TestVulkanContext> vulkan_context);
 
   ~EmbedderTestCompositorVulkan() override;
 
@@ -26,6 +27,8 @@ class EmbedderTestCompositorVulkan : public EmbedderTestCompositor {
  private:
   bool UpdateOffscrenComposition(const FlutterLayer** layers,
                                  size_t layers_count) override;
+
+  fml::RefPtr<TestVulkanContext> vulkan_context_;
 
   FML_DISALLOW_COPY_AND_ASSIGN(EmbedderTestCompositorVulkan);
 };

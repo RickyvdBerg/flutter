@@ -15,6 +15,14 @@ namespace flutter::testing {
 
 namespace {
 struct UserData {
+  ~UserData() {
+    surface.reset();
+    if (vulkan_context) {
+      vulkan_context->DestroyImageView(image_view);
+    }
+    delete image;
+  }
+
   sk_sp<SkSurface> surface;
   FlutterVulkanImage* image;
   VkImageView image_view;
@@ -23,10 +31,12 @@ struct UserData {
 }  // namespace
 
 EmbedderTestBackingStoreProducerVulkan::EmbedderTestBackingStoreProducerVulkan(
-    sk_sp<GrDirectContext> context,
+    fml::RefPtr<TestVulkanContext> test_vulkan_context,
     RenderTargetType type)
-    : EmbedderTestBackingStoreProducer(std::move(context), type),
-      test_vulkan_context_(nullptr) {}
+    : EmbedderTestBackingStoreProducer(
+          test_vulkan_context->GetGrDirectContext(),
+          type),
+      test_vulkan_context_(std::move(test_vulkan_context)) {}
 
 EmbedderTestBackingStoreProducerVulkan::
     ~EmbedderTestBackingStoreProducerVulkan() = default;
@@ -34,10 +44,6 @@ EmbedderTestBackingStoreProducerVulkan::
 bool EmbedderTestBackingStoreProducerVulkan::Create(
     const FlutterBackingStoreConfig* config,
     FlutterBackingStore* backing_store_out) {
-  if (!test_vulkan_context_) {
-    test_vulkan_context_ = fml::MakeRefCounted<TestVulkanContext>();
-  }
-
   auto surface_size = DlISize(config->size.width, config->size.height);
   auto optional_image = test_vulkan_context_->CreateImage(surface_size);
   if (!optional_image.has_value()) {
@@ -91,8 +97,10 @@ bool EmbedderTestBackingStoreProducerVulkan::Create(
   backing_store_out->vulkan.image = image;
 
   // Create a VkImageView for Impeller use via the proc table.
-  VkImageView image_view = test_vulkan_context_->CreateImageView(
-      image_info.fImage, VK_FORMAT_R8G8B8A8_UNORM, surface_size);
+  VkImageView image_view =
+      test_vulkan_context_->CreateImageView(
+          image_info.fImage, VK_FORMAT_R8G8B8A8_UNORM,
+          SkISize::Make(surface_size.width, surface_size.height));
   if (image_view == VK_NULL_HANDLE) {
     FML_LOG(ERROR) << "Could not create VkImageView for test backing store.";
     return false;
@@ -112,10 +120,7 @@ bool EmbedderTestBackingStoreProducerVulkan::Create(
     backing_store_out->user_data = user_data;
     backing_store_out->vulkan.user_data = user_data;
     backing_store_out->vulkan.destruction_callback = [](void* user_data) {
-      UserData* d = reinterpret_cast<UserData*>(user_data);
-      d->vulkan_context->DestroyImageView(d->image_view);
-      delete d->image;
-      delete d;
+      delete reinterpret_cast<UserData*>(user_data);
     };
   }
 

@@ -2422,7 +2422,10 @@ TEST_F(EmbedderTest, BackingStoresCorrespondToTheirViews) {
       .avoid_backing_store_cache = false,
       .present_render_target_callback =
           [](const FlutterPresentRenderTargetInfo* info) {
-            ASSERT_NE(info->backing_store, nullptr);
+            if (info->backing_store == nullptr) {
+              ADD_FAILURE() << "Expected a backing store.";
+              return false;
+            }
             // Verify that the given backing store has the same view ID
             // as the target view.
             int64_t store_view_id =
@@ -4012,7 +4015,7 @@ TEST_F(EmbedderTest, CanScheduleFrame) {
 TEST_F(EmbedderTest, CanScheduleFrameForDisplay) {
   auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
   EmbedderConfigBuilder builder(context);
-  builder.SetSurface(SkISize::Make(1, 1));
+  builder.SetSurface(DlISize(1, 1));
   builder.SetDartEntrypoint("can_schedule_frame");
   fml::AutoResetWaitableEvent latch;
   context.AddNativeCallback(

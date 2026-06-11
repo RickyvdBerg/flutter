@@ -267,8 +267,7 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceGLSkia::AcquireFrame(
   framebuffer_info = delegate_->GLContextFramebufferInfo();
   if (!framebuffer_info.existing_damage.has_value() &&
       existing_damage_.has_value()) {
-    framebuffer_info.existing_damage =
-        DlRegion(ToDlIRect(existing_damage_.value()));
+    framebuffer_info.existing_damage = DlRegion(existing_damage_.value());
   }
   return std::make_unique<SurfaceFrame>(surface, framebuffer_info,
                                         encode_callback, submit_callback, size,
@@ -280,24 +279,23 @@ bool GPUSurfaceGLSkia::PresentSurface(const SurfaceFrame& frame) {
     return false;
   }
 
-  // Convert DlRegion to SkIRect for GL delegate API.
-  auto to_opt_skrect = [](const std::optional<DlRegion>& rgn)
-      -> std::optional<SkIRect> {
+  auto region_bounds = [](const std::optional<DlRegion>& rgn)
+      -> std::optional<DlIRect> {
     if (!rgn.has_value()) {
       return std::nullopt;
     }
-    return ToSkIRect(rgn->bounds());
+    return rgn->bounds();
   };
-  auto sk_buffer_damage = to_opt_skrect(frame.submit_info().buffer_damage);
-  auto sk_frame_damage = to_opt_skrect(frame.submit_info().frame_damage);
+  auto buffer_damage = region_bounds(frame.submit_info().buffer_damage);
+  auto frame_damage = region_bounds(frame.submit_info().frame_damage);
 
-  delegate_->GLContextSetDamageRegion(sk_buffer_damage);
+  delegate_->GLContextSetDamageRegion(buffer_damage);
 
   GLPresentInfo present_info = {
       .fbo_id = fbo_id_,
-      .frame_damage = sk_frame_damage,
+      .frame_damage = frame_damage,
       .presentation_time = frame.submit_info().presentation_time,
-      .buffer_damage = sk_buffer_damage,
+      .buffer_damage = buffer_damage,
   };
   if (!delegate_->GLContextPresent(present_info)) {
     return false;

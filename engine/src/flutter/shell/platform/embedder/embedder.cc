@@ -697,7 +697,6 @@ InferVulkanPlatformViewCreationCallback(
             .get_next_image = vulkan_get_next_image,
             .present_image = vulkan_present_image_callback,
         };
-
     std::unique_ptr<flutter::EmbedderSurfaceVulkanImpeller> embedder_surface =
         std::make_unique<flutter::EmbedderSurfaceVulkanImpeller>(
             config->vulkan.version, vk_instance,
@@ -1523,10 +1522,17 @@ MakeRenderTargetFromBackingStoreImpeller(
 
   auto render_target = surface->GetRenderTarget();
 
+  fml::closure framebuffer_destruct =
+      [callback = vulkan->destruction_callback, user_data = vulkan->user_data] {
+        if (callback) {
+          callback(user_data);
+        }
+      };
+
   return std::make_unique<flutter::EmbedderRenderTargetImpeller>(
       backing_store, aiks_context,
       std::make_unique<impeller::RenderTarget>(std::move(render_target)),
-      on_release, fml::closure(),
+      on_release, framebuffer_destruct,
       [wrapped_source]() mutable -> fml::UniqueFD {
         return wrapped_source->TakeRenderCompleteSyncFD();
       });

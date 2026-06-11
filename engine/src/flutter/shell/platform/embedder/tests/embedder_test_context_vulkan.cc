@@ -104,7 +104,7 @@ void EmbedderTestContextVulkan::SetupCompositor() {
   FML_CHECK(surface_)
       << "Set up the Vulkan surface before setting up a compositor.";
   compositor_ = std::make_unique<EmbedderTestCompositorVulkan>(
-      surface_size_, vulkan_context_->GetGrDirectContext());
+      surface_size_, vulkan_context_);
 }
 
 }  // namespace flutter::testing

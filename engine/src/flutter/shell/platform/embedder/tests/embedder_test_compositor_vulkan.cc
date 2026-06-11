@@ -17,10 +17,16 @@ namespace testing {
 
 EmbedderTestCompositorVulkan::EmbedderTestCompositorVulkan(
     DlISize surface_size,
-    sk_sp<GrDirectContext> context)
-    : EmbedderTestCompositor(surface_size, std::move(context)) {}
+    fml::RefPtr<TestVulkanContext> vulkan_context)
+    : EmbedderTestCompositor(surface_size,
+                             vulkan_context->GetGrDirectContext()),
+      vulkan_context_(std::move(vulkan_context)) {}
 
-EmbedderTestCompositorVulkan::~EmbedderTestCompositorVulkan() = default;
+EmbedderTestCompositorVulkan::~EmbedderTestCompositorVulkan() {
+  last_composition_.reset();
+  backingstore_producer_.reset();
+  context_.reset();
+}
 
 void EmbedderTestCompositorVulkan::SetRenderTargetType(
     EmbedderTestBackingStoreProducer::RenderTargetType type,
@@ -28,8 +34,8 @@ void EmbedderTestCompositorVulkan::SetRenderTargetType(
   switch (type) {
     case EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage:
       backingstore_producer_ =
-          std::make_unique<EmbedderTestBackingStoreProducerVulkan>(context_,
-                                                                   type);
+          std::make_unique<EmbedderTestBackingStoreProducerVulkan>(
+              vulkan_context_, type);
       return;
     case EmbedderTestBackingStoreProducer::RenderTargetType::kMetalTexture:
     case EmbedderTestBackingStoreProducer::RenderTargetType::kOpenGLFramebuffer:
@@ -47,6 +53,9 @@ bool EmbedderTestCompositorVulkan::UpdateOffscrenComposition(
     const FlutterLayer** layers,
     size_t layers_count) {
   last_composition_ = nullptr;
+  if (!next_scene_callback_) {
+    return true;
+  }
 
   const auto image_info = SkImageInfo::MakeN32Premul(ToSkISize(surface_size_));
 

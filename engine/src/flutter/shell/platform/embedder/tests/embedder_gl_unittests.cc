@@ -4139,7 +4139,7 @@ TEST_F(EmbedderTest, UpdateDisplayConfigurationAfterStartup) {
   auto& context = GetEmbedderContext<EmbedderTestContextGL>();
 
   EmbedderConfigBuilder builder(context);
-  builder.SetSurface(SkISize::Make(800, 600));
+  builder.SetSurface(DlISize(800, 600));
   builder.SetCompositor();
   builder.SetDartEntrypoint("empty_scene");
   fml::AutoResetWaitableEvent latch;

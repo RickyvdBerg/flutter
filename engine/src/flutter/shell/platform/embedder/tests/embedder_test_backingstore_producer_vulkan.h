@@ -14,8 +14,9 @@ namespace flutter::testing {
 class EmbedderTestBackingStoreProducerVulkan
     : public EmbedderTestBackingStoreProducer {
  public:
-  EmbedderTestBackingStoreProducerVulkan(sk_sp<GrDirectContext> context,
-                                         RenderTargetType type);
+  EmbedderTestBackingStoreProducerVulkan(
+      fml::RefPtr<TestVulkanContext> test_vulkan_context,
+      RenderTargetType type);
 
   virtual ~EmbedderTestBackingStoreProducerVulkan();
 

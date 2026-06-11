@@ -31,6 +31,8 @@ Contract for what these patches may and may not do:
 | 16 | [framework] Fix Phase 2 ordering bug — register dirty view BEFORE first scheduleFrame | permanent framework fix | none |
 | 17 | [framework] Make unattributable dirty marks force the global frame path | permanent framework fix | none |
 | 18 | [framework] Fall back to global frame path when a view's display is unregistered | permanent framework fix | none |
+| 19 | [framework] Guard the remaining display lookup in dirty-view forwarding | permanent framework fix | none |
+| 20 | [framework] Make MouseTracker device-update phase exception-safe | upstreamable bugfix | submit upstream |
 
 ## Known baseline debt
 

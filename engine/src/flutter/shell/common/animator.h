@@ -53,6 +53,10 @@ class Animator final {
 
   void RequestFrame(bool regenerate_layer_trees = true);
 
+  /// Bypasses vsync wait and immediately begins a frame build.
+  /// Used for synchronous resize to minimize latency.
+  void ScheduleImmediateFrame(uint64_t configure_serial);
+
   //--------------------------------------------------------------------------
   /// @brief    Tells the Animator that all views that should render for this
   ///           frame have been rendered.
@@ -118,7 +122,8 @@ class Animator final {
   // avoid being interrupted by a regular vsync. The reason to split them is to
   // allow ShellTest::PumpOneFrame to insert a Render in between.
 
-  void BeginFrame(std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder);
+  void BeginFrame(std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder,
+                  bool preserve_regenerate_layer_trees = false);
   void EndFrame();
 
   bool CanReuseLastLayerTrees();
@@ -147,6 +152,10 @@ class Animator final {
   bool frame_scheduled_ = false;
   std::deque<uint64_t> trace_flow_ids_;
   bool has_rendered_ = false;
+  // Non-zero while a synchronous resize frame is pending. This serial is
+  // stamped onto subsequent frame recorders until a frame is successfully
+  // committed to the pipeline.
+  uint64_t pending_configure_serial_ = 0;
 
   fml::TaskRunnerAffineWeakPtrFactory<Animator> weak_factory_;
 

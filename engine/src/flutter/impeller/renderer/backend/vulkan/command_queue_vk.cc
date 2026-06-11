@@ -4,6 +4,7 @@
 
 #include "fml/status.h"
 
+#include "flutter/fml/make_copyable.h"
 #include "impeller/renderer/backend/vulkan/command_queue_vk.h"
 
 #include "impeller/base/validation.h"

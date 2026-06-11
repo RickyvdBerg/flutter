@@ -79,7 +79,8 @@ class FrameDamage {
   // it can be used for diffing of subsequent frames.
   std::vector<DlIRect> ComputeClipRects(flutter::LayerTree& layer_tree,
                                          bool has_raster_cache,
-                                         bool impeller_enabled);
+                                         bool impeller_enabled,
+                                         TextureRegistry* texture_registry = nullptr);
 
   // See Damage::frame_damage.
   std::optional<DlRegion> GetFrameDamage() const {

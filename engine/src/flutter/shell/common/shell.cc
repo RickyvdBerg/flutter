@@ -1166,17 +1166,11 @@ void Shell::OnPlatformViewSetViewportMetrics(int64_t view_id,
         }
       });
 
-  fml::TaskRunner::RunNowAndFlushMessages(
-      task_runners_.GetUITaskRunner(),
-      [engine = engine_->GetWeakPtr(), view_id, metrics]() {
-        if (engine) {
-          engine->SetViewportMetrics(view_id, metrics);
-        }
-      });
-
+  // Set expected frame constraints BEFORE triggering the frame pipeline.
+  // Critical for synchronous resize: the raster thread may pick up the
+  // frame before RunNowAndFlushMessages returns.
   {
     std::scoped_lock<std::mutex> lock(resize_mutex_);
-
     expected_frame_constraints_[view_id] =
         BoxConstraints(Size(metrics.physical_min_width_constraint,
                             metrics.physical_min_height_constraint),
@@ -1184,6 +1178,14 @@ void Shell::OnPlatformViewSetViewportMetrics(int64_t view_id,
                             metrics.physical_max_height_constraint));
     device_pixel_ratio_ = metrics.device_pixel_ratio;
   }
+
+  fml::TaskRunner::RunNowAndFlushMessages(
+      task_runners_.GetUITaskRunner(),
+      [engine = engine_->GetWeakPtr(), view_id, metrics]() {
+        if (engine) {
+          engine->SetViewportMetrics(view_id, metrics);
+        }
+      });
 }
 
 // |PlatformView::Delegate|
@@ -1863,6 +1865,39 @@ bool Shell::ShouldDiscardLayerTree(int64_t view_id,
   auto expected_frame_constraints = ExpectedFrameConstraints(view_id);
   return !expected_frame_constraints.IsSatisfiedBy(
       Size(tree.frame_size().width, tree.frame_size().height));
+}
+
+void Shell::OnResizeFramePresented(uint64_t configure_serial) {
+  if (configure_serial == 0) {
+    return;
+  }
+  std::scoped_lock lock(resize_sync_mutex_);
+  completed_configure_serial_ = configure_serial;
+  resize_sync_cv_.notify_one();
+}
+
+bool Shell::WaitForResizeFrame(uint64_t configure_serial, uint32_t timeout_ms) {
+  auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+
+  while (std::chrono::steady_clock::now() < deadline) {
+    {
+      std::unique_lock lock(resize_sync_mutex_);
+      if (completed_configure_serial_ >= configure_serial) {
+        return true;
+      }
+      // Wake periodically so the platform thread can continue servicing
+      // engine-posted tasks while this synchronous API is waiting.
+      resize_sync_cv_.wait_for(lock, std::chrono::milliseconds(1));
+      if (completed_configure_serial_ >= configure_serial) {
+        return true;
+      }
+    }
+    fml::MessageLoop::GetCurrent().RunExpiredTasksNow();
+  }
+
+  std::scoped_lock lock(resize_sync_mutex_);
+  return completed_configure_serial_ >= configure_serial;
 }
 
 // |ServiceProtocol::Handler|

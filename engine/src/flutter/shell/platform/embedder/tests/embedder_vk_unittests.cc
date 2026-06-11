@@ -34,9 +34,9 @@ using EmbedderTest = testing::EmbedderTest;
 namespace {
 
 struct VulkanProcInfo {
-  decltype(vkGetInstanceProcAddr)* get_instance_proc_addr = nullptr;
-  decltype(vkGetDeviceProcAddr)* get_device_proc_addr = nullptr;
-  decltype(vkQueueSubmit)* queue_submit_proc_addr = nullptr;
+  PFN_vkGetInstanceProcAddr get_instance_proc_addr = nullptr;
+  PFN_vkGetDeviceProcAddr get_device_proc_addr = nullptr;
+  PFN_vkQueueSubmit queue_submit_proc_addr = nullptr;
   bool did_call_queue_submit = false;
 };
 
@@ -63,7 +63,7 @@ PFN_vkVoidFunction GetDeviceProcAddr(VkDevice device, const char* pName) {
   FML_DCHECK(g_vulkan_proc_info.get_device_proc_addr != nullptr);
   if (StrcmpFixed(pName, "vkQueueSubmit") == 0) {
     g_vulkan_proc_info.queue_submit_proc_addr =
-        reinterpret_cast<decltype(vkQueueSubmit)*>(
+        reinterpret_cast<PFN_vkQueueSubmit>(
             g_vulkan_proc_info.get_device_proc_addr(device, pName));
     return reinterpret_cast<PFN_vkVoidFunction>(QueueSubmit);
   }
@@ -74,25 +74,18 @@ PFN_vkVoidFunction GetInstanceProcAddr(VkInstance instance, const char* pName) {
   FML_DCHECK(g_vulkan_proc_info.get_instance_proc_addr != nullptr);
   if (StrcmpFixed(pName, "vkGetDeviceProcAddr") == 0) {
     g_vulkan_proc_info.get_device_proc_addr =
-        reinterpret_cast<decltype(vkGetDeviceProcAddr)*>(
+        reinterpret_cast<PFN_vkGetDeviceProcAddr>(
             g_vulkan_proc_info.get_instance_proc_addr(instance, pName));
     return reinterpret_cast<PFN_vkVoidFunction>(GetDeviceProcAddr);
   }
   return g_vulkan_proc_info.get_instance_proc_addr(instance, pName);
 }
 
-template <typename T, typename U>
-struct CheckSameSignature : std::false_type {};
-
-template <typename Ret, typename... Args>
-struct CheckSameSignature<Ret(Args...), Ret(Args...)> : std::true_type {};
-
-static_assert(CheckSameSignature<decltype(GetInstanceProcAddr),
-                                 decltype(vkGetInstanceProcAddr)>::value);
-static_assert(CheckSameSignature<decltype(GetDeviceProcAddr),
-                                 decltype(vkGetDeviceProcAddr)>::value);
 static_assert(
-    CheckSameSignature<decltype(QueueSubmit), decltype(vkQueueSubmit)>::value);
+    std::is_same_v<decltype(&GetInstanceProcAddr), PFN_vkGetInstanceProcAddr>);
+static_assert(
+    std::is_same_v<decltype(&GetDeviceProcAddr), PFN_vkGetDeviceProcAddr>);
+static_assert(std::is_same_v<decltype(&QueueSubmit), PFN_vkQueueSubmit>);
 }  // namespace
 
 TEST_F(EmbedderTest, CanGetVulkanEmbedderContext) {
@@ -110,7 +103,7 @@ TEST_F(EmbedderTest, CanSwapOutVulkanCalls) {
          const char* name) -> void* {
         if (StrcmpFixed(name, "vkGetInstanceProcAddr") == 0) {
           g_vulkan_proc_info.get_instance_proc_addr =
-              reinterpret_cast<decltype(vkGetInstanceProcAddr)*>(
+              reinterpret_cast<PFN_vkGetInstanceProcAddr>(
                   EmbedderTestContextVulkan::InstanceProcAddr(user_data,
                                                               instance, name));
           return reinterpret_cast<void*>(GetInstanceProcAddr);
@@ -138,7 +131,7 @@ TEST_F(EmbedderTest, VulkanImpellerCompositorCanLaunchEngine) {
 
   EmbedderConfigBuilder builder(context);
   builder.AddCommandLineArgument("--enable-impeller");
-  builder.SetSurface(SkISize::Make(800, 600));
+  builder.SetSurface(DlISize(800, 600));
   builder.SetCompositor();
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
@@ -159,7 +152,7 @@ TEST_F(EmbedderTest, VulkanImpellerCompositorPresentCallbackFires) {
   EmbedderConfigBuilder builder(context);
   builder.AddCommandLineArgument("--enable-impeller");
   builder.SetDartEntrypoint("render_impeller_test");
-  builder.SetSurface(SkISize::Make(800, 600));
+  builder.SetSurface(DlISize(800, 600));
   builder.SetCompositor();
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
@@ -198,7 +191,7 @@ TEST_F(EmbedderTest, VulkanImpellerCompositorRendersScene) {
   EmbedderConfigBuilder builder(context);
   builder.AddCommandLineArgument("--enable-impeller");
   builder.SetDartEntrypoint("render_impeller_test");
-  builder.SetSurface(SkISize::Make(800, 600));
+  builder.SetSurface(DlISize(800, 600));
   builder.SetCompositor();
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
@@ -221,6 +214,50 @@ TEST_F(EmbedderTest, VulkanImpellerCompositorRendersScene) {
   // reference images are captured with SwiftShader.
   auto scene_image = rendered_scene.get();
   ASSERT_TRUE(scene_image);
+}
+
+TEST_F(EmbedderTest,
+       VulkanImpellerCompositorSkipsRootSurfaceAcquisition) {
+  auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.AddCommandLineArgument("--enable-impeller");
+  builder.SetDartEntrypoint("render_impeller_test");
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetCompositor();
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
+
+  // Verify that compositor present_view fires with valid layers, while
+  // the root surface get_next_image/present_image callbacks are never called.
+  fml::CountDownLatch latch(1);
+  context.GetCompositor().SetNextPresentCallback(
+      [&](FlutterViewId view_id, const FlutterLayer** layers,
+          size_t layers_count) {
+        ASSERT_GT(layers_count, 0u);
+        ASSERT_EQ(layers[0]->type, kFlutterLayerContentTypeBackingStore);
+        ASSERT_EQ(layers[0]->backing_store->type,
+                  kFlutterBackingStoreTypeVulkan);
+        latch.CountDown();
+      });
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 800;
+  event.height = 600;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+
+  latch.Wait();
+
+  // With compositor mode active, the root surface path should be skipped
+  // entirely — no VkImage acquisition or presentation.
+  EXPECT_EQ(context.GetNextImageCallCount(), 0u);
+  EXPECT_EQ(context.GetSurfacePresentCount(), 0u);
 }
 
 }  // namespace testing

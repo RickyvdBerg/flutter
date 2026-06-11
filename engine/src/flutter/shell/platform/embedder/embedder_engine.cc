@@ -390,10 +390,14 @@ bool EmbedderEngine::PublishDmabufTexture(
   if (!texture_source->IsValid()) {
     return false;
   }
+  texture_source->SetReleaseCallback(std::move(release_callback));
 
   DmabufMailboxEntry entry;
   entry.texture_source = std::move(texture_source);
-  entry.release_callback = std::move(release_callback);
+  for (const auto& r : desc.damage_rects) {
+    entry.damage_rects.push_back(
+        DlIRect::MakeLTRB(r.left, r.top, r.right, r.bottom));
+  }
 
   dmabuf_mailbox_->Store(texture_id, std::move(entry));
 

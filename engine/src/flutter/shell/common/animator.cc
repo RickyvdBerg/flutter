@@ -46,6 +46,30 @@ Animator::Animator(Delegate& delegate,
 
 Animator::~Animator() = default;
 
+void Animator::ScheduleImmediateFrame(uint64_t configure_serial) {
+  pending_configure_serial_ = configure_serial;
+
+  if (!pending_frame_semaphore_.TryWait()) {
+    // Keep immediate scheduling aligned with RequestFrame gating so resize
+    // bursts do not inflate the pending-frame semaphore.
+    RequestFrame();
+    return;
+  }
+
+  // Create a FrameTimingsRecorder with synthetic vsync timestamps.
+  auto recorder = std::make_unique<FrameTimingsRecorder>();
+  auto now = fml::TimePoint::Now();
+  recorder->RecordVsync(now, now + fml::TimeDelta::FromMilliseconds(16));
+  recorder->SetConfigureSerial(configure_serial);
+
+  // Bypass AwaitVSync — build immediately.
+  // BeginFrame triggers Dart build synchronously (merged UI+Platform threads).
+  // EndFrame packages layer trees into pipeline and posts to raster thread.
+  BeginFrame(std::move(recorder),
+             /*preserve_regenerate_layer_trees=*/frame_scheduled_);
+  EndFrame();
+}
+
 void Animator::EnqueueTraceFlowId(uint64_t trace_flow_id) {
   fml::TaskRunner::RunNowOrPostTask(
       task_runners_.GetUITaskRunner(),
@@ -59,7 +83,8 @@ void Animator::EnqueueTraceFlowId(uint64_t trace_flow_id) {
 }
 
 void Animator::BeginFrame(
-    std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder) {
+    std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder,
+    bool preserve_regenerate_layer_trees) {
   TRACE_EVENT_ASYNC_END0("flutter", "Frame Request Pending",
                          frame_request_number_);
   // Clear layer trees rendered out of a frame. Only Animator::Render called
@@ -69,6 +94,10 @@ void Animator::BeginFrame(
   frame_request_number_++;
 
   frame_timings_recorder_ = std::move(frame_timings_recorder);
+  if (frame_timings_recorder_->GetConfigureSerial() == 0 &&
+      pending_configure_serial_ != 0) {
+    frame_timings_recorder_->SetConfigureSerial(pending_configure_serial_);
+  }
   frame_timings_recorder_->RecordBuildStart(fml::TimePoint::Now());
 
   size_t flow_id_count = trace_flow_ids_.size();
@@ -89,7 +118,9 @@ void Animator::BeginFrame(
   }
 
   frame_scheduled_ = false;
-  regenerate_layer_trees_ = false;
+  if (!preserve_regenerate_layer_trees) {
+    regenerate_layer_trees_ = false;
+  }
   pending_frame_semaphore_.Signal();
 
   if (!producer_continuation_) {
@@ -126,6 +157,8 @@ void Animator::EndFrame() {
     return;
   }
   if (!layer_trees_tasks_.empty()) {
+    const uint64_t configure_serial =
+        frame_timings_recorder_->GetConfigureSerial();
     // The build is completed in OnAnimatorBeginFrame.
     frame_timings_recorder_->RecordBuildEnd(fml::TimePoint::Now());
 
@@ -145,12 +178,18 @@ void Animator::EndFrame() {
 
     if (!result.success) {
       FML_DLOG(INFO) << "Failed to commit to the pipeline";
-    } else if (!result.is_first_item) {
-      // Do nothing. It has been successfully pushed to the pipeline but not as
-      // the first item. Eventually the 'Rasterizer' will consume it, so we
-      // don't need to notify the delegate.
     } else {
-      delegate_.OnAnimatorDraw(layer_tree_pipeline_);
+      if (configure_serial != 0 &&
+          pending_configure_serial_ == configure_serial) {
+        pending_configure_serial_ = 0;
+      }
+      if (!result.is_first_item) {
+        // Do nothing. It has been successfully pushed to the pipeline but not
+        // as the first item. Eventually the 'Rasterizer' will consume it, so
+        // we don't need to notify the delegate.
+      } else {
+        delegate_.OnAnimatorDraw(layer_tree_pipeline_);
+      }
     }
   }
   frame_timings_recorder_ = nullptr;
@@ -216,7 +255,7 @@ const std::weak_ptr<VsyncWaiter> Animator::GetVsyncWaiter() const {
 }
 
 bool Animator::CanReuseLastLayerTrees() {
-  return !regenerate_layer_trees_;
+  return pending_configure_serial_ == 0 && !regenerate_layer_trees_;
 }
 
 void Animator::DrawLastLayerTrees(

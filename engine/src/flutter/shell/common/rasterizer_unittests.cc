@@ -67,6 +67,10 @@ class MockDelegate : public Rasterizer::Delegate {
               ShouldDiscardLayerTree,
               (int64_t, const flutter::LayerTree&),
               (override));
+  MOCK_METHOD(void,
+              OnResizeFramePresented,
+              (uint64_t configure_serial),
+              (override));
 };
 
 class MockSurface : public Surface {

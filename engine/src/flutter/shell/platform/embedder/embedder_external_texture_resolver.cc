@@ -5,11 +5,13 @@
 #include "flutter/shell/platform/embedder/embedder_external_texture_resolver.h"
 
 #include <memory>
+#include <mutex>
 #include <utility>
 
 #ifdef __linux__
 #include "flutter/fml/logging.h"
 #include "flutter/shell/platform/embedder/dmabuf_texture_mailbox.h"
+#include "impeller/display_list/aiks_context.h"
 #include "impeller/display_list/dl_image_impeller.h"
 #include "impeller/renderer/backend/vulkan/texture_vk.h"
 #endif
@@ -37,15 +39,11 @@ class EmbedderExternalTextureDmabuf final : public Texture {
                                 DmabufTextureMailbox* mailbox)
       : Texture(texture_id), mailbox_(mailbox) {}
 
-  ~EmbedderExternalTextureDmabuf() override {
-    // Fire the release callback for any consumed entry still held.
-    if (current_entry_ && current_entry_->release_callback) {
-      current_entry_->release_callback();
-    }
-  }
+  ~EmbedderExternalTextureDmabuf() override = default;
 
  private:
   DmabufTextureMailbox* mailbox_;
+  mutable std::mutex state_mutex_;
   std::unique_ptr<DmabufMailboxEntry> current_entry_;
   sk_sp<DlImage> last_image_;
 
@@ -54,20 +52,24 @@ class EmbedderExternalTextureDmabuf final : public Texture {
              const DlRect& bounds,
              bool freeze,
              const DlImageSampling sampling) override {
-    if (last_image_ == nullptr) {
-      last_image_ = ResolveTexture(context);
+    sk_sp<DlImage> image;
+    {
+      std::scoped_lock lock(state_mutex_);
+      image = last_image_;
+    }
+    if (image == nullptr) {
+      image = ResolveTexture(context);
     }
 
     DlCanvas* canvas = context.canvas;
     const DlPaint* paint = context.paint;
 
-    if (last_image_) {
-      DlRect image_bounds = DlRect::Make(last_image_->GetBounds());
+    if (image) {
+      DlRect image_bounds = DlRect::Make(image->GetBounds());
       if (bounds != image_bounds) {
-        canvas->DrawImageRect(last_image_, image_bounds, bounds, sampling,
-                              paint);
+        canvas->DrawImageRect(image, image_bounds, bounds, sampling, paint);
       } else {
-        canvas->DrawImage(last_image_, bounds.GetOrigin(), sampling, paint);
+        canvas->DrawImage(image, bounds.GetOrigin(), sampling, paint);
       }
     }
   }
@@ -76,30 +78,50 @@ class EmbedderExternalTextureDmabuf final : public Texture {
     auto entry = mailbox_->Consume(Id());
     if (!entry || !entry->texture_source || !entry->texture_source->IsValid()) {
       // No new frame; reuse the last image if we have one.
+      std::scoped_lock lock(state_mutex_);
       return last_image_;
     }
 
-    // Release the previous entry's callback.
-    if (current_entry_ && current_entry_->release_callback) {
-      current_entry_->release_callback();
-    }
-    current_entry_ = std::move(entry);
-
     // Create a TextureVK from the DmabufTextureSourceVK.
-    auto impeller_context = context.aiks_context
-                                ? context.aiks_context->GetContext()
-                                : nullptr;
+    auto impeller_context =
+        context.aiks_context ? context.aiks_context->GetContext() : nullptr;
     if (!impeller_context) {
-      return nullptr;
+      std::scoped_lock lock(state_mutex_);
+      return last_image_;
     }
 
-    auto texture = std::make_shared<impeller::TextureVK>(
-        impeller_context, current_entry_->texture_source);
-    return impeller::DlImageImpeller::Make(std::move(texture));
+    if (entry->release_callback) {
+      entry->texture_source->SetReleaseCallback(
+          std::move(entry->release_callback));
+    }
+
+    auto texture = std::make_shared<impeller::TextureVK>(impeller_context,
+                                                         entry->texture_source);
+    auto image = impeller::DlImageImpeller::Make(std::move(texture));
+
+    {
+      std::scoped_lock lock(state_mutex_);
+      current_entry_ = std::move(entry);
+      last_image_ = image;
+    }
+    return image;
   }
 
   // |flutter::Texture|
-  void MarkNewFrameAvailable() override { last_image_ = nullptr; }
+  void MarkNewFrameAvailable() override {
+    std::scoped_lock lock(state_mutex_);
+    last_image_ = nullptr;
+    SetNewFrameFlag();
+  }
+
+  // |flutter::Texture|
+  DamageInfo GetPendingDamage() const override {
+    auto rects = mailbox_->PeekDamage(Id());
+    if (rects.empty()) {
+      return {};  // No damage info — full repaint assumed.
+    }
+    return {.has_rects = true, .rects = std::move(rects)};
+  }
 
   // |flutter::Texture|
   void OnGrContextCreated() override {}
@@ -110,10 +132,7 @@ class EmbedderExternalTextureDmabuf final : public Texture {
   // |flutter::Texture|
   void OnTextureUnregistered() override {
     mailbox_->Remove(Id());
-    // Release any held entry.
-    if (current_entry_ && current_entry_->release_callback) {
-      current_entry_->release_callback();
-    }
+    std::scoped_lock lock(state_mutex_);
     current_entry_.reset();
     last_image_ = nullptr;
   }

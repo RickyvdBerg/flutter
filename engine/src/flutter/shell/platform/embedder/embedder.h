@@ -1097,6 +1097,8 @@ typedef struct {
   /// If |has_constraints| is `true`, this must be greater than or equal to
   /// |min_height_constraint| and |height|.
   size_t max_height_constraint;
+  /// Opaque serial for resize correlation. Zero means normal async path.
+  uint64_t configure_serial;
 } FlutterWindowMetricsEvent;
 
 typedef struct {
@@ -2849,6 +2851,65 @@ typedef struct {
   size_t data_length;
 } FlutterSendSemanticsActionInfo;
 
+#ifdef __linux__
+
+//------------------------------------------------------------------------------
+/// @brief      Describes a single plane of a DMA-BUF buffer.
+///
+typedef struct {
+  /// File descriptor for this plane's DMA-BUF.
+  int fd;
+  /// Byte offset from the start of the DMA-BUF to this plane's data.
+  uint32_t offset;
+  /// Byte stride between rows for this plane.
+  uint32_t stride;
+} FlutterDmabufPlane;
+
+//------------------------------------------------------------------------------
+/// @brief      Describes a DMA-BUF texture to be imported by the engine.
+///
+///             The engine takes ownership of all file descriptors on success.
+///             On failure, the caller retains ownership and must close them.
+///
+typedef struct {
+  /// The size of this struct. Must be at least large enough to include the
+  /// acquire_fence_fd field. Newer fields (damage_rects) are read via
+  /// SAFE_ACCESS and default safely when struct_size is smaller.
+  size_t struct_size;
+  /// Width of the texture in pixels.
+  uint32_t width;
+  /// Height of the texture in pixels.
+  uint32_t height;
+  /// DRM pixel format (fourcc code), e.g. DRM_FORMAT_ARGB8888.
+  uint32_t drm_format;
+  /// DRM format modifier (e.g. DRM_FORMAT_MOD_LINEAR). Use
+  /// DRM_FORMAT_MOD_INVALID if unknown.
+  uint64_t drm_modifier;
+  /// Number of planes (1-4).
+  uint32_t num_planes;
+  /// Per-plane descriptors.
+  FlutterDmabufPlane planes[4];
+  /// Acquire fence fd. The engine will wait on this fence before reading the
+  /// texture. Set to -1 if no fence is needed.
+  int acquire_fence_fd;
+  /// Number of damage rects (0 = full frame dirty, max 4).
+  /// Damage rects describe the region that changed since the last published
+  /// frame. When num_damage_rects is 0, the entire texture is assumed dirty.
+  uint32_t num_damage_rects;
+  /// Damage rects in pixel coordinates, origin top-left.
+  /// Only the first num_damage_rects entries are valid.
+  FlutterRect damage_rects[4];
+} FlutterDmabufDescriptor;
+
+//------------------------------------------------------------------------------
+/// @brief      Callback invoked by the engine when it is done reading a
+///             DMA-BUF texture and the embedder may reuse or close the
+///             buffer.
+///
+typedef void (*FlutterDmabufReleaseCallback)(void* user_data);
+
+#endif  // __linux__
+
 #ifndef FLUTTER_ENGINE_NO_PROTOTYPES
 
 // NOLINTBEGIN(google-objc-function-naming)
@@ -3066,6 +3127,21 @@ FlutterEngineResult FlutterEngineSendWindowMetricsEvent(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     const FlutterWindowMetricsEvent* event);
 
+/// Sends window metrics and blocks until raster completes at the new size,
+/// or until timeout_ms expires. Must be called from the platform thread.
+///
+/// The @p configure_serial parameter takes precedence over any value set on
+/// the event's configure_serial field.
+///
+/// Returns kSuccess if a frame was presented before timeout.
+/// Returns kInternalInconsistency on timeout or error.
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineRenderViewImmediate(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    const FlutterWindowMetricsEvent* event,
+    uint64_t configure_serial,
+    uint32_t timeout_ms);
+
 FLUTTER_EXPORT
 FlutterEngineResult FlutterEngineSendPointerEvent(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
@@ -3252,52 +3328,6 @@ FlutterEngineResult FlutterEngineMarkExternalTextureFrameAvailable(
     int64_t texture_identifier);
 
 #ifdef __linux__
-
-//------------------------------------------------------------------------------
-/// @brief      Describes a single plane of a DMA-BUF buffer.
-///
-typedef struct {
-  /// File descriptor for this plane's DMA-BUF.
-  int fd;
-  /// Byte offset from the start of the DMA-BUF to this plane's data.
-  uint32_t offset;
-  /// Byte stride between rows for this plane.
-  uint32_t stride;
-} FlutterDmabufPlane;
-
-//------------------------------------------------------------------------------
-/// @brief      Describes a DMA-BUF texture to be imported by the engine.
-///
-///             The engine takes ownership of all file descriptors on success.
-///             On failure, the caller retains ownership and must close them.
-///
-typedef struct {
-  /// The size of this struct. Must be sizeof(FlutterDmabufDescriptor).
-  size_t struct_size;
-  /// Width of the texture in pixels.
-  uint32_t width;
-  /// Height of the texture in pixels.
-  uint32_t height;
-  /// DRM pixel format (fourcc code), e.g. DRM_FORMAT_ARGB8888.
-  uint32_t drm_format;
-  /// DRM format modifier (e.g. DRM_FORMAT_MOD_LINEAR). Use
-  /// DRM_FORMAT_MOD_INVALID if unknown.
-  uint64_t drm_modifier;
-  /// Number of planes (1-4).
-  uint32_t num_planes;
-  /// Per-plane descriptors.
-  FlutterDmabufPlane planes[4];
-  /// Acquire fence fd. The engine will wait on this fence before reading the
-  /// texture. Set to -1 if no fence is needed.
-  int acquire_fence_fd;
-} FlutterDmabufDescriptor;
-
-//------------------------------------------------------------------------------
-/// @brief      Callback invoked by the engine when it is done reading a
-///             DMA-BUF texture and the embedder may reuse or close the
-///             buffer.
-///
-typedef void (*FlutterDmabufReleaseCallback)(void* user_data);
 
 //------------------------------------------------------------------------------
 /// @brief      Push a DMA-BUF texture into the engine for the given texture

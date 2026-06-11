@@ -551,6 +551,14 @@ Rasterizer::DoDrawResult Rasterizer::DoDraw(
   // for Fuchsia to capture SceneUpdateContext::ExecutePaintTasks.
   delegate_.OnFrameRasterized(frame_timings_recorder->GetRecordedTime());
 
+  // Signal synchronous resize completion if this frame carried a serial.
+  {
+    uint64_t serial = frame_timings_recorder->GetConfigureSerial();
+    if (serial != 0) {
+      delegate_.OnResizeFramePresented(serial);
+    }
+  }
+
 // SceneDisplayLag events are disabled on Fuchsia.
 // see: https://github.com/flutter/flutter/issues/56598
 #if !defined(OS_FUCHSIA)

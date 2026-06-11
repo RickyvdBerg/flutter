@@ -6,7 +6,11 @@
 #define FLUTTER_IMPELLER_RENDERER_BACKEND_VULKAN_LINUX_DMABUF_TEXTURE_SOURCE_VK_H_
 
 #include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
 #include <optional>
+#include <vector>
 
 #include "impeller/renderer/backend/vulkan/texture_source_vk.h"
 #include "impeller/renderer/backend/vulkan/vk.h"
@@ -14,12 +18,21 @@
 namespace impeller {
 
 class ContextVK;
+struct DmabufImportedImageResourceVK;
 
 /// @brief      Describes a single plane of a DMA-BUF.
 struct DmabufPlaneDescriptor {
   int fd = -1;
   uint32_t offset = 0;
   uint32_t stride = 0;
+};
+
+/// @brief      Damage rect for a DMA-BUF texture, in pixel coordinates.
+struct DmabufDamageRect {
+  int32_t left;
+  int32_t top;
+  int32_t right;
+  int32_t bottom;
 };
 
 /// @brief      Describes a DMA-BUF to be imported as a Vulkan image.
@@ -31,6 +44,7 @@ struct DmabufDescriptor {
   uint32_t num_planes = 0;
   DmabufPlaneDescriptor planes[4] = {};
   int acquire_fence_fd = -1;
+  std::vector<DmabufDamageRect> damage_rects;  // empty = full frame
 };
 
 //------------------------------------------------------------------------------
@@ -66,13 +80,18 @@ class DmabufTextureSourceVK final : public TextureSourceVK {
   // |TextureSourceVK|
   std::optional<WaitSemaphore> ConsumeAcquireSemaphore() const override;
 
+  /// Sets a callback that is invoked when the texture source is destroyed.
+  /// This is used by the embedder DMA-BUF API to signal that the engine is
+  /// done reading the imported buffer.
+  void SetReleaseCallback(std::function<void()> release_callback);
+
   bool IsValid() const;
 
  private:
-  vk::UniqueDeviceMemory device_memory_ = {};
-  vk::UniqueImage image_ = {};
-  vk::UniqueImageView image_view_ = {};
+  std::shared_ptr<DmabufImportedImageResourceVK> imported_resource_;
   mutable vk::UniqueSemaphore acquire_semaphore_ = {};
+  mutable std::mutex release_callback_mutex_;
+  std::function<void()> release_callback_;
   bool is_valid_ = false;
 
   DmabufTextureSourceVK(const DmabufTextureSourceVK&) = delete;

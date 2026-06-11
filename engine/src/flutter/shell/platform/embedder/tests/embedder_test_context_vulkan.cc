@@ -67,7 +67,12 @@ size_t EmbedderTestContextVulkan::GetSurfacePresentCount() const {
   return present_count_;
 }
 
+size_t EmbedderTestContextVulkan::GetNextImageCallCount() const {
+  return get_next_image_count_;
+}
+
 VkImage EmbedderTestContextVulkan::GetNextImage(const DlISize& size) {
+  get_next_image_count_++;
   return surface_->GetImage();
 }
 

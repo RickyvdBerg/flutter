@@ -5,6 +5,7 @@
 #include "flutter/shell/platform/embedder/embedder_external_view_embedder.h"
 
 #include <cassert>
+#include <cmath>
 #include <utility>
 
 #include "flutter/common/constants.h"
@@ -20,40 +21,21 @@ namespace flutter {
 
 static const auto kRootViewIdentifier = EmbedderExternalView::ViewIdentifier{};
 
-namespace {
-
-constexpr int64_t kShellLayerBreakToUnderlay = -901001;
-constexpr int64_t kShellLayerBreakToOverlay = -901002;
-constexpr int64_t kShellLayerBreakToPerWindowChrome = -901003;
-
-bool IsShellLayerBoundaryMarker(int64_t view_id) {
-  return view_id == kShellLayerBreakToUnderlay ||
-         view_id == kShellLayerBreakToOverlay ||
-         view_id == kShellLayerBreakToPerWindowChrome;
-}
-
-}  // namespace
-
 EmbedderExternalViewEmbedder::EmbedderExternalViewEmbedder(
     bool avoid_backing_store_cache,
     const CreateRenderTargetCallback& create_render_target_callback,
-    const PresentCallback& present_callback,
-    const GetShellVisualsCallback& get_shell_visuals_callback,
-    const GetShellSourcesCallback& get_shell_sources_callback)
+    const PresentRenderTargetCallback& present_render_target_callback)
     : avoid_backing_store_cache_(avoid_backing_store_cache),
       create_render_target_callback_(create_render_target_callback),
-      present_callback_(present_callback),
-      get_shell_visuals_callback_(get_shell_visuals_callback),
-      get_shell_sources_callback_(get_shell_sources_callback) {
+      present_render_target_callback_(present_render_target_callback) {
   FML_DCHECK(create_render_target_callback_);
-  FML_DCHECK(present_callback_);
+  FML_DCHECK(present_render_target_callback_);
 }
 
 EmbedderExternalViewEmbedder::~EmbedderExternalViewEmbedder() = default;
 
 void EmbedderExternalViewEmbedder::CollectView(int64_t view_id) {
   render_target_caches_.erase(view_id);
-  retained_presented_layers_.erase(view_id);
 }
 
 void EmbedderExternalViewEmbedder::SetSurfaceTransformationCallback(
@@ -72,7 +54,6 @@ DlMatrix EmbedderExternalViewEmbedder::GetSurfaceTransformation() const {
 void EmbedderExternalViewEmbedder::Reset() {
   pending_views_.clear();
   composition_order_.clear();
-  has_shell_layer_boundary_markers_ = false;
 }
 
 // |ExternalViewEmbedder|
@@ -102,16 +83,13 @@ void EmbedderExternalViewEmbedder::PrepareFlutterView(
 
 bool EmbedderExternalViewEmbedder::SupportsMetadataFrameDamageForCurrentFrame()
     const {
-  return !has_shell_layer_boundary_markers_;
+  return true;
 }
 
 // |ExternalViewEmbedder|
 void EmbedderExternalViewEmbedder::PrerollCompositeEmbeddedView(
     int64_t view_id,
     std::unique_ptr<EmbeddedViewParams> params) {
-  if (IsShellLayerBoundaryMarker(view_id)) {
-    has_shell_layer_boundary_markers_ = true;
-  }
   auto vid = EmbedderExternalView::ViewIdentifier(view_id);
   FML_DCHECK(pending_views_.count(vid) == 0);
 
@@ -151,7 +129,9 @@ DlCanvas* EmbedderExternalViewEmbedder::CompositeEmbeddedView(int64_t view_id) {
 
 static FlutterBackingStoreConfig MakeBackingStoreConfig(
     int64_t view_id,
-    const DlISize& backing_store_size) {
+    const DlISize& backing_store_size,
+    FlutterBackingStoreRequestType request_type,
+    uint64_t shell_visual_identifier) {
   FlutterBackingStoreConfig config = {};
 
   config.struct_size = sizeof(config);
@@ -159,8 +139,33 @@ static FlutterBackingStoreConfig MakeBackingStoreConfig(
   config.size.width = backing_store_size.width;
   config.size.height = backing_store_size.height;
   config.view_id = view_id;
+  config.shell_visual_identifier = shell_visual_identifier;
+  config.request_type = request_type;
 
   return config;
+}
+
+static FlutterRect ToFlutterRect(const DlIRect& rect,
+                                 const DlMatrix& transformation) {
+  const auto transformed_rect =
+      DlRect::Make(rect).TransformAndClipBounds(transformation);
+  return FlutterRect{
+      transformed_rect.GetLeft(),
+      transformed_rect.GetTop(),
+      transformed_rect.GetRight(),
+      transformed_rect.GetBottom(),
+  };
+}
+
+static std::vector<FlutterRect> ToFlutterRects(
+    const std::vector<DlIRect>& rects,
+    const DlMatrix& transformation) {
+  std::vector<FlutterRect> flutter_rects;
+  flutter_rects.reserve(rects.size());
+  for (const auto& rect : rects) {
+    flutter_rects.push_back(ToFlutterRect(rect, transformation));
+  }
+  return flutter_rects;
 }
 
 namespace {
@@ -170,7 +175,7 @@ struct PlatformView {
   const EmbeddedViewParams* params;
 
   // The frame of the platform view, after clipping, in screen coordinates.
-  SkRect clipped_frame;
+  DlRect clipped_frame;
 
   explicit PlatformView(const EmbedderExternalView* view) {
     FML_DCHECK(view->HasPlatformView());
@@ -216,8 +221,9 @@ struct PlatformView {
           break;
       }
     }
-    clipped_frame = ToSkRect(clip);
+    clipped_frame = clip;
   }
+
 };
 
 /// Each layer will result in a single physical surface that contains Flutter
@@ -230,9 +236,9 @@ class Layer {
  public:
   /// Returns whether the rectangle intersects any of the platform views of
   /// this layer.
-  bool IntersectsPlatformView(const SkRect& rect) {
+  bool IntersectsPlatformView(const DlRect& rect) {
     for (auto& platform_view : platform_views_) {
-      if (platform_view.clipped_frame.intersects(rect)) {
+      if (platform_view.clipped_frame.IntersectsWithRect(rect)) {
         return true;
       }
     }
@@ -243,7 +249,7 @@ class Layer {
   /// layer.
   bool IntersectsPlatformView(const DlRegion& region) {
     for (auto& platform_view : platform_views_) {
-      auto clipped_frame = ToDlIRect(platform_view.clipped_frame.roundOut());
+      auto clipped_frame = DlIRect::RoundOut(platform_view.clipped_frame);
       if (region.intersects(clipped_frame)) {
         return true;
       }
@@ -253,8 +259,8 @@ class Layer {
 
   /// Returns whether the rectangle intersects any of the Flutter contents of
   /// this layer.
-  bool IntersectsFlutterContents(const SkRect& rect) {
-    return flutter_contents_region_.intersects(ToDlIRect(rect.roundOut()));
+  bool IntersectsFlutterContents(const DlRect& rect) {
+    return flutter_contents_region_.intersects(DlIRect::RoundOut(rect));
   }
 
   /// Returns whether the region intersects any of the Flutter contents of this
@@ -316,6 +322,18 @@ class Layer {
 
   std::vector<DlIRect> coverage() {
     return flutter_contents_region_.getRects();
+  }
+
+  EmbedderExternalView::RenderTargetDescriptor CreateRenderTargetDescriptor(
+      const DlISize& frame_size) const {
+    return EmbedderExternalView::RenderTargetDescriptor(
+        frame_size,
+        kFlutterBackingStoreRequestTypeView,
+        0);
+  }
+
+  bool is_empty() const {
+    return platform_views_.empty() && flutter_contents_.empty();
   }
 
  private:
@@ -430,9 +448,12 @@ class LayerBuilder {
  public:
   using RenderTargetProvider =
       std::function<std::unique_ptr<EmbedderRenderTarget>(
-          const DlISize& frame_size)>;
+          const EmbedderExternalView::RenderTargetDescriptor& descriptor)>;
 
-  explicit LayerBuilder(DlISize frame_size) : frame_size_(frame_size) {
+  explicit LayerBuilder(DlISize frame_size,
+                        DlMatrix surface_transformation)
+      : frame_size_(frame_size),
+        surface_transformation_(surface_transformation) {
     layers_.push_back(Layer());
   }
 
@@ -455,7 +476,8 @@ class LayerBuilder {
   void PrepareBackingStore(const RenderTargetProvider& target_provider) {
     for (auto& layer : layers_) {
       if (layer.has_flutter_contents()) {
-        layer.SetRenderTarget(target_provider(frame_size_));
+        layer.SetRenderTarget(
+            target_provider(layer.CreateRenderTargetDescriptor(frame_size_)));
       }
     }
   }
@@ -493,18 +515,24 @@ class LayerBuilder {
       if (layer.render_target() != nullptr) {
         layers.PushBackingStoreLayer(layer.render_target()->GetBackingStore(),
                                      layer.render_target()->TakeRenderCompleteSyncFD(),
-                                     layer.coverage());
+                                     layer.coverage(),
+                                     kFlutterShellLayerRoleEmbeddedContent,
+                                     0);
       }
     }
   }
 
   /// Removes the render targets from layers and returns them for collection.
-  std::vector<std::unique_ptr<EmbedderRenderTarget>>
+  std::vector<std::pair<EmbedderExternalView::RenderTargetDescriptor,
+                        std::unique_ptr<EmbedderRenderTarget>>>
   ClearAndCollectRenderTargets() {
-    std::vector<std::unique_ptr<EmbedderRenderTarget>> result;
+    std::vector<std::pair<EmbedderExternalView::RenderTargetDescriptor,
+                          std::unique_ptr<EmbedderRenderTarget>>>
+        result;
     for (auto& layer : layers_) {
       if (layer.render_target() != nullptr) {
-        result.push_back(std::move(layer.render_target_));
+        result.emplace_back(layer.CreateRenderTargetDescriptor(frame_size_),
+                            std::move(layer.render_target_));
       }
     }
     layers_.clear();
@@ -513,7 +541,8 @@ class LayerBuilder {
 
  private:
   void AddPlatformView(PlatformView view) {
-    GetLayerForPlatformView(view).AddPlatformView(view);
+    auto& layer = GetLayerForPlatformView(view);
+    layer.AddPlatformView(view);
   }
 
   void AddFlutterContents(EmbedderExternalView* contents) {
@@ -564,6 +593,7 @@ class LayerBuilder {
 
   std::vector<Layer> layers_;
   DlISize frame_size_;
+  DlMatrix surface_transformation_;
 };
 
 };  // namespace
@@ -577,117 +607,127 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
   // unrecognized.
   EmbedderRenderTargetCache& render_target_cache =
       render_target_caches_[flutter_view_id];
-  DlRect _rect = DlRect::MakeSize(pending_frame_size_)
-                     .TransformAndClipBounds(pending_surface_transformation_);
-
-  LayerBuilder builder(DlIRect::RoundOut(_rect).GetSize());
-
-  for (auto view_id : composition_order_) {
-    auto& view = pending_views_[view_id];
-    builder.AddExternalView(view.get());
+  auto root_found = pending_views_.find(kRootViewIdentifier);
+  if (root_found == pending_views_.end()) {
+    FML_LOG(ERROR) << "Explicit render-target presentation requires a root "
+                      "Flutter view.";
+    frame->Submit();
+    return;
   }
 
-  builder.PrepareBackingStore([&](const DlISize& frame_size) {
-    if (!avoid_backing_store_cache_) {
-      std::unique_ptr<EmbedderRenderTarget> target =
-          render_target_cache.GetRenderTarget(
-              EmbedderExternalView::RenderTargetDescriptor(frame_size));
-      if (target != nullptr) {
-        return target;
-      }
+  for (const auto& view_id : composition_order_) {
+    if (view_id.platform_view_id.has_value()) {
+      FML_LOG(ERROR)
+          << "Explicit render-target presentation does not support embedded "
+             "platform views.";
+      frame->Submit();
+      return;
     }
-    auto config = MakeBackingStoreConfig(flutter_view_id, frame_size);
-    return create_render_target_callback_(context, aiks_context, config);
-  });
+  }
 
-  // This is where unused render targets will be collected. Control may flow
-  // to the embedder. Here, the embedder has the opportunity to trample on the
-  // OpenGL context.
-  //
-  // For optimum performance, we should tell the render target cache to clear
-  // its unused entries before allocating new ones. This collection step
-  // before allocating new render targets ameliorates peak memory usage within
-  // the frame. But, this causes an issue in a known internal embedder. To
-  // work around this issue while that embedder migrates, collection of render
-  // targets is deferred after the presentation.
-  //
-  // @warning: Embedder may trample on our OpenGL context here.
+  auto& root_view = root_found->second;
+  if (!root_view->HasEngineRenderedContents()) {
+    frame->Submit();
+    return;
+  }
+
+  const auto descriptor = root_view->CreateRenderTargetDescriptor();
+  std::unique_ptr<EmbedderRenderTarget> render_target;
+  if (!avoid_backing_store_cache_) {
+    render_target = render_target_cache.GetRenderTarget(descriptor);
+  }
+  if (render_target == nullptr) {
+    auto config = MakeBackingStoreConfig(flutter_view_id,
+                                         descriptor.surface_size,
+                                         descriptor.request_type,
+                                         descriptor.shell_visual_identifier);
+    render_target =
+        create_render_target_callback_(context, aiks_context, config);
+  }
+  if (render_target == nullptr) {
+    FML_LOG(ERROR) << "Could not acquire an embedder render target for view "
+                   << flutter_view_id;
+    frame->Submit();
+    return;
+  }
+
   auto deferred_cleanup_render_targets =
       render_target_cache.ClearAllRenderTargetsInCache();
 
 #if !SLIMPELLER
-  // The OpenGL context could have been trampled by the embedder at this point
-  // as it attempted to collect old render targets and create new ones. Tell
-  // Skia to not rely on existing bindings.
   if (context) {
     context->resetContext(kAll_GrBackendState);
   }
-#endif  //  !SLIMPELLER
+#endif  // !SLIMPELLER
 
-  builder.Render();
+  const auto render_bounds = DlRect::MakeSize(descriptor.surface_size);
+  if (!root_view->Render(*render_target, render_bounds)) {
+    FML_LOG(ERROR) << "Could not render Flutter contents into explicit "
+                      "render target for view "
+                   << flutter_view_id;
+    deferred_cleanup_render_targets.clear();
+    frame->Submit();
+    return;
+  }
 
-  // Dispose thread-local cached Vulkan resources (command pools, descriptor
-  // pools) that would otherwise grow unbounded. The Impeller Vulkan backend
-  // caches these in thread-local storage and they must be explicitly disposed
-  // each frame to recycle VkCommandBuffers and VkDescriptorPools.
-  // On non-Vulkan backends this is a no-op.
   if (aiks_context) {
     aiks_context->GetContext()->DisposeThreadLocalCachedResources();
   }
 
 #if !SLIMPELLER
-  // We are going to be transferring control back over to the embedder there
-  // the context may be trampled upon again. Flush all operations to the
-  // underlying rendering API.
-  //
-  // @warning: Embedder may trample on our OpenGL context here.
   if (context) {
     context->flushAndSubmit();
   }
-#endif  //  !SLIMPELLER
+#endif  // !SLIMPELLER
 
-  {
-    const auto submit_info = frame->submit_info();
-    auto presentation_time_optional = submit_info.presentation_time;
-    uint64_t presentation_time =
-        presentation_time_optional.has_value()
-            ? presentation_time_optional->ToEpochDelta().ToNanoseconds()
-            : 0;
+  const auto submit_info = frame->submit_info();
+  auto paint_region_rects =
+      ToFlutterRects(root_view->GetDlRegion().getRects(),
+                     pending_surface_transformation_);
+  FlutterRegion paint_region = {
+      .struct_size = sizeof(FlutterRegion),
+      .rects_count = paint_region_rects.size(),
+      .rects = paint_region_rects.data(),
+  };
 
-    // Submit the scribbled layer to the embedder for presentation.
-    //
-    // @warning: Embedder may trample on our OpenGL context here.
-    auto presented_layers = std::make_shared<EmbedderLayers>(
-        pending_frame_size_, pending_device_pixel_ratio_,
-        pending_surface_transformation_, presentation_time,
-        submit_info.frame_damage);
+  auto frame_damage_rects = submit_info.frame_damage.has_value()
+                                ? ToFlutterRects(
+                                      submit_info.frame_damage->getRects(
+                                          /*deband=*/true),
+                                      pending_surface_transformation_)
+                                : std::vector<FlutterRect>{};
+  FlutterRegion frame_damage_region = {
+      .struct_size = sizeof(FlutterRegion),
+      .rects_count = frame_damage_rects.size(),
+      .rects = frame_damage_rects.data(),
+  };
 
-    builder.PushLayers(*presented_layers);
+  auto render_complete_sync_fd = render_target->TakeRenderCompleteSyncFD();
+  FlutterBackingStorePresentInfo present_info = {
+      .struct_size = sizeof(FlutterBackingStorePresentInfo),
+      .paint_region = &paint_region,
+      .frame_damage =
+          submit_info.frame_damage.has_value() ? &frame_damage_region : nullptr,
+      .render_complete_sync_fd = -1,
+  };
+#if !FML_OS_WIN
+  if (render_complete_sync_fd.is_valid()) {
+    present_info.render_complete_sync_fd = render_complete_sync_fd.get();
+  }
+#else
+  (void)render_complete_sync_fd;
+#endif
 
-    auto retained = retained_presented_layers_.find(flutter_view_id);
-    auto retained_layers =
-        retained == retained_presented_layers_.end()
-            ? std::shared_ptr<const EmbedderLayers>()
-            : std::static_pointer_cast<const EmbedderLayers>(retained->second);
-    presented_layers->InvokePresentCallback(flutter_view_id,
-                                            std::move(retained_layers),
-                                            &get_shell_visuals_callback_,
-                                            &get_shell_sources_callback_,
-                                            present_callback_);
-    retained_presented_layers_[flutter_view_id] = std::move(presented_layers);
+  if (!present_render_target_callback_(flutter_view_id,
+                                       render_target->GetBackingStore(),
+                                       &present_info)) {
+    FML_LOG(ERROR) << "Could not present explicit render target for view "
+                   << flutter_view_id;
   }
 
-  // See why this is necessary in the comment where this collection in
-  // realized.
-  //
-  // @warning: Embedder may trample on our OpenGL context here.
   deferred_cleanup_render_targets.clear();
-
-  auto render_targets = builder.ClearAndCollectRenderTargets();
-  for (auto& render_target : render_targets) {
-    if (!avoid_backing_store_cache_) {
-      render_target_cache.CacheRenderTarget(std::move(render_target));
-    }
+  if (!avoid_backing_store_cache_) {
+    render_target_cache.CacheRenderTarget(descriptor, std::move(render_target));
   }
 
   frame->Submit();

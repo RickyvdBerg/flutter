@@ -47,22 +47,34 @@ class EmbedderExternalView {
 
   struct RenderTargetDescriptor {
     DlISize surface_size;
+    FlutterBackingStoreRequestType request_type;
+    uint64_t shell_visual_identifier;
 
-    explicit RenderTargetDescriptor(const DlISize& p_surface_size)
-        : surface_size(p_surface_size) {}
+    explicit RenderTargetDescriptor(
+        const DlISize& p_surface_size,
+        FlutterBackingStoreRequestType p_request_type =
+            kFlutterBackingStoreRequestTypeView,
+        uint64_t p_shell_visual_identifier = 0)
+        : surface_size(p_surface_size),
+          request_type(p_request_type),
+          shell_visual_identifier(p_shell_visual_identifier) {}
 
     struct Hash {
       constexpr std::size_t operator()(
           const RenderTargetDescriptor& desc) const {
         return fml::HashCombine(desc.surface_size.width,
-                                desc.surface_size.height);
+                                desc.surface_size.height,
+                                static_cast<int>(desc.request_type),
+                                desc.shell_visual_identifier);
       }
     };
 
     struct Equal {
       bool operator()(const RenderTargetDescriptor& lhs,
                       const RenderTargetDescriptor& rhs) const {
-        return lhs.surface_size == rhs.surface_size;
+        return lhs.surface_size == rhs.surface_size &&
+               lhs.request_type == rhs.request_type &&
+               lhs.shell_visual_identifier == rhs.shell_visual_identifier;
       }
     };
   };
@@ -103,6 +115,10 @@ class EmbedderExternalView {
   DlISize GetRenderSurfaceSize() const;
 
   void Render(DlCanvas& dl_canvas, bool clear_surface);
+
+  bool Render(const EmbedderRenderTarget& render_target,
+              const DlRect& render_target_bounds,
+              bool clear_surface = true);
 
   const DlRegion& GetDlRegion() const;
 

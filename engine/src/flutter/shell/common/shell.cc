@@ -1664,6 +1664,19 @@ void Shell::OnAnimatorDrawLastLayerTrees(
   task_runners_.GetRasterTaskRunner()->PostTask(task);
 }
 
+// |Animator::Delegate|
+void Shell::OnAnimatorEmptyFrameForDisplay(
+    int64_t display_id,
+    const std::set<int64_t>& view_ids) {
+  FML_DCHECK(is_set_up_);
+  FML_DCHECK(task_runners_.GetUITaskRunner()->RunsTasksOnCurrentThread());
+
+  if (settings_.on_empty_frame_for_display) {
+    std::vector<int64_t> view_ids_vec(view_ids.begin(), view_ids.end());
+    settings_.on_empty_frame_for_display(display_id, view_ids_vec);
+  }
+}
+
 // |Engine::Delegate|
 void Shell::OnEngineUpdateSemantics(int64_t view_id,
                                     SemanticsNodeUpdates update,

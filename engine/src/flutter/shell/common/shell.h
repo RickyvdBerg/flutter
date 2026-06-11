@@ -751,6 +751,11 @@ class Shell final : public PlatformView::Delegate,
   void OnAnimatorDrawLastLayerTrees(
       std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder) override;
 
+  // |Animator::Delegate|
+  void OnAnimatorEmptyFrameForDisplay(
+      int64_t display_id,
+      const std::set<int64_t>& view_ids) override;
+
   // |Engine::Delegate|
   void OnEngineUpdateSemantics(
       int64_t view_id,

@@ -1505,7 +1505,20 @@ mixin WidgetsBinding
       // routed through super.dispatchPlatformScheduleFrame), the
       // animator already set pending_frame_all_views=true and this
       // call is a no-op — exactly the right behaviour.
-      final int displayId = renderView.flutterView.display.id;
+      final int displayId;
+      try {
+        displayId = renderView.flutterView.display.id;
+      } on Object {
+        // The view's display is not (yet) registered with the platform
+        // dispatcher — display updates from the embedder can lag view
+        // creation. Without a display id the scoped forward is impossible;
+        // widen to a global frame request instead. This must never escape:
+        // this method runs inside build scheduling, which can be reached
+        // from pointer dispatch (e.g. hover-driven setState), where an
+        // escaped error permanently wedges MouseTracker in debug builds.
+        platformDispatcher.scheduleFrame();
+        return;
+      }
       platformDispatcher.scheduleFrameForDisplayViews(displayId, <int>[viewId]);
     }
   }

@@ -1133,7 +1133,7 @@ base class PipelineOwner with DiagnosticableTreeMixin {
       _nodesNeedingLayout.isNotEmpty ||
       _nodesNeedingPaint.isNotEmpty ||
       _nodesNeedingCompositingBitsUpdate.isNotEmpty ||
-      _nodesNeedingSemantics.isNotEmpty;
+      _nodesNeedingSemanticsUpdate.isNotEmpty;
 
   /// Whether this pipeline is currently in the layout phase.
   ///

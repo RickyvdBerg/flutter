@@ -415,29 +415,17 @@ void Animator::DrawLastLayerTreesForDisplay(
 
 void Animator::RequestFrame(bool regenerate_layer_trees) {
   if (IsPerDisplayMode()) {
-    if (active_frame_display_id_ >= 0) {
-      // Called during a per-display frame (e.g. from Dart's scheduleFrame()).
-      // Only re-schedule the display whose frame is currently executing to
-      // prevent cross-display coupling that would lock all displays to the
-      // same frame rate. If the active frame is scoped to a view subset, keep
-      // follow-up Dart scheduleFrame() calls scoped to that same subset.
-      DisplayFrameState* state = GetDisplayState(active_frame_display_id_);
-      if (state && !state->current_frame_view_ids.empty() &&
-          state->current_frame_view_ids != state->view_ids) {
-        RequestFrameForDisplayViews(active_frame_display_id_,
-                                    state->current_frame_view_ids,
-                                    regenerate_layer_trees);
-      } else {
-        RequestFrameForDisplay(active_frame_display_id_,
-                               regenerate_layer_trees);
-      }
-    } else {
-      // Called outside a frame (e.g. initial setup, user input, view added).
-      // Fan out to all displays with views.
-      for (auto& [display_id, state] : display_states_) {
-        if (!state.view_ids.empty()) {
-          RequestFrameForDisplay(display_id, regenerate_layer_trees);
-        }
+    // PlatformDispatcher.scheduleFrame() carries no view identity. In
+    // per-display mode the framework uses RequestFrameForDisplayViews() when
+    // it can prove the dirty view set; the unscoped path must preserve global
+    // semantics instead of inheriting the view subset currently being drawn.
+    // Otherwise a ticker/Riverpod callback that cannot be attributed before
+    // scheduling can get pinned to a titlebar/chrome subset and starve dock,
+    // spotlight, menu, or overlay views until some unrelated event widens the
+    // request.
+    for (auto& [display_id, state] : display_states_) {
+      if (!state.view_ids.empty()) {
+        RequestFrameForDisplay(display_id, regenerate_layer_trees);
       }
     }
     return;
@@ -818,10 +806,6 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
       state.frame_timings_recorder->GetVsyncTargetTime();
   uint64_t frame_number = state.frame_timings_recorder->GetFrameNumber();
 
-  // Track the active display so that RequestFrame() calls from Dart's
-  // scheduleFrame() during this frame only re-schedule this display.
-  active_frame_display_id_ = state.display_id;
-
   // Notify delegate with display-scoped view set.
   delegate_.OnAnimatorBeginFrameForDisplay(frame_target_time, frame_number,
                                            state.display_id,
@@ -832,7 +816,6 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
     EndFrameForDisplay(state);
   }
 
-  active_frame_display_id_ = -1;
 }
 
 void Animator::EndFrameForDisplay(DisplayFrameState& state) {

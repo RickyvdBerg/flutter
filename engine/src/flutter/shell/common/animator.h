@@ -291,12 +291,6 @@ class Animator final {
   // Per-Display State
   // -----------------------------------------------------------------------
 
-  /// The display ID of the frame currently being processed, or -1 if no
-  /// per-display frame is active. Used to scope RequestFrame() calls made
-  /// during a display's frame (e.g. from Dart's scheduleFrame()) to only
-  /// re-schedule the active display, preventing cross-display coupling.
-  int64_t active_frame_display_id_ = -1;
-
   /// Per-display frame states. Empty when in single-display mode.
   std::unordered_map<int64_t, DisplayFrameState> display_states_;
 

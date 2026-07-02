@@ -21,7 +21,7 @@ namespace impeller {
 struct UberSDFParameters {
   /// The amount by which the UberSDF shader fades the edge of the drawn shapes,
   /// in pixels.
-  static constexpr Scalar kAntialiasPixels = 1.0f;
+  static constexpr Scalar kAntialiasPixels = 2.0f;
 
   /// The type of primitive shape.
   enum class Type {

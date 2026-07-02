@@ -1261,15 +1261,6 @@ void Canvas::DrawCircle(const Point& center,
     }
   }
 
-  if (renderer_.GetContext()->GetFlags().use_sdfs &&
-      IsCompatibleWithSDFRendering(paint)) {
-    auto params = UberSDFParameters::MakeCircle(
-        /*color=*/paint.color, /*center=*/center, /*radius=*/radius,
-        /*stroke=*/paint.GetStroke());
-    AddRenderSDFEntityToCurrentPass(paint, params);
-    return;
-  }
-
   if (AttemptDrawAntialiasedCircle(center, radius, paint)) {
     return;
   }

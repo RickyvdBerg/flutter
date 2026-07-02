@@ -852,6 +852,23 @@ void Animator::EndFrameForDisplay(DisplayFrameState& state) {
     } else {
       delegate_.OnAnimatorDraw(state.pipeline);
     }
+
+    // A view can be part of this frame's request set yet produce no layer
+    // tree (its widget subtree built nothing new). The display frame itself
+    // is non-empty — sibling views rendered — so without a per-view signal
+    // the embedder's in-flight bookkeeping for the silent view would starve
+    // until its recovery watchdog fires. Notify the empty-frame path with
+    // exactly the requested-but-unrendered subset.
+    std::set<int64_t> unrendered_view_ids;
+    for (int64_t view_id : state.current_frame_view_ids) {
+      if (state.rendered_views_this_frame.count(view_id) == 0) {
+        unrendered_view_ids.insert(view_id);
+      }
+    }
+    if (!unrendered_view_ids.empty()) {
+      delegate_.OnAnimatorEmptyFrameForDisplay(state.display_id,
+                                               unrendered_view_ids);
+    }
   } else {
     state.empty_frames++;
     state.consecutive_empty_frames++;

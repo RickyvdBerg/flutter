@@ -718,9 +718,21 @@ void Animator::OnDisplayVsync(int64_t display_id,
   state->frame_scheduled = false;
   state->frame_regenerate_layer_trees = state->pending_regenerate_layer_trees;
   state->pending_regenerate_layer_trees = false;
+  // Capture the requested set before resolution consumes it: when none of
+  // the requested views resolve (for example a view was removed between the
+  // request and this vsync), the embedder must still be told no output is
+  // coming, or its in-flight bookkeeping for those views is retired only by
+  // its recovery watchdog.
+  std::set<int64_t> requested_view_ids = state->pending_frame_all_views
+                                             ? state->view_ids
+                                             : state->pending_frame_view_ids;
   ResolveDisplayFrameViewIds(*state);
   if (state->current_frame_view_ids.empty()) {
     state->frame_regenerate_layer_trees = true;
+    if (!requested_view_ids.empty()) {
+      delegate_.OnAnimatorEmptyFrameForDisplay(state->display_id,
+                                               requested_view_ids);
+    }
     return;
   }
   state->frame_timings_recorder = std::move(recorder);
@@ -773,8 +785,17 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
             << ", inflight=" << state.pipeline->GetInflightCount()
             << ", render_calls_total=" << render_calls_total_ << ")";
       }
-      // Re-request so we try again on the next vsync.
-      RequestFrameForDisplay(state.display_id);
+      // Notify the embedder that no compositor output will be produced for
+      // the latched views this vsync. Without this, a starved request fires
+      // neither the present callback nor the empty-frame callback and is
+      // retired only by the embedder's recovery watchdog (the AVIO_PATCHES
+      // known issue: PipelineFull aborts before BeginFrame).
+      delegate_.OnAnimatorEmptyFrameForDisplay(state.display_id,
+                                               state.current_frame_view_ids);
+      // Re-request so we try again on the next vsync, preserving the latched
+      // view scope instead of widening to all of the display's views.
+      RequestFrameForDisplayViews(state.display_id,
+                                  state.current_frame_view_ids);
       return;
     }
     // Pipeline acquired; reset full counter.

@@ -89,6 +89,16 @@ Contract for what these patches may and may not do:
   the PipelineFull retry stays view-scoped. Avio's recovery watchdog is back
   to being a true last resort; sustained `Cleared timed-out in-flight
   Flutter frame request` warnings are a regression signal again.
+- Per-view frame-request completion is now a **contract guarantee** of
+  patch #5 (extended by 321a62c83b, 2026-07-08, squash into #5 at the next
+  rebase): every view named in a view-scoped frame request completes exactly
+  once — rendered (present), unrendered at frame end, or reported through
+  `OnAnimatorEmptyFrameForDisplay` immediately when the request targets an
+  unregistered display or a view not homed on that display
+  (`LatchDisplayFrameRequest` used to filter those silently; the 2026-07-08
+  live RCA measured ~550 half-second watchdog timeouts per 5 minutes from a
+  homing/scheduling mismatch after a cross-output window move). Preserve
+  this guarantee when rebasing `Animator::RequestFrameForDisplayInternal`.
 - Avio-side follow-up (rendering-plan step 4): scene assembly latches
   window elements on a newly-hosting output without their chrome binding;
   `synthesize_window_chrome_binding` in `presentation/latch.rs` papers over

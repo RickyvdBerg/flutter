@@ -658,11 +658,35 @@ void Animator::RequestFrameForDisplayInternal(
     bool regenerate_layer_trees) {
   // Only proceed if the display has been explicitly registered.
   if (display_states_.find(display_id) == display_states_.end()) {
+    // A view-scoped request against an unknown display can never produce a
+    // frame. Complete it through the empty-frame path so the embedder's
+    // per-view in-flight bookkeeping does not starve until its watchdog.
+    if (view_ids != nullptr && !view_ids->empty()) {
+      delegate_.OnAnimatorEmptyFrameForDisplay(display_id, *view_ids);
+    }
     return;
   }
   DisplayFrameState* state = GetDisplayState(display_id);
   if (!state) {
     return;
+  }
+
+  // Requested views that are not homed on this display are silently filtered
+  // by LatchDisplayFrameRequest and would otherwise complete only via the
+  // embedder's recovery watchdog. Report them as unrendered immediately: the
+  // embedder retires the request and re-resolves the view's display on the
+  // next attempt, making a homing/scheduling mismatch self-healing instead of
+  // a per-request 500 ms stall.
+  if (view_ids != nullptr) {
+    std::set<int64_t> unhomed_view_ids;
+    for (int64_t view_id : *view_ids) {
+      if (state->view_ids.find(view_id) == state->view_ids.end()) {
+        unhomed_view_ids.insert(view_id);
+      }
+    }
+    if (!unhomed_view_ids.empty()) {
+      delegate_.OnAnimatorEmptyFrameForDisplay(display_id, unhomed_view_ids);
+    }
   }
 
   if (!LatchDisplayFrameRequest(*state, view_ids, regenerate_layer_trees)) {

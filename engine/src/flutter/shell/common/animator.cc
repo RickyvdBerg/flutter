@@ -785,6 +785,16 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
       DrawLastLayerTreesForDisplay(std::move(state.frame_timings_recorder));
       state.frame_timings_recorder = nullptr;
       state.frame_regenerate_layer_trees = true;
+      // This frame consumed the latched view set without running the UI
+      // frame, so no per-view Render()/present is coming for it. Report the
+      // views as unrendered — the last outcome-less consumer of a latched
+      // request set. Without this, a view-scoped request that coalesces into
+      // a reuse frame starves until the embedder's recovery watchdog.
+      if (!state.current_frame_view_ids.empty()) {
+        delegate_.OnAnimatorEmptyFrameForDisplay(state.display_id,
+                                                 state.current_frame_view_ids);
+        state.current_frame_view_ids.clear();
+      }
       return;
     }
   }

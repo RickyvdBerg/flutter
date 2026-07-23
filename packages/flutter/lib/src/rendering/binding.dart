@@ -10,6 +10,7 @@
 library;
 
 import 'dart:async';
+import 'dart:collection';
 import 'dart:ui' as ui show PictureRecorder, Rect, SceneBuilder, SemanticsUpdate;
 
 import 'package:flutter/foundation.dart';
@@ -28,6 +29,109 @@ export 'package:flutter/gestures.dart' show HitTestResult;
 
 // Examples can assume:
 // late BuildContext context;
+
+/// A per-view pointer backlog held behind an outstanding scoped frame.
+///
+/// Normal hover traffic is coalesced while preserving its accumulated delta.
+/// Reaching the hard bound means the compositor did not grant the requested
+/// view frame in time. In that exceptional case, active pointer sequences are
+/// terminated instead of retaining an unbounded or partially replayable log.
+class _DeferredPointerEventQueue {
+  static const int _maxEvents = 512;
+
+  final Queue<PointerEvent> _events = ListQueue<PointerEvent>();
+
+  bool get isEmpty => _events.isEmpty;
+  bool get isNotEmpty => _events.isNotEmpty;
+
+  PointerEvent removeFirst() => _events.removeFirst();
+
+  void add(PointerEvent event) {
+    final PointerEvent? previous = _events.isEmpty ? null : _events.last;
+    if (event is PointerHoverEvent &&
+        previous is PointerHoverEvent &&
+        previous.pointer == event.pointer) {
+      _events
+        ..removeLast()
+        ..addLast(event.copyWith(delta: previous.delta + event.delta));
+      return;
+    }
+    if (_events.length == _maxEvents) {
+      _collapseToTerminalState(event);
+      return;
+    }
+    _events.addLast(event);
+  }
+
+  void _collapseToTerminalState(PointerEvent incoming) {
+    final latestByPointer = <int, PointerEvent>{};
+    final sequencePointers = <int>{};
+    for (final event in <PointerEvent>[..._events, incoming]) {
+      latestByPointer[event.pointer] = event;
+      // If any part of a contact or pan/zoom sequence would be discarded,
+      // terminate that pointer instead of replaying an incomplete sequence.
+      // This intentionally includes an already-terminal event: its matching
+      // start may still be among the entries being collapsed.
+      if (event is PointerDownEvent ||
+          event is PointerMoveEvent ||
+          event is PointerUpEvent ||
+          event is PointerCancelEvent ||
+          event is PointerPanZoomStartEvent ||
+          event is PointerPanZoomUpdateEvent ||
+          event is PointerPanZoomEndEvent) {
+        sequencePointers.add(event.pointer);
+      }
+    }
+    _events.clear();
+    for (final MapEntry<int, PointerEvent> entry in latestByPointer.entries) {
+      if (_events.length == _maxEvents) {
+        break;
+      }
+      final PointerEvent latest = entry.value;
+      if (sequencePointers.contains(entry.key)) {
+        _events.addLast(_terminalEventFor(latest));
+      } else {
+        _events.addLast(latest);
+      }
+    }
+  }
+
+  PointerEvent _terminalEventFor(PointerEvent event) {
+    if (event.kind == PointerDeviceKind.trackpad) {
+      return PointerPanZoomEndEvent(
+        viewId: event.viewId,
+        timeStamp: event.timeStamp,
+        pointer: event.pointer,
+        device: event.device,
+        position: event.position,
+        embedderId: event.embedderId,
+        synthesized: true,
+      );
+    }
+    return PointerCancelEvent(
+      viewId: event.viewId,
+      timeStamp: event.timeStamp,
+      pointer: event.pointer,
+      kind: event.kind,
+      device: event.device,
+      position: event.position,
+      buttons: event.buttons,
+      obscured: event.obscured,
+      pressureMin: event.pressureMin,
+      pressureMax: event.pressureMax,
+      distance: event.distance,
+      distanceMax: event.distanceMax,
+      size: event.size,
+      radiusMajor: event.radiusMajor,
+      radiusMinor: event.radiusMinor,
+      radiusMin: event.radiusMin,
+      radiusMax: event.radiusMax,
+      orientation: event.orientation,
+      tilt: event.tilt,
+      embedderId: event.embedderId,
+    );
+  }
+}
 
 /// The glue between the render trees and the Flutter engine.
 ///
@@ -329,6 +433,11 @@ mixin RendererBinding
   /// A [RenderView] is added by [addRenderView] and removed by [removeRenderView].
   Iterable<RenderView> get renderViews => _viewIdToRenderView.values;
   final Map<Object, RenderView> _viewIdToRenderView = <Object, RenderView>{};
+  final Map<int, _DeferredPointerEventQueue> _deferredPointerEventsByView =
+      <int, _DeferredPointerEventQueue>{};
+  final Set<int> _viewsAwaitingScopedFrame = <int>{};
+
+  bool _viewIsAwaitingScopedFrame(int viewId) => _viewsAwaitingScopedFrame.contains(viewId);
 
   /// Adds a [RenderView] to this binding.
   ///
@@ -354,6 +463,11 @@ mixin RendererBinding
     final Object viewId = view.flutterView.viewId;
     assert(_viewIdToRenderView[viewId] == view);
     _viewIdToRenderView.remove(viewId);
+    if (viewId is int) {
+      // Input for a retired view has no valid target and must not be replayed.
+      _deferredPointerEventsByView.remove(viewId);
+      _viewsAwaitingScopedFrame.remove(viewId);
+    }
   }
 
   /// Returns a [ViewConfiguration] configured for the provided [RenderView]
@@ -461,6 +575,33 @@ mixin RendererBinding
         });
   }
 
+  @override
+  void handlePointerEvent(PointerEvent event) {
+    if (_viewIsAwaitingScopedFrame(event.viewId)) {
+      // A scoped widget build may have changed this view while another view's
+      // frame was active. Keep the event ordered behind this view's own
+      // layout/paint pass instead of hit-testing a partially updated tree.
+      (_deferredPointerEventsByView[event.viewId] ??= _DeferredPointerEventQueue()).add(event);
+      // Residual render work normally scheduled this follow-up at the end of
+      // the preceding frame. This also covers render dirties created between
+      // frames; scheduleFrame is idempotent while a request is pending.
+      scheduleFrame();
+      return;
+    }
+    super.handlePointerEvent(event);
+  }
+
+  /// Records that [viewIds] have a compositor-scoped frame request in flight.
+  ///
+  /// This is scheduler state, not an inference from render-tree dirtiness:
+  /// Flutter permits callers to inspect dirty render trees outside a frame,
+  /// while input must only be held when the engine has actually been asked to
+  /// produce a scoped frame for that view.
+  @protected
+  void markViewsAwaitingScopedFrame(Iterable<int> viewIds) {
+    _viewsAwaitingScopedFrame.addAll(viewIds);
+  }
+
   @override // from GestureBinding
   void dispatchEvent(PointerEvent event, HitTestResult? hitTestResult) {
     _mouseTracker!.updateWithEvent(
@@ -554,26 +695,84 @@ mixin RendererBinding
         );
   }
 
+  void _scheduleResidualRenderWork() {
+    final dirtyViewIds = <int>{
+      for (final RenderView renderView in renderViews)
+        if (renderView.owner?.hasDirtyForFrame ?? false) renderView.flutterView.viewId,
+    };
+    _viewsAwaitingScopedFrame
+      ..removeWhere((int viewId) => !dirtyViewIds.contains(viewId))
+      ..addAll(dirtyViewIds);
+    if (dirtyViewIds.isNotEmpty) {
+      // dispatchPlatformScheduleFrame is dynamically dispatched to
+      // WidgetsBinding, which resolves these dirty owners back to the
+      // per-display scoped engine API. A truly cross-display change may use
+      // the explicit global request path; it still receives compositor grants
+      // before any view is rendered.
+      scheduleFrame();
+    }
+  }
+
   void _handlePersistentFrameCallback(Duration timeStamp) {
+    final Set<int>? completedViewIds = activeFrameViewIds == null
+        ? null
+        : Set<int>.of(activeFrameViewIds!);
     drawFrame();
-    _scheduleMouseTrackerUpdate();
+    // WidgetsBinding.drawFrame has returned here, so its dirty-build registry
+    // has been cleared and only genuine residual render work remains.
+    _scheduleResidualRenderWork();
+    _scheduleMouseTrackerUpdate(completedViewIds);
   }
 
   bool _debugMouseTrackerUpdateScheduled = false;
-  void _scheduleMouseTrackerUpdate() {
+  void _scheduleMouseTrackerUpdate(Set<int>? completedViewIds) {
     assert(!_debugMouseTrackerUpdateScheduled);
     assert(() {
       _debugMouseTrackerUpdateScheduled = true;
       return true;
     }());
     SchedulerBinding.instance.addPostFrameCallback((Duration duration) {
+      _flushDeferredPointerEvents(completedViewIds);
       assert(_debugMouseTrackerUpdateScheduled);
       assert(() {
         _debugMouseTrackerUpdateScheduled = false;
         return true;
       }());
-      _mouseTracker!.updateAllDevices();
+      if (completedViewIds == null) {
+        if (_viewsAwaitingScopedFrame.isEmpty) {
+          _mouseTracker!.updateAllDevices();
+        } else {
+          _mouseTracker!.updateDevicesForViews(<int>{
+            for (final renderView in renderViews)
+              if (!_viewIsAwaitingScopedFrame(renderView.flutterView.viewId))
+                renderView.flutterView.viewId,
+          });
+        }
+      } else {
+        _mouseTracker!.updateDevicesForViews(completedViewIds);
+      }
     }, debugLabel: 'RendererBinding.mouseTrackerUpdate');
+  }
+
+  void _flushDeferredPointerEvents(Set<int>? completedViewIds) {
+    final Iterable<int> viewIds =
+        completedViewIds ?? _deferredPointerEventsByView.keys.toList(growable: false);
+    for (final viewId in viewIds) {
+      final _DeferredPointerEventQueue? events = _deferredPointerEventsByView.remove(viewId);
+      if (events == null) {
+        continue;
+      }
+      while (events.isNotEmpty) {
+        if (_viewIsAwaitingScopedFrame(viewId)) {
+          // A callback from an earlier replay may have invalidated the view
+          // again. Preserve event order and wait for its next scoped frame.
+          _deferredPointerEventsByView[viewId] = events;
+          scheduleFrame();
+          break;
+        }
+        super.handlePointerEvent(events.removeFirst());
+      }
+    }
   }
 
   int _firstFrameDeferredCount = 0;
@@ -719,9 +918,9 @@ mixin RendererBinding
     // when no widgets are dirty), so widget-level state coherence —
     // [InheritedWidget] propagation, BuildOwner finalization — is
     // preserved.  Render-tree dirty state for non-active views remains
-    // marked and will be flushed on a future frame that includes those
-    // views; this is bounded and correct because the dirty lists live on
-    // each per-view PipelineOwner.
+    // marked and [_handlePersistentFrameCallback] schedules a follow-up frame
+    // through the normal per-view request path. Pointer events and post-frame
+    // mouse re-hit-tests are ordered behind that view's completed frame.
     //
     // Views in [activeViewIds] that are not registered with this binding
     // are silently skipped — the engine treats those as empty-frame
@@ -772,7 +971,13 @@ mixin RendererBinding
 
   @override
   void hitTestInView(HitTestResult result, Offset position, int viewId) {
-    _viewIdToRenderView[viewId]?.hitTest(result, position: position);
+    final RenderView? renderView = _viewIdToRenderView[viewId];
+    // Platform hit-test queries are synchronous and cannot be replayed. A view
+    // awaiting a scoped frame has no stable hit-test tree yet, so report no
+    // Flutter target until its already-requested frame completes.
+    if (renderView != null && !_viewIsAwaitingScopedFrame(viewId)) {
+      renderView.hitTest(result, position: position);
+    }
     super.hitTestInView(result, position, viewId);
   }
 

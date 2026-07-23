@@ -34,6 +34,25 @@ Contract for what these patches may and may not do:
 | 19 | [framework] Guard the remaining display lookup in dirty-view forwarding | permanent framework fix | none |
 | 20 | [framework] Make MouseTracker device-update phase exception-safe | upstreamable bugfix | submit upstream |
 | 21 | Make DlRegion total over empty rect inputs | upstreamable bugfix (latent upstream infinite loop) | submit upstream |
+| 22 | [framework] Preserve scoped frame authority while ordering residual view work before input | permanent framework correctness fix | none while the shared build tree remains global |
+
+### Patch 22: scoped-frame authority and input ordering
+
+A framework frame carrying `activeFrameViewIds` may render only those view
+IDs. If the shared widget build dirties another view, the framework schedules a
+separate compositor-authorized frame for that residual work, preserving
+view-scoped dispatch whenever the dirty set resolves to one display. Pointer
+dispatch and post-frame mouse re-hit-testing for that exact view wait for its
+frame, using a bounded per-view queue that is discarded with the view.
+
+Never restore the superseded `frameRenderViews` widening path from
+`7a007de9ffc`: synchronously rendering dirty siblings produces presents without
+compositor grants and can overload the embedder pipeline. The focused
+regression is
+`packages/flutter/test/widgets/view_scoped_frame_scheduling_test.dart`;
+`avio-verify-patches.sh` asserts both the replacement primitives and the
+absence of the superseded path. The Avio-side normative contract is
+`avio/docs/engine-contract.md` core invariant 10.
 
 ## Known baseline debt
 

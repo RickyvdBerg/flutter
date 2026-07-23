@@ -1470,8 +1470,7 @@ mixin WidgetsBinding
     // Walk to the nearest RenderView ancestor.  Cheap if View is a
     // close ancestor (the common case for chrome ornaments / output
     // overlays / per-window Flutter views).  Bounded by tree depth.
-    final RenderView? renderView =
-        element.findAncestorRenderObjectOfType<RenderView>();
+    final RenderView? renderView = element.findAncestorRenderObjectOfType<RenderView>();
     if (renderView == null) {
       // Element has no RenderView ancestor — pre-mount or detached (e.g. a
       // chrome ornament migrating between output view trees). Force the
@@ -1519,6 +1518,7 @@ mixin WidgetsBinding
         platformDispatcher.scheduleFrame();
         return;
       }
+      markViewsAwaitingScopedFrame(<int>[viewId]);
       platformDispatcher.scheduleFrameForDisplayViews(displayId, <int>[viewId]);
     }
   }
@@ -1580,24 +1580,18 @@ mixin WidgetsBinding
     if (displayId == null) {
       return null;
     }
-    return (
-      displayId: displayId,
-      viewIds: dirtyViewIds.toList(growable: false),
-    );
+    return (displayId: displayId, viewIds: dirtyViewIds.toList(growable: false));
   }
 
   @override
   void dispatchPlatformScheduleFrame() {
-    final ({int displayId, List<int> viewIds})? scoped =
-        _resolveScopedFrameRequest();
+    final ({int displayId, List<int> viewIds})? scoped = _resolveScopedFrameRequest();
     if (scoped == null) {
       super.dispatchPlatformScheduleFrame();
       return;
     }
-    platformDispatcher.scheduleFrameForDisplayViews(
-      scoped.displayId,
-      scoped.viewIds,
-    );
+    markViewsAwaitingScopedFrame(scoped.viewIds);
+    platformDispatcher.scheduleFrameForDisplayViews(scoped.displayId, scoped.viewIds);
   }
 
   void _handleBuildScheduled() {

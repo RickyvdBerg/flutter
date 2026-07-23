@@ -372,10 +372,25 @@ class MouseTracker extends ChangeNotifier {
   ///
   /// The [updateAllDevices] is one of the two ways of updating mouse
   /// states, the other one being [updateWithEvent].
-  void updateAllDevices() {
+  void updateAllDevices() => _updateDevices();
+
+  /// Performs a post-frame device update only for devices whose latest event
+  /// belongs to one of [viewIds].
+  ///
+  /// Multi-view bindings use this after a view-scoped frame. Views outside the
+  /// completed frame may still have pending layout work and must not be
+  /// re-hit-tested until their own frame completes.
+  void updateDevicesForViews(Set<int> viewIds) {
+    _updateDevices(viewIds);
+  }
+
+  void _updateDevices([Set<int>? viewIds]) {
     _deviceUpdatePhase(() {
       for (final _MouseState dirtyState in _mouseStates.values) {
         final PointerEvent lastEvent = dirtyState.latestEvent;
+        if (viewIds != null && !viewIds.contains(lastEvent.viewId)) {
+          continue;
+        }
         final Map<MouseTrackerAnnotation, Matrix4> nextAnnotations = _findAnnotations(dirtyState);
         final Map<MouseTrackerAnnotation, Matrix4> lastAnnotations = dirtyState.replaceAnnotations(
           nextAnnotations,

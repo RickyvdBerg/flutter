@@ -799,11 +799,16 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
     }
   }
 
-  // Acquire a pipeline production slot from this display's own pipeline.
+  // Every display drains through the same raster pipeline, so the producer
+  // reservation must also be shared. An empty frame intentionally preserves
+  // the reservation for the next frame, matching the legacy animator path.
+  // Keeping that reservation per display lets two empty displays consume both
+  // slots of the shared depth-two pipeline without producing anything.
   FML_DCHECK(state.pipeline);
-  if (!state.producer_continuation) {
-    state.producer_continuation = state.pipeline->Produce();
-    if (!state.producer_continuation) {
+  FML_DCHECK(state.pipeline.get() == layer_tree_pipeline_.get());
+  if (!producer_continuation_) {
+    producer_continuation_ = state.pipeline->Produce();
+    if (!producer_continuation_) {
       TRACE_EVENT0("flutter", "PipelineFull");
       state.pipeline_full_count++;
       // Throttled diagnostic: log at 1, 100, 1000, then every 5000.
@@ -898,7 +903,7 @@ void Animator::EndFrameForDisplay(DisplayFrameState& state) {
     delegate_.OnAnimatorUpdateLatestFrameTargetTime(
         state.frame_timings_recorder->GetVsyncTargetTime());
 
-    PipelineProduceResult result = state.producer_continuation.Complete(
+    PipelineProduceResult result = producer_continuation_.Complete(
         std::make_unique<FrameItem>(std::move(display_layer_trees),
                                     std::move(state.frame_timings_recorder)));
 

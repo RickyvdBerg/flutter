@@ -135,11 +135,12 @@ class Animator final {
     // Tracks whether the current display frame must rebuild layer trees.
     bool frame_regenerate_layer_trees = true;
     std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder;
-    FramePipeline::ProducerContinuation producer_continuation;
     // All displays share the engine's single raster pipeline. Display-scoped
     // scheduling stays independent, but downstream raster backpressure and
     // resubmission logic remain coherent because frame items drain through one
-    // queue.
+    // queue. The producer reservation is likewise pipeline-scoped and lives on
+    // Animator; storing one reservation per display can reserve every slot
+    // with empty frames and deadlock unrelated displays.
     std::shared_ptr<FramePipeline> pipeline;
 
     // Frame-flow stall diagnostics.

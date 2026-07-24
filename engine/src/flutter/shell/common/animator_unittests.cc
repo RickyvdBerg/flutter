@@ -52,6 +52,20 @@ class FakeAnimatorDelegate : public Animator::Delegate {
   bool notify_idle_called_ = false;
 };
 
+class ManualDisplayVsyncWaiter final : public VsyncWaiter {
+ public:
+  explicit ManualDisplayVsyncWaiter(const TaskRunners& task_runners)
+      : VsyncWaiter(task_runners) {}
+
+  void FireDisplay(DisplayId display_id) {
+    const auto now = fml::TimePoint::Now();
+    FireCallback(display_id, now, now);
+  }
+
+ protected:
+  void AwaitVSync() override {}
+};
+
 TEST_F(ShellTest, VSyncTargetTime) {
   // Add native callbacks to listen for window.onBeginFrame
   int64_t target_time;
@@ -258,6 +272,75 @@ TEST_F(ShellTest, AnimatorDoesNotNotifyDelegateIfPipelineIsNotEmpty) {
     begin_frame_latch.Wait();
   }
 
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
+}
+
+TEST_F(ShellTest,
+       EmptyFramesOnMultipleDisplaysShareOnePipelineReservation) {
+  class DisplayDelegate final : public FakeAnimatorDelegate {
+   public:
+    MOCK_METHOD(void,
+                OnAnimatorBeginFrameForDisplay,
+                (fml::TimePoint frame_target_time,
+                 uint64_t frame_number,
+                 int64_t display_id,
+                 const std::set<int64_t>& view_ids),
+                (override));
+    MOCK_METHOD(void,
+                OnAnimatorEmptyFrameForDisplay,
+                (int64_t display_id, const std::set<int64_t>& view_ids),
+                (override));
+  } delegate;
+
+  TaskRunners task_runners = {
+      "test",
+      CreateNewThread(),  // platform
+      CreateNewThread(),  // raster
+      CreateNewThread(),  // ui
+      CreateNewThread()   // io
+  };
+
+  std::shared_ptr<Animator> animator;
+  ManualDisplayVsyncWaiter* waiter = nullptr;
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    auto owned_waiter =
+        std::make_unique<ManualDisplayVsyncWaiter>(task_runners);
+    waiter = owned_waiter.get();
+    animator = std::make_unique<Animator>(delegate, task_runners,
+                                          std::move(owned_waiter));
+    for (int64_t display_id = 1; display_id <= 3; display_id++) {
+      animator->AddDisplay(display_id, 60.0);
+      animator->SetViewDisplay(100 + display_id, display_id);
+    }
+  });
+
+  EXPECT_CALL(delegate, OnAnimatorEmptyFrameForDisplay(1, ::testing::_));
+  EXPECT_CALL(delegate, OnAnimatorEmptyFrameForDisplay(2, ::testing::_));
+  EXPECT_CALL(delegate, OnAnimatorUpdateLatestFrameTargetTime(::testing::_));
+  EXPECT_CALL(delegate, OnAnimatorDraw(::testing::_)).Times(1);
+
+  int begin_count = 0;
+  EXPECT_CALL(delegate,
+              OnAnimatorBeginFrameForDisplay(::testing::_, ::testing::_,
+                                             ::testing::_, ::testing::_))
+      .Times(3)
+      .WillRepeatedly([&](fml::TimePoint, uint64_t, int64_t display_id,
+                          const std::set<int64_t>&) {
+        begin_count++;
+        if (display_id == 3) {
+          auto layer_tree =
+              std::make_unique<LayerTree>(nullptr, DlISize(600, 800));
+          animator->Render(103, std::move(layer_tree), 1.0);
+        }
+      });
+
+  for (int64_t display_id = 1; display_id <= 3; display_id++) {
+    PostTaskSync(task_runners.GetUITaskRunner(),
+                 [waiter, display_id] { waiter->FireDisplay(display_id); });
+    PostTaskSync(task_runners.GetUITaskRunner(), [] {});
+  }
+
+  EXPECT_EQ(begin_count, 3);
   PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
 }
 

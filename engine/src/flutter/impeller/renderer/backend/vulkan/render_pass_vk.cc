@@ -65,6 +65,64 @@ static vk::Viewport ToVkViewport(const Viewport& viewport) {
       .setMaxDepth(viewport.depth_range.z_far);
 }
 
+static void EncodeExternalImageAcquire(
+    const TextureSourceVK& source,
+    const ExternalImageOwnershipVK& ownership,
+    vk::CommandBuffer command_buffer,
+    uint32_t local_queue_family) {
+  vk::ImageMemoryBarrier barrier;
+  barrier.srcAccessMask = {};
+  barrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+  barrier.oldLayout = ownership.interchange_layout;
+  barrier.newLayout = ownership.interchange_layout;
+  barrier.srcQueueFamilyIndex = ownership.queue_family_index;
+  barrier.dstQueueFamilyIndex = local_queue_family;
+  barrier.image = source.GetImage();
+  barrier.subresourceRange.aspectMask =
+      ToImageAspectFlags(source.GetTextureDescriptor().format);
+  barrier.subresourceRange.baseMipLevel = 0;
+  barrier.subresourceRange.levelCount =
+      source.GetTextureDescriptor().mip_count;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount =
+      ToArrayLayerCount(source.GetTextureDescriptor().type);
+
+  command_buffer.pipelineBarrier(
+      vk::PipelineStageFlagBits::eTopOfPipe,
+      vk::PipelineStageFlagBits::eColorAttachmentOutput, {}, nullptr, nullptr,
+      barrier);
+}
+
+static void EncodeExternalImageRelease(
+    const TextureSourceVK& source,
+    const ExternalImageOwnershipVK& ownership,
+    vk::CommandBuffer command_buffer,
+    uint32_t local_queue_family) {
+  vk::ImageMemoryBarrier barrier;
+  barrier.srcAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+  // The destination synchronization scope does not participate in a queue
+  // family release operation. Keep it empty and terminate at bottom-of-pipe;
+  // the importing queue establishes visibility in its matching acquire.
+  barrier.dstAccessMask = {};
+  barrier.oldLayout = ownership.interchange_layout;
+  barrier.newLayout = ownership.interchange_layout;
+  barrier.srcQueueFamilyIndex = local_queue_family;
+  barrier.dstQueueFamilyIndex = ownership.queue_family_index;
+  barrier.image = source.GetImage();
+  barrier.subresourceRange.aspectMask =
+      ToImageAspectFlags(source.GetTextureDescriptor().format);
+  barrier.subresourceRange.baseMipLevel = 0;
+  barrier.subresourceRange.levelCount =
+      source.GetTextureDescriptor().mip_count;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount =
+      ToArrayLayerCount(source.GetTextureDescriptor().type);
+
+  command_buffer.pipelineBarrier(
+      vk::PipelineStageFlagBits::eColorAttachmentOutput,
+      vk::PipelineStageFlagBits::eBottomOfPipe, {}, nullptr, nullptr, barrier);
+}
+
 static size_t GetVKClearValues(
     const RenderTarget& target,
     std::array<vk::ClearValue, kMaxAttachments>& values) {
@@ -174,6 +232,15 @@ RenderPassVK::RenderPassVK(const std::shared_ptr<const Context>& context,
   TextureVK& frame_data_texture = TextureVK::Cast(
       resolve_image_vk_ ? *resolve_image_vk_ : *color_image_vk_);
   is_swapchain = frame_data_texture.IsSwapchainImage();
+  const auto frame_data_source = frame_data_texture.GetTextureSource();
+  if (const auto ownership = frame_data_source->GetExternalImageOwnership()) {
+    EncodeExternalImageAcquire(
+        *frame_data_source, *ownership, command_buffer_vk_,
+        static_cast<uint32_t>(
+            vk_context.GetGraphicsQueue()->GetIndex().family));
+    frame_data_texture.SetLayoutWithoutEncoding(
+        ownership->interchange_layout);
+  }
   frame_data = frame_data_texture.GetCachedFrameData(
       sample_count, cache_mip_level, cache_slice);
 
@@ -708,6 +775,16 @@ bool RenderPassVK::BindResource(ShaderStage stage,
 
 bool RenderPassVK::OnEncodeCommands(const Context& context) const {
   command_buffer_->GetCommandBuffer().endRenderPass();
+  const auto& output_texture =
+      resolve_image_vk_ ? resolve_image_vk_ : color_image_vk_;
+  const auto source = TextureVK::Cast(*output_texture).GetTextureSource();
+  if (const auto ownership = source->GetExternalImageOwnership()) {
+    const auto& vk_context = ContextVK::Cast(context);
+    EncodeExternalImageRelease(
+        *source, *ownership, command_buffer_->GetCommandBuffer(),
+        static_cast<uint32_t>(
+            vk_context.GetGraphicsQueue()->GetIndex().family));
+  }
   return true;
 }
 

@@ -1340,8 +1340,13 @@ class EmbedderTextureSourceVK : public impeller::TextureSourceVK {
  public:
   EmbedderTextureSourceVK(impeller::vk::Image image,
                           impeller::vk::ImageView image_view,
-                          impeller::TextureDescriptor desc)
-      : TextureSourceVK(desc), image_(image), image_view_(image_view) {}
+                          impeller::TextureDescriptor desc,
+                          std::optional<impeller::ExternalImageOwnershipVK>
+                              external_ownership)
+      : TextureSourceVK(desc),
+        image_(image),
+        image_view_(image_view),
+        external_ownership_(external_ownership) {}
 
   ~EmbedderTextureSourceVK() override = default;
 
@@ -1357,6 +1362,11 @@ class EmbedderTextureSourceVK : public impeller::TextureSourceVK {
   }
 
   bool IsSwapchainImage() const override { return true; }
+
+  std::optional<impeller::ExternalImageOwnershipVK>
+  GetExternalImageOwnership() const override {
+    return external_ownership_;
+  }
 
  public:
 
@@ -1384,6 +1394,7 @@ class EmbedderTextureSourceVK : public impeller::TextureSourceVK {
  private:
   impeller::vk::Image image_;
   impeller::vk::ImageView image_view_;
+  std::optional<impeller::ExternalImageOwnershipVK> external_ownership_;
   mutable std::mutex render_complete_sync_fd_mutex_;
   mutable fml::UniqueFD render_complete_sync_fd_;
 };
@@ -1462,8 +1473,22 @@ MakeRenderTargetFromBackingStoreImpeller(
   impeller::vk::ImageView vk_image_view = impeller::vk::ImageView(
       reinterpret_cast<VkImageView>(vulkan->image_view));
 
-  auto wrapped_source =
-      std::make_shared<EmbedderTextureSourceVK>(vk_image, vk_image_view, desc);
+  std::optional<impeller::ExternalImageOwnershipVK> external_ownership;
+  if (SAFE_ACCESS(vulkan->image, has_external_queue_family_ownership, false)) {
+    const auto external_queue_family_index =
+        SAFE_ACCESS(vulkan->image, external_queue_family_index,
+                    static_cast<uint32_t>(VK_QUEUE_FAMILY_IGNORED));
+    if (external_queue_family_index == VK_QUEUE_FAMILY_IGNORED) {
+      FML_LOG(ERROR) << "Embedder requested Vulkan queue-family ownership "
+                        "transfer without naming an external queue family.";
+      return nullptr;
+    }
+    external_ownership = impeller::ExternalImageOwnershipVK{
+        .queue_family_index = external_queue_family_index,
+    };
+  }
+  auto wrapped_source = std::make_shared<EmbedderTextureSourceVK>(
+      vk_image, vk_image_view, desc, external_ownership);
 
   auto impeller_context = aiks_context->GetContext();
   auto transients = GetCachedSwapchainTransientsVK(impeller_context, desc,

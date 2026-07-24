@@ -38,6 +38,15 @@ struct WaitSemaphore {
   vk::PipelineStageFlags wait_stage;
 };
 
+/// Describes an image whose exclusive queue-family ownership crosses the
+/// Vulkan device boundary. Execution semaphores make writes visible, but they
+/// do not transfer ownership: render passes using this capability must acquire
+/// the image before access and release it after the final access.
+struct ExternalImageOwnershipVK {
+  uint32_t queue_family_index = VK_QUEUE_FAMILY_FOREIGN_EXT;
+  vk::ImageLayout interchange_layout = vk::ImageLayout::eGeneral;
+};
+
 //------------------------------------------------------------------------------
 /// @brief      Abstract base class that represents a vkImage and an
 ///             vkImageView.
@@ -148,6 +157,9 @@ class TextureSourceVK {
   /// @return     Whether or not this is a swapchain image.
   ///
   virtual bool IsSwapchainImage() const = 0;
+
+  virtual std::optional<ExternalImageOwnershipVK> GetExternalImageOwnership()
+      const;
 
   virtual std::optional<WaitSemaphore> ConsumeAcquireSemaphore() const;
 

@@ -36,6 +36,11 @@ fml::UniqueFD TextureSourceVK::TakeRenderCompleteSyncFD() const {
   return {};
 }
 
+std::optional<ExternalImageOwnershipVK>
+TextureSourceVK::GetExternalImageOwnership() const {
+  return std::nullopt;
+}
+
 vk::ImageLayout TextureSourceVK::GetLayout() const {
   return layout_;
 }

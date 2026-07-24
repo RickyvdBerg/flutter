@@ -957,6 +957,18 @@ typedef struct {
   FlutterVulkanImageHandle image;
   /// The VkFormat of the image (for example: VK_FORMAT_R8G8B8A8_UNORM).
   uint32_t format;
+  /// Whether external_queue_family_index describes an external owner.
+  ///
+  /// This defaults to false for older struct versions and ordinary embedders
+  /// whose images need no queue-family ownership transfer.
+  bool has_external_queue_family_ownership;
+  /// The queue family that owns this image when it is handed to the engine.
+  ///
+  /// Cross-process Linux DMA-BUF embedders using exclusive images may set
+  /// has_external_queue_family_ownership and use
+  /// VK_QUEUE_FAMILY_FOREIGN_EXT here; the engine will acquire the image
+  /// before rendering and release it back after its final access.
+  uint32_t external_queue_family_index;
 } FlutterVulkanImage;
 
 /// Callback to fetch a Vulkan function pointer for a given instance. Normally,

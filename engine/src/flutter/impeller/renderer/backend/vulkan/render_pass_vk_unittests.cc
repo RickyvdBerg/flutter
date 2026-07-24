@@ -9,11 +9,35 @@
 #include "impeller/renderer/backend/vulkan/render_pass_builder_vk.h"
 #include "impeller/renderer/backend/vulkan/render_pass_vk.h"
 #include "impeller/renderer/backend/vulkan/test/mock_vulkan.h"
+#include "impeller/renderer/backend/vulkan/texture_vk.h"
 #include "impeller/renderer/render_target.h"
 #include "vulkan/vulkan_enums.hpp"
 
 namespace impeller {
 namespace testing {
+
+class ExternalRenderTargetSourceVK final : public TextureSourceVK {
+ public:
+  ExternalRenderTargetSourceVK(vk::Image image,
+                               vk::ImageView image_view,
+                               TextureDescriptor desc)
+      : TextureSourceVK(desc), image_(image), image_view_(image_view) {}
+
+  vk::Image GetImage() const override { return image_; }
+  vk::ImageView GetImageView() const override { return image_view_; }
+  vk::ImageView GetRenderTargetView(uint32_t, uint32_t) const override {
+    return image_view_;
+  }
+  bool IsSwapchainImage() const override { return true; }
+  std::optional<ExternalImageOwnershipVK> GetExternalImageOwnership()
+      const override {
+    return ExternalImageOwnershipVK{};
+  }
+
+ private:
+  vk::Image image_;
+  vk::ImageView image_view_;
+};
 
 TEST(RenderPassVK, DoesNotRedundantlySetStencil) {
   std::shared_ptr<ContextVK> context = MockVulkanContextBuilder().Build();
@@ -88,6 +112,53 @@ TEST(RenderPassVK, SetViewportPropagatesAllUserSuppliedFields) {
   EXPECT_FLOAT_EQ(vp.height, -80.0f);
   EXPECT_FLOAT_EQ(vp.minDepth, 0.25f);
   EXPECT_FLOAT_EQ(vp.maxDepth, 0.75f);
+}
+
+TEST(RenderPassVK, TransfersExternalRenderTargetOwnership) {
+  auto context = MockVulkanContextBuilder().Build();
+
+  TextureDescriptor desc;
+  desc.size = ISize(32, 32);
+  desc.format = PixelFormat::kR8G8B8A8UNormInt;
+  desc.storage_mode = StorageMode::kDevicePrivate;
+  desc.sample_count = SampleCount::kCount1;
+  desc.usage = TextureUsage::kRenderTarget;
+
+  auto allocated = context->GetResourceAllocator()->CreateTexture(desc);
+  ASSERT_TRUE(allocated);
+  const auto& allocated_vk = TextureVK::Cast(*allocated);
+  auto source = std::make_shared<ExternalRenderTargetSourceVK>(
+      allocated_vk.GetImage(), allocated_vk.GetImageView(), desc);
+  auto external_texture = std::make_shared<TextureVK>(context, source);
+
+  RenderTarget target;
+  ColorAttachment color;
+  color.texture = external_texture;
+  color.load_action = LoadAction::kClear;
+  color.store_action = StoreAction::kStore;
+  target.SetColorAttachment(color, 0);
+
+  auto command_buffer = context->CreateCommandBuffer();
+  auto render_pass = command_buffer->CreateRenderPass(target);
+  ASSERT_TRUE(render_pass);
+  ASSERT_TRUE(render_pass->EncodeCommands());
+
+  auto& barriers = GetImageMemoryBarriers(
+      CommandBufferVK::Cast(*command_buffer).GetCommandBuffer());
+  ASSERT_EQ(barriers.size(), 2u);
+  const uint32_t local_family = static_cast<uint32_t>(
+      context->GetGraphicsQueue()->GetIndex().family);
+
+  EXPECT_EQ(barriers[0].srcQueueFamilyIndex, VK_QUEUE_FAMILY_FOREIGN_EXT);
+  EXPECT_EQ(barriers[0].dstQueueFamilyIndex, local_family);
+  EXPECT_EQ(barriers[0].oldLayout, VK_IMAGE_LAYOUT_GENERAL);
+  EXPECT_EQ(barriers[0].newLayout, VK_IMAGE_LAYOUT_GENERAL);
+
+  EXPECT_EQ(barriers[1].srcQueueFamilyIndex, local_family);
+  EXPECT_EQ(barriers[1].dstQueueFamilyIndex, VK_QUEUE_FAMILY_FOREIGN_EXT);
+  EXPECT_EQ(barriers[1].oldLayout, VK_IMAGE_LAYOUT_GENERAL);
+  EXPECT_EQ(barriers[1].newLayout, VK_IMAGE_LAYOUT_GENERAL);
+  EXPECT_EQ(barriers[1].dstAccessMask, VkAccessFlags{0});
 }
 
 }  // namespace testing

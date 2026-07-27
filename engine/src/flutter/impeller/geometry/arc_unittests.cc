@@ -133,6 +133,19 @@ TEST(ArcTest, ArcIterationsFullCircle) {
   }
 }
 
+TEST(ArcTest, TinyNegativeStartNormalizesBelowFullCircle) {
+  // This is the start angle captured from an indeterminate Flutter progress
+  // indicator whose rasterization previously aborted in ComputeIterations.
+  constexpr Degrees start(-0.00000229273246f);
+  const Degrees normalized = start.GetPositive();
+  EXPECT_GE(normalized.degrees, 0.0f);
+  EXPECT_LT(normalized.degrees, 360.0f);
+
+  Arc arc(Rect::MakeLTRB(0, 0, 14, 14), start, Degrees(268.414368f), false);
+  const auto iteration = arc.ComputeIterations(32u);
+  EXPECT_POINT_NEAR(iteration.start, Matrix::CosSin(Degrees(0)));
+}
+
 namespace {
 static void CheckOneQuadrant(Degrees start, Degrees sweep) {
   Arc arc(Rect::MakeLTRB(10, 10, 20, 20), start, sweep, false);

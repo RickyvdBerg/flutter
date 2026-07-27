@@ -93,6 +93,11 @@ struct Degrees {
     if (deg < 0.0f) {
       deg += 360.0f;
     }
+    // Adding 360 to a sufficiently small negative float can round to exactly
+    // 360. Keep the normalized result in the promised half-open range.
+    if (deg >= 360.0f) {
+      deg = 0.0f;
+    }
     return Degrees{deg};
   }
 };

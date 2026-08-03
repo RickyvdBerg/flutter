@@ -250,6 +250,15 @@ need "timeline callback retires the exact upstream submission id" \
   'RecordCompletion\(submission_id\)'
 need "transients pool budget" \
   $F/impeller/renderer/backend/vulkan 'IMPELLER_VK_TRANSIENTS_BUDGET_MIB'
+need "pipeline cache is bounded before mapping" \
+  $F/impeller/renderer/backend/vulkan/pipeline_cache_data_vk.cc \
+  'GetRegularFileSize'
+need "pipeline cache payload fits the mapped remainder" \
+  $F/impeller/renderer/backend/vulkan/pipeline_cache_data_vk.cc \
+  'data_size > available_data_bytes'
+need "malformed sparse pipeline cache regression" \
+  $F/impeller/renderer/backend/vulkan/pipeline_cache_data_vk_unittests.cc \
+  'RejectsOversizedSparseCacheBeforeMapping'
 
 echo "--- Cross-display pipeline conservation ---"
 need "display frames reserve the shared raster pipeline" \

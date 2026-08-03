@@ -11,6 +11,8 @@
 
 namespace impeller {
 
+inline constexpr size_t kDefaultPipelineCacheMaxDataBytes = 64u * 1024u * 1024u;
+
 //------------------------------------------------------------------------------
 /// @brief      An Impeller specific header prepended to all pipeline cache
 ///             information that is persisted on disk. This information is used
@@ -83,7 +85,8 @@ struct PipelineCacheHeaderVK {
 ///
 bool PipelineCacheDataPersist(const fml::UniqueFD& cache_directory,
                               const VkPhysicalDeviceProperties& props,
-                              const vk::UniquePipelineCache& cache);
+                              const vk::UniquePipelineCache& cache,
+                              size_t max_data_bytes);
 
 //------------------------------------------------------------------------------
 /// @brief      Retrieve the previously persisted pipeline cache data. This
@@ -102,7 +105,8 @@ bool PipelineCacheDataPersist(const fml::UniqueFD& cache_directory,
 ///
 std::unique_ptr<fml::Mapping> PipelineCacheDataRetrieve(
     const fml::UniqueFD& cache_directory,
-    const VkPhysicalDeviceProperties& props);
+    const VkPhysicalDeviceProperties& props,
+    size_t max_data_bytes);
 
 }  // namespace impeller
 

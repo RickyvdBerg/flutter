@@ -28,7 +28,8 @@ PipelineCacheVK::PipelineCacheVK(std::shared_ptr<const Capabilities> caps,
   const auto& vk_caps = CapabilitiesVK::Cast(*caps_);
 
   auto existing_cache_data = PipelineCacheDataRetrieve(
-      cache_directory_, vk_caps.GetPhysicalDeviceProperties());
+      cache_directory_, vk_caps.GetPhysicalDeviceProperties(),
+      kDefaultPipelineCacheMaxDataBytes);
 
   vk::PipelineCacheCreateInfo cache_info;
   if (existing_cache_data) {
@@ -118,7 +119,8 @@ void PipelineCacheVK::PersistCacheToDisk() {
   const auto& vk_caps = CapabilitiesVK::Cast(*caps_);
   PipelineCacheDataPersist(cache_directory_,                       //
                            vk_caps.GetPhysicalDeviceProperties(),  //
-                           cache_                                  //
+                           cache_,                                 //
+                           kDefaultPipelineCacheMaxDataBytes       //
   );
 }
 

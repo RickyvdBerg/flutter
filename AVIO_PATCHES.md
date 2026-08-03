@@ -220,6 +220,21 @@ construction fails. Pixel tests rotate three real targets, exercise sparse
 catch-up, transparent blur removal, and compare both partial and heuristic-full
 fallbacks byte-for-byte against a forced full repaint.
 
+### Patch 33: bounded Impeller pipeline-cache I/O
+
+Impeller validates an already-open pipeline-cache file as a regular file and
+checks its profile-owned byte ceiling before mapping it. The compatibility
+header's declared payload must fit both that ceiling and the mapped file
+remainder. Truncated, oversized, sparse, non-regular, or length-mismatched
+cache entries therefore fall back to an empty Vulkan cache without exposing an
+unbounded mapping or span.
+
+Persistence applies the same payload ceiling before allocation and after the
+driver fills the cache blob. The existing worker serialization and atomic
+replacement remain the sole write path. Tests pin every malformed read shape
+and an over-budget driver result; cache policy/configuration is supplied by the
+separate resource-lifecycle extension rather than global process state.
+
 ## Known baseline debt
 
 - ~~Generic embedder compositor and platform-view tests required broad

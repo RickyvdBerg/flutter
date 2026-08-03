@@ -4,6 +4,8 @@
 
 #include "impeller/renderer/backend/vulkan/pipeline_cache_data_vk.h"
 
+#include <limits>
+
 #include "flutter/fml/file.h"
 #include "impeller/base/allocation.h"
 #include "impeller/base/validation.h"
@@ -15,7 +17,8 @@ static constexpr const char* kPipelineCacheFileName =
 
 bool PipelineCacheDataPersist(const fml::UniqueFD& cache_directory,
                               const VkPhysicalDeviceProperties& props,
-                              const vk::UniquePipelineCache& cache) {
+                              const vk::UniquePipelineCache& cache,
+                              size_t max_data_bytes) {
   if (!cache_directory.is_valid()) {
     return false;
   }
@@ -28,6 +31,13 @@ bool PipelineCacheDataPersist(const fml::UniqueFD& cache_directory,
   if (data_size == 0u) {
     return true;
   }
+  if (data_size > max_data_bytes ||
+      data_size >
+          std::numeric_limits<size_t>::max() - sizeof(PipelineCacheHeaderVK)) {
+    VALIDATION_LOG << "Pipeline cache data exceeds its configured budget.";
+    return false;
+  }
+  const size_t allocated_data_bytes = data_size;
   auto allocation = std::make_shared<Allocation>();
   if (!allocation->Truncate(Bytes{sizeof(PipelineCacheHeaderVK) + data_size},
                             false)) {
@@ -48,6 +58,10 @@ bool PipelineCacheDataPersist(const fml::UniqueFD& cache_directory,
     VALIDATION_LOG << "Could not copy pipeline cache data.";
     return false;
   }
+  if (data_size > max_data_bytes || data_size > allocated_data_bytes) {
+    VALIDATION_LOG << "Pipeline cache data grew beyond its configured budget.";
+    return false;
+  }
 
   const auto header = PipelineCacheHeaderVK{props, data_size};
   std::memcpy(allocation->GetBuffer(), &header, sizeof(header));
@@ -64,17 +78,39 @@ bool PipelineCacheDataPersist(const fml::UniqueFD& cache_directory,
 
 std::unique_ptr<fml::Mapping> PipelineCacheDataRetrieve(
     const fml::UniqueFD& cache_directory,
-    const VkPhysicalDeviceProperties& props) {
+    const VkPhysicalDeviceProperties& props,
+    size_t max_data_bytes) {
   if (!cache_directory.is_valid()) {
     return nullptr;
   }
+  auto cache_file =
+      fml::OpenFileReadOnly(cache_directory, kPipelineCacheFileName);
+  const auto file_size = fml::GetRegularFileSize(cache_file);
+  if (!file_size.has_value()) {
+    VALIDATION_LOG << "Pipeline cache is not a regular file.";
+    return nullptr;
+  }
+  if (max_data_bytes >
+      std::numeric_limits<size_t>::max() - sizeof(PipelineCacheHeaderVK)) {
+    VALIDATION_LOG << "Pipeline cache budget exceeds addressable memory.";
+    return nullptr;
+  }
+  const size_t max_file_bytes = sizeof(PipelineCacheHeaderVK) + max_data_bytes;
+  if (*file_size < sizeof(PipelineCacheHeaderVK)) {
+    VALIDATION_LOG << "Pipeline cache data size is too small.";
+    return nullptr;
+  }
+  if (*file_size > max_file_bytes) {
+    VALIDATION_LOG << "Pipeline cache file exceeds its configured budget.";
+    return nullptr;
+  }
   std::shared_ptr<fml::FileMapping> on_disk_data =
-      fml::FileMapping::CreateReadOnly(cache_directory, kPipelineCacheFileName);
+      fml::FileMapping::CreateReadOnly(cache_file, "");
   if (!on_disk_data) {
     return nullptr;
   }
-  if (on_disk_data->GetSize() < sizeof(PipelineCacheHeaderVK)) {
-    VALIDATION_LOG << "Pipeline cache data size is too small.";
+  if (on_disk_data->GetSize() != *file_size) {
+    VALIDATION_LOG << "Pipeline cache size changed while it was opened.";
     return nullptr;
   }
   auto on_disk_header = PipelineCacheHeaderVK{};
@@ -93,9 +129,17 @@ std::unique_ptr<fml::Mapping> PipelineCacheDataRetrieve(
   if (on_disk_header.data_size == 0u) {
     return nullptr;
   }
+  const size_t available_data_bytes =
+      *file_size - sizeof(PipelineCacheHeaderVK);
+  if (on_disk_header.data_size > max_data_bytes ||
+      on_disk_header.data_size > available_data_bytes) {
+    VALIDATION_LOG << "Pipeline cache header declares an invalid data span.";
+    return nullptr;
+  }
   return std::make_unique<fml::NonOwnedMapping>(
       on_disk_data->GetMapping() + sizeof(on_disk_header),
-      on_disk_header.data_size, [on_disk_data](auto, auto) {});
+      static_cast<size_t>(on_disk_header.data_size),
+      [on_disk_data](auto, auto) {});
 }
 
 PipelineCacheHeaderVK::PipelineCacheHeaderVK() = default;

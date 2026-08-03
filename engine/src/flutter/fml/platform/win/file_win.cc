@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <sstream>
 
@@ -284,6 +285,25 @@ bool IsFile(const std::string& path) {
   }
   return !(attributes &
            (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
+}
+
+std::optional<size_t> GetRegularFileSize(const fml::UniqueFD& file) {
+  if (!file.is_valid()) {
+    return std::nullopt;
+  }
+  BY_HANDLE_FILE_INFORMATION info = {};
+  if (!::GetFileInformationByHandle(file.get(), &info) ||
+      (info.dwFileAttributes &
+       (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0) {
+    return std::nullopt;
+  }
+  ULARGE_INTEGER size = {};
+  size.HighPart = info.nFileSizeHigh;
+  size.LowPart = info.nFileSizeLow;
+  if (size.QuadPart > std::numeric_limits<size_t>::max()) {
+    return std::nullopt;
+  }
+  return static_cast<size_t>(size.QuadPart);
 }
 
 bool UnlinkDirectory(const char* path) {

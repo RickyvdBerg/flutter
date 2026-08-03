@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <initializer_list>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -69,6 +70,11 @@ bool IsDirectory(const fml::UniqueFD& base_directory, const char* path);
 
 // Returns whether the given path is a file.
 bool IsFile(const std::string& path);
+
+/// Return the size of an already-open regular file. Directories, special
+/// files, invalid handles, negative sizes, and sizes which do not fit in
+/// `size_t` return `std::nullopt`.
+std::optional<size_t> GetRegularFileSize(const fml::UniqueFD& file);
 
 bool TruncateFile(const fml::UniqueFD& file, size_t size);
 

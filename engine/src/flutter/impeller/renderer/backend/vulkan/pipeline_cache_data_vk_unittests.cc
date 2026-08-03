@@ -14,6 +14,27 @@
 
 namespace impeller::testing {
 
+namespace {
+
+constexpr char kPipelineCacheFileName[] = "flutter.impeller.vkcache";
+
+void WriteCacheBytes(const fml::UniqueFD& directory,
+                     std::vector<uint8_t> bytes) {
+  fml::DataMapping data(std::move(bytes));
+  ASSERT_TRUE(fml::WriteAtomically(directory, kPipelineCacheFileName, data));
+}
+
+std::vector<uint8_t> CacheBytes(const VkPhysicalDeviceProperties& props,
+                                size_t payload_bytes,
+                                uint64_t declared_payload_bytes) {
+  std::vector<uint8_t> bytes(sizeof(PipelineCacheHeaderVK) + payload_bytes);
+  const PipelineCacheHeaderVK header(props, declared_payload_bytes);
+  std::memcpy(bytes.data(), &header, sizeof(header));
+  return bytes;
+}
+
+}  // namespace
+
 TEST(PipelineCacheDataVKTest, CanTestHeaderCompatibility) {
   {
     PipelineCacheHeaderVK a;
@@ -100,7 +121,8 @@ TEST(PipelineCacheDataVKTest, WritesIncompleteCacheData) {
   const auto& caps = CapabilitiesVK::Cast(*context->GetCapabilities());
 
   ASSERT_TRUE(PipelineCacheDataPersist(
-      temp_dir.fd(), caps.GetPhysicalDeviceProperties(), cache.value));
+      temp_dir.fd(), caps.GetPhysicalDeviceProperties(), cache.value,
+      kDefaultPipelineCacheMaxDataBytes));
 
   std::unique_ptr<fml::FileMapping> mapping = fml::FileMapping::CreateReadOnly(
       temp_dir.fd(), "flutter.impeller.vkcache");
@@ -109,6 +131,62 @@ TEST(PipelineCacheDataVKTest, WritesIncompleteCacheData) {
   ASSERT_GE(mapping->GetSize(), sizeof(header));
   std::memcpy(&header, mapping->GetMapping(), sizeof(header));
   ASSERT_EQ(mapping->GetSize(), sizeof(header) + header.data_size);
+}
+
+TEST(PipelineCacheDataVKTest, RefusesToPersistDriverDataOverProfileBudget) {
+  fml::ScopedTemporaryDirectory temp_dir;
+  auto context = MockVulkanContextBuilder().Build();
+  auto cache = context->GetDevice().createPipelineCacheUnique({});
+  const auto& caps = CapabilitiesVK::Cast(*context->GetCapabilities());
+
+  EXPECT_FALSE(PipelineCacheDataPersist(
+      temp_dir.fd(), caps.GetPhysicalDeviceProperties(), cache.value,
+      /*max_data_bytes=*/1u));
+  EXPECT_FALSE(fml::FileExists(temp_dir.fd(), kPipelineCacheFileName));
+}
+
+TEST(PipelineCacheDataVKTest, RejectsTruncatedCacheHeader) {
+  fml::ScopedTemporaryDirectory temp_dir;
+  WriteCacheBytes(temp_dir.fd(),
+                  std::vector<uint8_t>(sizeof(PipelineCacheHeaderVK) - 1u));
+
+  EXPECT_EQ(PipelineCacheDataRetrieve(temp_dir.fd(), {}, 1024u), nullptr);
+}
+
+TEST(PipelineCacheDataVKTest, RejectsPayloadDeclaredPastEndOfFile) {
+  fml::ScopedTemporaryDirectory temp_dir;
+  WriteCacheBytes(temp_dir.fd(), CacheBytes({}, 4u, 32u));
+
+  EXPECT_EQ(PipelineCacheDataRetrieve(temp_dir.fd(), {}, 1024u), nullptr);
+}
+
+TEST(PipelineCacheDataVKTest, RejectsCacheFileOverProfileBudget) {
+  fml::ScopedTemporaryDirectory temp_dir;
+  WriteCacheBytes(temp_dir.fd(), CacheBytes({}, 17u, 17u));
+
+  EXPECT_EQ(PipelineCacheDataRetrieve(temp_dir.fd(), {}, 16u), nullptr);
+}
+
+TEST(PipelineCacheDataVKTest, RejectsOversizedSparseCacheBeforeMapping) {
+  fml::ScopedTemporaryDirectory temp_dir;
+  auto cache_file = fml::OpenFile(temp_dir.fd(), kPipelineCacheFileName,
+                                  /*create_if_necessary=*/true,
+                                  fml::FilePermission::kReadWrite);
+  ASSERT_TRUE(cache_file.is_valid());
+  ASSERT_TRUE(fml::TruncateFile(cache_file,
+                                sizeof(PipelineCacheHeaderVK) + 1024u + 1u));
+
+  EXPECT_EQ(PipelineCacheDataRetrieve(temp_dir.fd(), {}, 1024u), nullptr);
+}
+
+TEST(PipelineCacheDataVKTest, RejectsNonRegularCacheEntry) {
+  fml::ScopedTemporaryDirectory temp_dir;
+  auto cache_directory = fml::OpenDirectory(
+      temp_dir.fd(), kPipelineCacheFileName, /*create_if_necessary=*/true,
+      fml::FilePermission::kReadWrite);
+  ASSERT_TRUE(cache_directory.is_valid());
+
+  EXPECT_EQ(PipelineCacheDataRetrieve(temp_dir.fd(), {}, 1024u), nullptr);
 }
 
 using PipelineCacheDataVKPlaygroundTest = PlaygroundTest;
@@ -125,12 +203,14 @@ TEST_P(PipelineCacheDataVKPlaygroundTest, CanPersistAndRetrievePipelineCache) {
     ASSERT_EQ(cache.result, vk::Result::eSuccess);
     ASSERT_FALSE(fml::FileExists(temp_dir.fd(), "flutter.impeller.vkcache"));
     ASSERT_TRUE(PipelineCacheDataPersist(
-        temp_dir.fd(), caps.GetPhysicalDeviceProperties(), cache.value));
+        temp_dir.fd(), caps.GetPhysicalDeviceProperties(), cache.value,
+        kDefaultPipelineCacheMaxDataBytes));
   }
   ASSERT_TRUE(fml::FileExists(temp_dir.fd(), "flutter.impeller.vkcache"));
 
   auto mapping = PipelineCacheDataRetrieve(temp_dir.fd(),
-                                           caps.GetPhysicalDeviceProperties());
+                                           caps.GetPhysicalDeviceProperties(),
+                                           kDefaultPipelineCacheMaxDataBytes);
   ASSERT_NE(mapping, nullptr);
   // Assert that the utility has stripped away the cache header giving us clean
   // pipeline cache bootstrap information.
@@ -153,14 +233,16 @@ TEST_P(PipelineCacheDataVKPlaygroundTest,
     ASSERT_EQ(cache.result, vk::Result::eSuccess);
     ASSERT_FALSE(fml::FileExists(temp_dir.fd(), "flutter.impeller.vkcache"));
     ASSERT_TRUE(PipelineCacheDataPersist(
-        temp_dir.fd(), caps.GetPhysicalDeviceProperties(), cache.value));
+        temp_dir.fd(), caps.GetPhysicalDeviceProperties(), cache.value,
+        kDefaultPipelineCacheMaxDataBytes));
   }
   ASSERT_TRUE(fml::FileExists(temp_dir.fd(), "flutter.impeller.vkcache"));
   auto incompatible_caps = caps.GetPhysicalDeviceProperties();
   // Simulate a driver version bump.
   incompatible_caps.driverVersion =
       caps.GetPhysicalDeviceProperties().driverVersion + 1u;
-  auto mapping = PipelineCacheDataRetrieve(temp_dir.fd(), incompatible_caps);
+  auto mapping = PipelineCacheDataRetrieve(temp_dir.fd(), incompatible_caps,
+                                           kDefaultPipelineCacheMaxDataBytes);
   ASSERT_EQ(mapping, nullptr);
 }
 

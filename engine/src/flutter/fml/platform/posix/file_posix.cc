@@ -10,7 +10,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <sstream>
 
@@ -150,6 +152,22 @@ bool IsFile(const std::string& path) {
   }
 
   return S_ISREG(buf.st_mode);
+}
+
+std::optional<size_t> GetRegularFileSize(const fml::UniqueFD& file) {
+  if (!file.is_valid()) {
+    return std::nullopt;
+  }
+  struct stat stat_result = {};
+  if (::fstat(file.get(), &stat_result) != 0 || !S_ISREG(stat_result.st_mode) ||
+      stat_result.st_size < 0) {
+    return std::nullopt;
+  }
+  const auto size = static_cast<uintmax_t>(stat_result.st_size);
+  if (size > std::numeric_limits<size_t>::max()) {
+    return std::nullopt;
+  }
+  return static_cast<size_t>(size);
 }
 
 bool TruncateFile(const fml::UniqueFD& file, size_t size) {

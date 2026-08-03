@@ -153,11 +153,13 @@ TEST(RenderPassVK, TransfersExternalRenderTargetOwnership) {
   EXPECT_EQ(barriers[0].dstQueueFamilyIndex, local_family);
   EXPECT_EQ(barriers[0].oldLayout, VK_IMAGE_LAYOUT_GENERAL);
   EXPECT_EQ(barriers[0].newLayout, VK_IMAGE_LAYOUT_GENERAL);
+  EXPECT_EQ(barriers[0].subresourceRange.layerCount, 1u);
 
   EXPECT_EQ(barriers[1].srcQueueFamilyIndex, local_family);
   EXPECT_EQ(barriers[1].dstQueueFamilyIndex, VK_QUEUE_FAMILY_FOREIGN_EXT);
   EXPECT_EQ(barriers[1].oldLayout, VK_IMAGE_LAYOUT_GENERAL);
   EXPECT_EQ(barriers[1].newLayout, VK_IMAGE_LAYOUT_GENERAL);
+  EXPECT_EQ(barriers[1].subresourceRange.layerCount, 1u);
   EXPECT_EQ(barriers[1].dstAccessMask, VkAccessFlags{0});
 }
 

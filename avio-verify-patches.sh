@@ -189,6 +189,9 @@ need "render-pass external image acquire" \
 need "render-pass external image release" \
   $F/impeller/renderer/backend/vulkan/render_pass_vk.cc \
   'EncodeExternalImageRelease'
+need "external ownership covers the full texture descriptor" \
+  $F/impeller/renderer/backend/vulkan/render_pass_vk.cc \
+  'ToArrayLayerCount\(source\.GetTextureDescriptor\(\)\)'
 need "embedder ownership ABI field" \
   $F/shell/platform/embedder/embedder.h \
   'has_external_queue_family_ownership'

@@ -85,7 +85,7 @@ static void EncodeExternalImageAcquire(
       source.GetTextureDescriptor().mip_count;
   barrier.subresourceRange.baseArrayLayer = 0;
   barrier.subresourceRange.layerCount =
-      ToArrayLayerCount(source.GetTextureDescriptor().type);
+      ToArrayLayerCount(source.GetTextureDescriptor());
 
   command_buffer.pipelineBarrier(
       vk::PipelineStageFlagBits::eTopOfPipe,
@@ -116,7 +116,7 @@ static void EncodeExternalImageRelease(
       source.GetTextureDescriptor().mip_count;
   barrier.subresourceRange.baseArrayLayer = 0;
   barrier.subresourceRange.layerCount =
-      ToArrayLayerCount(source.GetTextureDescriptor().type);
+      ToArrayLayerCount(source.GetTextureDescriptor());
 
   command_buffer.pipelineBarrier(
       vk::PipelineStageFlagBits::eColorAttachmentOutput,

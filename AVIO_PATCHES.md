@@ -121,6 +121,14 @@ semantic feature request requires per-display vsync, root-target mode, explicit
 render completion, and the terminal-outcome callback as one indivisible
 contract.
 
+### Patch 27: external Vulkan image ownership
+
+External render targets carry their foreign queue-family ownership into the
+Impeller render pass. The acquire and release barriers cover the complete
+`TextureDescriptor`, including its array-layer count; passing only the texture
+type is both incompatible with current upstream and would lose the descriptor's
+explicit `array_layer_count` for `kTexture2DArray`.
+
 ## Known baseline debt
 
 - ~~Generic embedder compositor and platform-view tests required broad

@@ -1249,9 +1249,9 @@ TEST(EntityTest, UberSDFContentsCoverageFillRect) {
   Entity entity;
   auto coverage = contents->GetCoverage(entity);
   ASSERT_TRUE(coverage.has_value());
-  ASSERT_RECT_NEAR(
-      coverage.value(),
-      Rect::MakeXYWH(100, 100, 200, 200).Expand(1.0f));  // expanded by AA
+  ASSERT_RECT_NEAR(coverage.value(),
+                   Rect::MakeXYWH(100, 100, 200, 200)
+                       .Expand(UberSDFParameters::kAntialiasPixels));
 }
 
 TEST(EntityTest, UberSDFContentsCoverageStrokeRect) {
@@ -1266,7 +1266,7 @@ TEST(EntityTest, UberSDFContentsCoverageStrokeRect) {
   ASSERT_TRUE(coverage.has_value());
   ASSERT_RECT_NEAR(coverage.value(),
                    Rect::MakeXYWH(100, 100, 200, 200)
-                       .Expand(3.0f));  // expanded by half stroke width + AA
+                       .Expand(2.0f + UberSDFParameters::kAntialiasPixels));
 }
 
 TEST(EntityTest, UberSDFContentsCoverageFillCircle) {
@@ -1279,9 +1279,9 @@ TEST(EntityTest, UberSDFContentsCoverageFillCircle) {
   Entity entity;
   auto coverage = contents->GetCoverage(entity);
   ASSERT_TRUE(coverage.has_value());
-  ASSERT_RECT_NEAR(
-      coverage.value(),
-      Rect::MakeXYWH(40, 40, 20, 20).Expand(1.0f));  // expanded by AA
+  ASSERT_RECT_NEAR(coverage.value(),
+                   Rect::MakeXYWH(40, 40, 20, 20)
+                       .Expand(UberSDFParameters::kAntialiasPixels));
 }
 
 TEST(EntityTest, UberSDFContentsCoverageStrokeCircle) {
@@ -1296,7 +1296,7 @@ TEST(EntityTest, UberSDFContentsCoverageStrokeCircle) {
   ASSERT_TRUE(coverage.has_value());
   ASSERT_RECT_NEAR(coverage.value(),
                    Rect::MakeXYWH(40, 40, 20, 20)
-                       .Expand(3.0f));  // expanded by half stroke width + AA
+                       .Expand(2.0f + UberSDFParameters::kAntialiasPixels));
 }
 
 TEST_P(EntityTest, SolidStrokeCoverageIsCorrect) {

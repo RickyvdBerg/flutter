@@ -121,6 +121,15 @@ semantic feature request requires per-display vsync, root-target mode, explicit
 render completion, and the terminal-outcome callback as one indivisible
 contract.
 
+### Patch 25: two-pixel UberSDF antialiasing
+
+The wider antialiasing ramp expands geometry coverage by
+`kAntialiasPixels`, and full-coverage detection accounts for the half-pixel
+already supplied by an integer pixel boundary. Tests derive their expected
+footprints from the same named constant, so upstream geometry changes cannot
+silently restore one-pixel assumptions or disable the background-color
+optimization wholesale.
+
 ### Patch 27: external Vulkan image ownership
 
 External render targets carry their foreign queue-family ownership into the

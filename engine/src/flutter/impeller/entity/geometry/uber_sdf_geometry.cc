@@ -46,14 +46,17 @@ bool UberSDFGeometry::CoversArea(const Matrix& transform,
     // Since the input rect is an integer rect we already know that it encloses
     // at least half a pixel on each side of the pixel centers inside it and
     // that it encloses every MSAA sample location within those pixels. This
-    // means that the integer rect already meets all of the above criteria only
-    // when the antialiasing ramp is no wider than one pixel.
-    if constexpr (UberSDFParameters::kAntialiasPixels > 1.0) {
-      return false;
-    }
+    // means that the integer rect already supplies half a pixel of the inset
+    // needed by the antialiasing ramp. Wider ramps require the shape to cover
+    // the remainder as well.
+    constexpr Scalar kAdditionalInset =
+        UberSDFParameters::kAntialiasPixels > 1.0f
+            ? (UberSDFParameters::kAntialiasPixels - 1.0f) * 0.5f
+            : 0.0f;
+    const Rect fully_covered_rect = Rect::Make(rect).Expand(kAdditionalInset);
     return Rect::MakeEllipseBounds(params_.center, params_.size)
         .TransformBounds(transform)
-        .Contains(rect);
+        .Contains(fully_covered_rect);
   }
 
   // Conservatively return false. We can optimize to handle more cases in the

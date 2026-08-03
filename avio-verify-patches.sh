@@ -197,6 +197,12 @@ need "embedder ownership ABI field" \
   'has_external_queue_family_ownership'
 
 echo "--- Impeller visual correctness fixes ---"
+need "UberSDF two-pixel antialiasing ramp" \
+  $F/impeller/entity/contents/uber_sdf_parameters.h \
+  'kAntialiasPixels = 2\.0f'
+need "UberSDF full-coverage inset tracks the wider ramp" \
+  $F/impeller/entity/geometry/uber_sdf_geometry.cc \
+  'kAdditionalInset'
 need "UberSDF high-precision fragment arithmetic" \
   $F/impeller/entity/shaders/uber_sdf.frag \
   '^precision highp float;'

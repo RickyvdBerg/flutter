@@ -17,8 +17,6 @@
 
 namespace flutter {
 
-class EmbedderLayers;
-
 //------------------------------------------------------------------------------
 /// @brief      The external view embedder used by the generic embedder API.
 ///             This class acts a proxy between the rasterizer and the embedder
@@ -36,11 +34,14 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
           GrDirectContext* context,
           const std::shared_ptr<impeller::AiksContext>& aiks_context,
           const FlutterBackingStoreConfig& config)>;
-  using PresentRenderTargetCallback =
-      std::function<bool(
-          FlutterViewId view_id,
-          const FlutterBackingStore* backing_store,
-          const FlutterBackingStorePresentInfo* backing_store_present_info)>;
+  using PresentCallback =
+      std::function<bool(FlutterViewId view_id,
+                         const std::vector<const FlutterLayer*>& layers)>;
+  using PresentRenderTargetCallback = std::function<bool(
+      FlutterViewId view_id,
+      FlutterPresentRenderTargetStatus status,
+      const FlutterBackingStore* backing_store,
+      const FlutterBackingStorePresentInfo* backing_store_present_info)>;
   using SurfaceTransformationCallback = std::function<DlMatrix(void)>;
 
   //----------------------------------------------------------------------------
@@ -61,8 +62,10 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
   ///                                     embedder for presentation.
   ///
   EmbedderExternalViewEmbedder(
+      FlutterCompositorMode compositor_mode,
       bool avoid_backing_store_cache,
       const CreateRenderTargetCallback& create_render_target_callback,
+      const PresentCallback& present_callback,
       const PresentRenderTargetCallback& present_render_target_callback);
 
   //----------------------------------------------------------------------------
@@ -119,8 +122,29 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
   DlCanvas* GetRootCanvas() override;
 
  private:
+  void SubmitGenericFlutterView(
+      int64_t flutter_view_id,
+      GrDirectContext* context,
+      const std::shared_ptr<impeller::AiksContext>& aiks_context,
+      std::unique_ptr<SurfaceFrame> frame);
+
+  void SubmitRootRenderTarget(
+      int64_t flutter_view_id,
+      GrDirectContext* context,
+      const std::shared_ptr<impeller::AiksContext>& aiks_context,
+      std::unique_ptr<SurfaceFrame> frame);
+
+  bool CompleteRootRenderTarget(
+      int64_t flutter_view_id,
+      FlutterPresentRenderTargetStatus status,
+      const FlutterBackingStore* backing_store = nullptr,
+      const FlutterBackingStorePresentInfo* backing_store_present_info =
+          nullptr) const;
+
+  const FlutterCompositorMode compositor_mode_;
   const bool avoid_backing_store_cache_;
   const CreateRenderTargetCallback create_render_target_callback_;
+  const PresentCallback present_callback_;
   const PresentRenderTargetCallback present_render_target_callback_;
   SurfaceTransformationCallback surface_transformation_callback_;
   DlISize pending_frame_size_;

@@ -390,68 +390,17 @@ static bool compositor_collect_backing_store_callback(
   }
 }
 
-static FlutterSize get_backing_store_size(
-    const FlutterBackingStore* backing_store) {
-  if (backing_store == nullptr) {
-    return FlutterSize{0.0, 0.0};
-  }
-
-  switch (backing_store->type) {
-    case kFlutterBackingStoreTypeOpenGL: {
-      auto* framebuffer =
-          FL_FRAMEBUFFER(backing_store->open_gl.framebuffer.user_data);
-      if (framebuffer == nullptr) {
-        return FlutterSize{0.0, 0.0};
-      }
-      return FlutterSize{
-          static_cast<double>(fl_framebuffer_get_width(framebuffer)),
-          static_cast<double>(fl_framebuffer_get_height(framebuffer)),
-      };
-    }
-    case kFlutterBackingStoreTypeSoftware:
-      return FlutterSize{
-          static_cast<double>(backing_store->software.row_bytes / 4),
-          static_cast<double>(backing_store->software.height),
-      };
-    case kFlutterBackingStoreTypeSoftware2:
-      return FlutterSize{
-          static_cast<double>(backing_store->software2.row_bytes / 4),
-          static_cast<double>(backing_store->software2.height),
-      };
-    case kFlutterBackingStoreTypeMetal:
-    case kFlutterBackingStoreTypeVulkan:
-      return FlutterSize{0.0, 0.0};
-  }
-
-  return FlutterSize{0.0, 0.0};
-}
-
-// Called when the engine presents an explicit render target.
-static bool compositor_present_render_target_callback(
-    const FlutterPresentRenderTargetInfo* info) {
+// Called when embedder should composite contents of each layer onto the screen.
+static bool compositor_present_view_callback(
+    const FlutterPresentViewInfo* info) {
   FlEngine* self = static_cast<FlEngine*>(info->user_data);
 
-  g_autoptr(FlRenderable) renderable = get_renderable(self, info->target_id);
+  g_autoptr(FlRenderable) renderable = get_renderable(self, info->view_id);
   if (renderable == nullptr) {
     return true;
   }
 
-  FlutterLayer layer = {
-      .struct_size = sizeof(FlutterLayer),
-      .type = kFlutterLayerContentTypeBackingStore,
-      .backing_store = info->backing_store,
-      .offset = FlutterPoint{0.0, 0.0},
-      .size = get_backing_store_size(info->backing_store),
-      .backing_store_present_info = const_cast<FlutterBackingStorePresentInfo*>(
-          info->backing_store_present_info),
-      .presentation_time = 0,
-      .shell_layer_role = kFlutterShellLayerRoleUnknown,
-      .shell_visual_identifier = 0,
-      .shell_visual_generation = 0,
-      .shell_chrome_model_serial = 0,
-  };
-  const FlutterLayer* layers[] = {&layer};
-  fl_renderable_present_layers(renderable, layers, 1);
+  fl_renderable_present_layers(renderable, info->layers, info->layers_count);
   return true;
 }
 
@@ -474,12 +423,6 @@ static bool fl_engine_gl_clear_current(void* user_data) {
 static uint32_t fl_engine_gl_get_fbo(void* user_data) {
   // There is only one frame buffer object - always return that.
   return 0;
-}
-
-static bool fl_engine_gl_present(void* user_data) {
-  // No action required, as this is handled in
-  // compositor_present_render_target_callback.
-  return true;
 }
 
 static bool fl_engine_gl_make_resource_current(void* user_data) {
@@ -822,7 +765,7 @@ gboolean fl_engine_start(FlEngine* self, GError** error) {
     case kSoftware:
       config.software.struct_size = sizeof(FlutterSoftwareRendererConfig);
       // No action required, as this is handled in
-      // compositor_present_render_target_callback.
+      // compositor_present_view_callback.
       config.software.surface_present_callback =
           [](void* user_data, const void* allocation, size_t row_bytes,
              size_t height) { return true; };
@@ -834,8 +777,8 @@ gboolean fl_engine_start(FlEngine* self, GError** error) {
       config.open_gl.clear_current = fl_engine_gl_clear_current;
       config.open_gl.fbo_callback = fl_engine_gl_get_fbo;
       // No action required, as this is handled in
-      // compositor_present_render_target_callback.
-      config.open_gl.present = fl_engine_gl_present;
+      // compositor_present_view_callback.
+      config.open_gl.present = [](void* user_data) { return true; };
       config.open_gl.make_resource_current = fl_engine_gl_make_resource_current;
       config.open_gl.gl_external_texture_frame_callback =
           fl_engine_gl_external_texture_frame_callback;
@@ -923,8 +866,7 @@ gboolean fl_engine_start(FlEngine* self, GError** error) {
       compositor_create_backing_store_callback;
   compositor.collect_backing_store_callback =
       compositor_collect_backing_store_callback;
-  compositor.present_render_target_callback =
-      compositor_present_render_target_callback;
+  compositor.present_view_callback = compositor_present_view_callback;
   args.compositor = &compositor;
 
   if (self->embedder_api.RunsAOTCompiledDartCode()) {

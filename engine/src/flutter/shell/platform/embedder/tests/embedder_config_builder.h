@@ -87,7 +87,13 @@ class EmbedderConfigBuilder {
       const std::function<void(const FlutterViewFocusChangeRequest*)>&
           callback);
 
-  void SetCompositor(bool avoid_backing_store_cache = false);
+  void SetCompositor(bool avoid_backing_store_cache = false,
+                     bool use_present_layers_callback = false);
+
+  void SetRootRenderTargetCompositor(
+      bool avoid_backing_store_cache = false,
+      FlutterAvioExtensionFeatures required_features =
+          kFlutterAvioExtensionFeatureRootRenderTarget);
 
   FlutterCompositor& GetCompositor();
 
@@ -115,6 +121,7 @@ class EmbedderConfigBuilder {
   std::string dart_entrypoint_;
   FlutterCustomTaskRunners custom_task_runners_ = {};
   FlutterCompositor compositor_ = {};
+  FlutterAvioExtensionRequest avio_extension_request_ = {};
   std::vector<std::string> command_line_arguments_;
   std::vector<std::string> dart_entrypoint_arguments_;
   std::string log_tag_;

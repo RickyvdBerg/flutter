@@ -69,6 +69,50 @@ extern "C" {
 
 #define FLUTTER_ENGINE_VERSION 1
 
+// Avio-owned embedder extensions are negotiated independently from the stock
+// Flutter embedder ABI. The engine reports supported semantics through
+// FlutterEngineGetAvioExtensionCapabilities and validates the request again
+// during initialization, before creating a view or GPU resource.
+#define FLUTTER_AVIO_EXTENSION_VERSION 1u
+
+typedef uint64_t FlutterAvioExtensionFeatures;
+
+#define kFlutterAvioExtensionFeaturePerDisplayVsync 0x0000000000000001ULL
+#define kFlutterAvioExtensionFeatureRootRenderTarget 0x0000000000000002ULL
+#define kFlutterAvioExtensionFeatureExplicitRenderCompletion \
+  0x0000000000000004ULL
+#define kFlutterAvioExtensionFeatureExactVsyncCancellation \
+  0x0000000000000008ULL
+#define kFlutterAvioExtensionFeatureFrameOpportunityOutcomes \
+  0x0000000000000010ULL
+#define kFlutterAvioExtensionFeatureSelectedTargetDamage 0x0000000000000020ULL
+#define kFlutterAvioExtensionFeatureResourceLifecycleConfig \
+  0x0000000000000040ULL
+
+typedef struct {
+  /// The size of this struct. Must be sizeof(FlutterAvioExtensionCapabilities).
+  size_t struct_size;
+
+  /// Inclusive range of extension protocol versions supported by this engine.
+  uint32_t minimum_version;
+  uint32_t maximum_version;
+
+  /// Semantic features implemented by this exact engine build.
+  FlutterAvioExtensionFeatures supported_features;
+} FlutterAvioExtensionCapabilities;
+
+typedef struct {
+  /// The size of this struct. Must be sizeof(FlutterAvioExtensionRequest).
+  size_t struct_size;
+
+  /// The extension protocol version selected by the embedder.
+  uint32_t version;
+
+  /// Every listed semantic feature is required. Initialization fails when the
+  /// engine does not implement the complete set.
+  FlutterAvioExtensionFeatures required_features;
+} FlutterAvioExtensionRequest;
+
 typedef enum {
   kSuccess = 0,
   kInvalidLibraryVersion,
@@ -2315,6 +2359,43 @@ typedef struct {
 } FlutterLayer;
 
 typedef struct {
+  /// The size of this struct. Must be sizeof(FlutterPresentViewInfo).
+  size_t struct_size;
+
+  /// The identifier of the target view.
+  FlutterViewId view_id;
+
+  /// The layers that should be composited onto the view.
+  const FlutterLayer** layers;
+
+  /// The count of layers.
+  size_t layers_count;
+
+  /// The |FlutterCompositor.user_data|.
+  void* user_data;
+} FlutterPresentViewInfo;
+
+typedef enum {
+  /// A backing store and its presentation metadata were produced.
+  kFlutterPresentRenderTargetStatusPresented = 0,
+
+  /// The admitted target had no visual work for this frame.
+  kFlutterPresentRenderTargetStatusNoVisualChange,
+
+  /// Root-target mode rejected an embedded platform view.
+  kFlutterPresentRenderTargetStatusUnsupportedPlatformView,
+
+  /// The embedder did not provide a usable render target.
+  kFlutterPresentRenderTargetStatusRenderTargetUnavailable,
+
+  /// Rasterization into an acquired render target failed.
+  kFlutterPresentRenderTargetStatusRasterFailed,
+
+  /// An engine invariant required by root-target mode was not satisfied.
+  kFlutterPresentRenderTargetStatusInternalInvariantViolation,
+} FlutterPresentRenderTargetStatus;
+
+typedef struct {
   /// The size of this struct.
   /// Must be sizeof(FlutterPresentRenderTargetInfo).
   size_t struct_size;
@@ -2330,6 +2411,10 @@ typedef struct {
 
   /// The |FlutterCompositor.user_data|.
   void* user_data;
+
+  /// The terminal result of this root-target submission. `backing_store` and
+  /// `backing_store_present_info` are non-null only for `Presented`.
+  FlutterPresentRenderTargetStatus status;
 } FlutterPresentRenderTargetInfo;
 
 typedef bool (*FlutterBackingStoreCreateCallback)(
@@ -2341,11 +2426,34 @@ typedef bool (*FlutterBackingStoreCollectCallback)(
     const FlutterBackingStore* renderer,
     void* user_data);
 
-/// The callback invoked when the engine has produced a single explicit render
-/// target for presentation.
+typedef bool (*FlutterLayersPresentCallback)(const FlutterLayer** layers,
+                                             size_t layers_count,
+                                             void* user_data);
+
+/// The callback invoked when the embedder should present to a view.
+///
+/// The |FlutterPresentViewInfo| will be deallocated once the callback returns.
+typedef bool (*FlutterPresentViewCallback)(
+    const FlutterPresentViewInfo* /* present info */);
+
+typedef enum {
+  /// Stock Flutter external-view-embedder semantics. Flutter decomposes the
+  /// scene into backing-store and platform-view layers and invokes exactly one
+  /// of present_layers_callback or present_view_callback.
+  kFlutterCompositorModeGeneric = 0,
+
+  /// Avio's explicit compositor-owned root render target. Flutter publishes
+  /// one root backing store per target while the embedder owns scene topology.
+  /// Embedded platform views are unsupported in this mode.
+  kFlutterCompositorModeRootRenderTarget = 1,
+} FlutterCompositorMode;
+
+/// The callback invoked exactly once when a root-target submission reaches a
+/// terminal result.
 ///
 /// The |FlutterPresentRenderTargetInfo| will be deallocated once the callback
-/// returns.
+/// returns. A false return for `Presented` means the host rejected the produced
+/// target. The return value is ignored for non-presented terminal results.
 typedef bool (*FlutterPresentRenderTargetCallback)(
     const FlutterPresentRenderTargetInfo* /* present info */);
 
@@ -2355,6 +2463,8 @@ typedef struct {
   /// A baton that in not interpreted by the engine in any way. If it passed
   /// back to the embedder in `FlutterCompositor.create_backing_store_callback`,
   /// `FlutterCompositor.collect_backing_store_callback`,
+  /// `FlutterCompositor.present_layers_callback`,
+  /// `FlutterCompositor.present_view_callback`, and
   /// `FlutterCompositor.present_render_target_callback`.
   void* user_data;
   /// A callback invoked by the engine to obtain a backing store for a specific
@@ -2372,6 +2482,13 @@ typedef struct {
   ///
   /// The callback should return true if the operation was successful.
   FlutterBackingStoreCollectCallback collect_backing_store_callback;
+  /// Callback invoked by the engine to composite the contents of each layer
+  /// onto the implicit view.
+  ///
+  /// DEPRECATED: Use `present_view_callback` to support multiple views.
+  /// Only one of `present_layers_callback` and `present_view_callback` may be
+  /// provided in `kFlutterCompositorModeGeneric`.
+  FlutterLayersPresentCallback present_layers_callback;
   /// Avoid caching backing stores provided by this compositor.
   ///
   /// The engine has an internal backing store cache. Instead of
@@ -2383,14 +2500,24 @@ typedef struct {
   /// you can set this bool to true.
   bool avoid_backing_store_cache;
 
-  /// Callback invoked by the engine to present a single explicit render target
-  /// produced for the specified view/target.
+  /// Callback invoked by the engine to composite generic layer contents onto
+  /// the specified view. Exactly one generic present callback is required in
+  /// `kFlutterCompositorModeGeneric`; both must be null in root-target mode.
+  FlutterPresentViewCallback present_view_callback;
+
+  /// Selects the compositor contract. The default value preserves stock
+  /// generic external-view-embedder semantics.
+  FlutterCompositorMode compositor_mode;
+
+  /// Callback invoked exactly once with the terminal result of a root-target
+  /// submission for the specified view/target.
   ///
   /// This path is intended for compositor-owned scene systems where Flutter is
   /// a render-target producer and the embedder remains the authority for
   /// geometry, ordering, and scene composition.
   ///
-  /// The callback should return true if the operation was successful.
+  /// A false return rejects a produced target. The return value is ignored for
+  /// non-presented results.
   FlutterPresentRenderTargetCallback present_render_target_callback;
 
   /// Callback invoked by the engine when a scheduled frame completes without
@@ -2403,7 +2530,8 @@ typedef struct {
   /// with no output", which can cause stale in-flight bookkeeping.
   ///
   /// @param[in]  display_id       The display whose frame completed empty.
-  /// @param[in]  view_ids         Array of view IDs that were part of the frame.
+  /// @param[in]  view_ids         Array of view IDs that were part of the
+  /// frame.
   /// @param[in]  view_ids_count   Number of elements in @p view_ids.
   /// @param[in]  user_data        The |FlutterCompositor.user_data|.
   ///
@@ -2949,6 +3077,11 @@ typedef struct {
   ///
   /// If this is null, the engine falls back to `vsync_callback`.
   FlutterVsyncForDisplayCallback vsync_for_display_callback;
+
+  /// Optional Avio extension negotiation request. The engine validates the
+  /// selected version and every required semantic feature before creating a
+  /// platform view or GPU resource. Stock embedders leave this null.
+  const FlutterAvioExtensionRequest* avio_extension_request;
 } FlutterProjectArgs;
 
 typedef struct {
@@ -3620,6 +3753,20 @@ FlutterEngineResult FlutterEngineOnVsyncForDisplay(
     uint64_t frame_target_time_nanos);
 
 //------------------------------------------------------------------------------
+/// @brief      Reports the semantic Avio extension surface implemented by this
+///             engine build. Embedders call this through the proc table before
+///             engine initialization and then provide an exact request in
+///             FlutterProjectArgs.
+///
+/// @param[out] capabilities  A caller-sized capabilities structure.
+///
+/// @return     The result of the call.
+///
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineGetAvioExtensionCapabilities(
+    FlutterAvioExtensionCapabilities* capabilities);
+
+//------------------------------------------------------------------------------
 /// @brief      Assign a view to a display for per-display vsync rendering.
 ///
 ///             After this call, the view will only be rendered on the specified
@@ -4085,6 +4232,8 @@ typedef FlutterEngineResult (*FlutterEngineOnVsyncForDisplayFnPtr)(
     FlutterEngineDisplayId display_id,
     uint64_t frame_start_time_nanos,
     uint64_t frame_target_time_nanos);
+typedef FlutterEngineResult (*FlutterEngineGetAvioExtensionCapabilitiesFnPtr)(
+    FlutterAvioExtensionCapabilities* capabilities);
 typedef FlutterEngineResult (*FlutterEngineSetViewDisplayFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     FlutterViewId view_id,
@@ -4225,6 +4374,7 @@ typedef struct {
       ScheduleFrameForDisplayWithRequestKind;
   FlutterEngineScheduleFrameForDisplayViewsWithRequestKindFnPtr
       ScheduleFrameForDisplayViewsWithRequestKind;
+  FlutterEngineGetAvioExtensionCapabilitiesFnPtr GetAvioExtensionCapabilities;
 } FlutterEngineProcTable;
 
 //------------------------------------------------------------------------------

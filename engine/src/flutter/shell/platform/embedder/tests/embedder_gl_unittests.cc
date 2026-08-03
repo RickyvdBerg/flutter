@@ -6,6 +6,7 @@
 #define FML_USED_ON_EMBEDDER
 
 #include <atomic>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -78,10 +79,157 @@ TEST_F(EmbedderTest, LaunchFailsWhenPresentRenderTargetCallbackMissing) {
   auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
   EmbedderConfigBuilder builder(context);
   builder.SetSurface(DlISize(1, 1));
-  builder.SetCompositor();
+  builder.SetRootRenderTargetCompositor();
   builder.GetCompositor().present_render_target_callback = nullptr;
   auto engine = builder.LaunchEngine();
   ASSERT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, RootRenderTargetModeRequiresExtensionNegotiation) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(1, 1));
+  builder.SetRootRenderTargetCompositor();
+  builder.GetProjectArgs().avio_extension_request = nullptr;
+  auto engine = builder.LaunchEngine();
+  ASSERT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, GenericCompositorPreservesStockStructBoundary) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(1, 1));
+  builder.SetCompositor();
+  builder.GetCompositor().struct_size =
+      offsetof(FlutterCompositor, present_view_callback) +
+      sizeof(FlutterPresentViewCallback);
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, GenericCompositorRejectsRootTargetCallback) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(1, 1));
+  builder.SetCompositor();
+  builder.GetCompositor().present_render_target_callback =
+      [](const FlutterPresentRenderTargetInfo* info) { return true; };
+  auto engine = builder.LaunchEngine();
+  ASSERT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, RootCompositorRejectsGenericPresentCallback) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(1, 1));
+  builder.SetRootRenderTargetCompositor();
+  builder.GetCompositor().present_view_callback =
+      [](const FlutterPresentViewInfo* info) { return true; };
+  auto engine = builder.LaunchEngine();
+  ASSERT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, UnknownCompositorModeFailsBeforeLaunch) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(1, 1));
+  builder.SetCompositor();
+  builder.GetCompositor().compositor_mode =
+      static_cast<FlutterCompositorMode>(99);
+  auto engine = builder.LaunchEngine();
+  ASSERT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, UnsupportedAvioExtensionFeatureFailsBeforeLaunch) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(1, 1));
+  builder.SetRootRenderTargetCompositor();
+  FlutterAvioExtensionRequest request = {
+      .struct_size = sizeof(FlutterAvioExtensionRequest),
+      .version = FLUTTER_AVIO_EXTENSION_VERSION,
+      .required_features = kFlutterAvioExtensionFeatureRootRenderTarget |
+                           kFlutterAvioExtensionFeatureExactVsyncCancellation,
+  };
+  builder.GetProjectArgs().avio_extension_request = &request;
+  auto engine = builder.LaunchEngine();
+  ASSERT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, UnsupportedAvioExtensionVersionFailsBeforeLaunch) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(1, 1));
+  builder.SetRootRenderTargetCompositor();
+  FlutterAvioExtensionRequest request = {
+      .struct_size = sizeof(FlutterAvioExtensionRequest),
+      .version = FLUTTER_AVIO_EXTENSION_VERSION + 1,
+      .required_features = kFlutterAvioExtensionFeatureRootRenderTarget,
+  };
+  builder.GetProjectArgs().avio_extension_request = &request;
+  auto engine = builder.LaunchEngine();
+  ASSERT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, TruncatedAvioExtensionRequestFailsBeforeLaunch) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(1, 1));
+  builder.SetRootRenderTargetCompositor();
+  FlutterAvioExtensionRequest request = {
+      .struct_size = offsetof(FlutterAvioExtensionRequest, required_features),
+      .version = FLUTTER_AVIO_EXTENSION_VERSION,
+  };
+  builder.GetProjectArgs().avio_extension_request = &request;
+  auto engine = builder.LaunchEngine();
+  ASSERT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, RootRenderTargetReportsRasterFailure) {
+  auto& context = GetEmbedderContext<EmbedderTestContextGL>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor();
+  builder.SetDartEntrypoint("render_implicit_view");
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kOpenGLSurface);
+  builder.GetCompositor().create_backing_store_callback =
+      [](const FlutterBackingStoreConfig* config,
+         FlutterBackingStore* backing_store_out, void* user_data) {
+        auto* compositor = reinterpret_cast<EmbedderTestCompositor*>(user_data);
+        if (!compositor->CreateBackingStore(config, backing_store_out)) {
+          return false;
+        }
+        backing_store_out->open_gl.surface.make_current_callback =
+            [](void* context, bool* invalidate_state) {
+              *invalidate_state = false;
+              return false;
+            };
+        return true;
+      };
+
+  fml::AutoResetWaitableEvent latch;
+  context.GetCompositor().SetNextRootRenderTargetResultCallback(
+      [&](const FlutterPresentRenderTargetInfo& info) {
+        EXPECT_EQ(info.status, kFlutterPresentRenderTargetStatusRasterFailed);
+        EXPECT_EQ(info.backing_store, nullptr);
+        EXPECT_EQ(info.backing_store_present_info, nullptr);
+        latch.Signal();
+        return true;
+      });
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 300;
+  event.height = 200;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(latch.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 }
 
 //------------------------------------------------------------------------------
@@ -123,6 +271,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderToOpenGLFramebuffer) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -169,6 +319,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderToOpenGLFramebuffer) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -245,6 +397,8 @@ TEST_F(EmbedderTest, RasterCacheDisabledWithPlatformViews) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -291,6 +445,8 @@ TEST_F(EmbedderTest, RasterCacheDisabledWithPlatformViews) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -378,6 +534,8 @@ TEST_F(EmbedderTest, RasterCacheEnabled) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -462,6 +620,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderToOpenGLTexture) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -508,6 +668,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderToOpenGLTexture) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -585,6 +747,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderToSoftwareBuffer) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -630,6 +794,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderToSoftwareBuffer) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -707,6 +873,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderKnownScene) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -754,6 +922,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderKnownScene) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -801,6 +971,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderKnownScene) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -933,6 +1105,8 @@ TEST_F(EmbedderTest, CustomCompositorMustWorkWithCustomTaskRunner) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -962,6 +1136,8 @@ TEST_F(EmbedderTest, CustomCompositorMustWorkWithCustomTaskRunner) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -993,6 +1169,8 @@ TEST_F(EmbedderTest, CustomCompositorMustWorkWithCustomTaskRunner) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1090,6 +1268,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderWithRootLayerOnly) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1172,6 +1352,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderWithPlatformLayerOnBottom) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1308,6 +1490,8 @@ TEST_F(EmbedderTest,
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1355,6 +1539,8 @@ TEST_F(EmbedderTest,
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1402,6 +1588,8 @@ TEST_F(EmbedderTest,
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1697,6 +1885,8 @@ TEST_P(EmbedderTestMultiBackend,
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1743,6 +1933,8 @@ TEST_P(EmbedderTestMultiBackend,
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1840,6 +2032,8 @@ TEST_F(EmbedderTest, CanRenderGradientWithCompositorOnNonRootLayerWithXform) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1887,6 +2081,8 @@ TEST_F(EmbedderTest, CanRenderGradientWithCompositorOnNonRootLayerWithXform) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -2217,6 +2413,8 @@ TEST_P(EmbedderTestMultiBackend,
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -2263,6 +2461,8 @@ TEST_P(EmbedderTestMultiBackend,
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -2342,6 +2542,8 @@ TEST_F(
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -2389,6 +2591,8 @@ TEST_F(
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -2542,6 +2746,8 @@ TEST_P(EmbedderTestMultiBackend, PlatformViewMutatorsAreValid) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -2653,6 +2859,8 @@ TEST_F(EmbedderTest, PlatformViewMutatorsAreValidWithPixelRatio) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -2771,6 +2979,8 @@ TEST_F(EmbedderTest,
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -4182,7 +4392,8 @@ TEST_F(EmbedderTest, UpdateDisplayConfigurationAfterStartup) {
   event.width = 800;
   event.height = 600;
   event.pixel_ratio = 1.0;
-  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event), kSuccess);
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
 
   latch.Wait();
 }
@@ -5124,6 +5335,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderToOpenGLSurface) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -5169,6 +5382,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderToOpenGLSurface) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -5243,6 +5458,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderKnownSceneToOpenGLSurfaces) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -5290,6 +5507,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderKnownSceneToOpenGLSurfaces) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -5337,6 +5556,8 @@ TEST_F(EmbedderTest, CompositorMustBeAbleToRenderKnownSceneToOpenGLSurfaces) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};

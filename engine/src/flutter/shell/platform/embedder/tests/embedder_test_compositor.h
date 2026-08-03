@@ -25,6 +25,8 @@ class EmbedderTestCompositor {
   using PresentCallback = std::function<void(FlutterViewId view_id,
                                              const FlutterLayer** layers,
                                              size_t layers_count)>;
+  using RootRenderTargetResultCallback =
+      std::function<bool(const FlutterPresentRenderTargetInfo& info)>;
 
   EmbedderTestCompositor(DlISize surface_size, sk_sp<GrDirectContext> context);
 
@@ -56,6 +58,11 @@ class EmbedderTestCompositor {
   /// @param[in]  next_present_callback  The next present callback
   ///
   void SetNextPresentCallback(const PresentCallback& next_present_callback);
+
+  bool HandleRootRenderTargetResult(const FlutterPresentRenderTargetInfo& info);
+
+  void SetNextRootRenderTargetResultCallback(
+      RootRenderTargetResultCallback callback);
 
   void SetPresentCallback(const PresentCallback& present_callback,
                           bool one_shot);
@@ -91,6 +98,7 @@ class EmbedderTestCompositor {
   PlatformViewRendererCallback platform_view_renderer_callback_;
   bool present_callback_is_one_shot_ = false;
   PresentCallback present_callback_;
+  RootRenderTargetResultCallback root_render_target_result_callback_;
   NextSceneCallback next_scene_callback_;
   sk_sp<SkImage> last_composition_;
   size_t backing_stores_created_ = 0;

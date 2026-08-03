@@ -603,17 +603,17 @@ TEST_F(FlutterEngineTest, CompositorIgnoresUnknownView) {
       .type = kFlutterLayerContentTypeBackingStore,
       .backing_store = &backing_store,
   };
-  (void)layer;
+  std::vector<FlutterLayer*> layers = {&layer};
 
-  FlutterPresentRenderTargetInfo info = {
-      .struct_size = sizeof(FlutterPresentRenderTargetInfo),
-      .target_id = 123,
-      .backing_store = &backing_store,
-      .backing_store_present_info = nullptr,
+  FlutterPresentViewInfo info = {
+      .struct_size = sizeof(FlutterPresentViewInfo),
+      .view_id = 123,
+      .layers = const_cast<const FlutterLayer**>(layers.data()),
+      .layers_count = 1,
       .user_data = compositor.user_data,
   };
-  EXPECT_NE(compositor.present_render_target_callback, nullptr);
-  EXPECT_FALSE(compositor.present_render_target_callback(&info));
+  EXPECT_NE(compositor.present_view_callback, nullptr);
+  EXPECT_FALSE(compositor.present_view_callback(&info));
   EXPECT_TRUE(compositor.collect_backing_store_callback(&backing_store, compositor.user_data));
 
   (void)viewController;

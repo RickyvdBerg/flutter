@@ -115,9 +115,9 @@ extern const intptr_t kPlatformStrongDillSize;
 #include "third_party/skia/include/gpu/ganesh/vk/GrVkTypes.h"
 #ifdef IMPELLER_SUPPORTS_RENDERING
 #include "flutter/shell/platform/embedder/embedder_render_target_impeller.h"  // nogncheck
-#include "impeller/core/texture.h"                                  // nogncheck
-#include "impeller/renderer/backend/vulkan/context_vk.h"            // nogncheck
-#include "impeller/renderer/backend/vulkan/formats_vk.h"            // nogncheck
+#include "impeller/core/texture.h"                        // nogncheck
+#include "impeller/renderer/backend/vulkan/context_vk.h"  // nogncheck
+#include "impeller/renderer/backend/vulkan/formats_vk.h"  // nogncheck
 #include "impeller/renderer/backend/vulkan/swapchain/ahb/external_semaphore_vk.h"  // nogncheck
 #include "impeller/renderer/backend/vulkan/swapchain/surface_vk.h"  // nogncheck
 #include "impeller/renderer/backend/vulkan/swapchain/swapchain_transients_vk.h"  // nogncheck
@@ -178,6 +178,28 @@ static FlutterEngineResult LogEmbedderError(FlutterEngineResult code,
 
 #define LOG_EMBEDDER_ERROR(code, reason) \
   LogEmbedderError(code, reason, #code, __FUNCTION__, __FILE__, __LINE__)
+
+static constexpr FlutterAvioExtensionFeatures kAvioSupportedFeatures =
+    kFlutterAvioExtensionFeaturePerDisplayVsync |
+    kFlutterAvioExtensionFeatureRootRenderTarget |
+    kFlutterAvioExtensionFeatureExplicitRenderCompletion;
+
+static const char* ValidateAvioExtensionRequest(
+    const FlutterAvioExtensionRequest* request) {
+  if (request == nullptr) {
+    return nullptr;
+  }
+  if (!STRUCT_HAS_MEMBER(request, required_features)) {
+    return "The Avio extension request was truncated.";
+  }
+  if (request->version != FLUTTER_AVIO_EXTENSION_VERSION) {
+    return "The requested Avio extension version is unsupported.";
+  }
+  if ((request->required_features & ~kAvioSupportedFeatures) != 0) {
+    return "The engine does not implement every required Avio extension.";
+  }
+  return nullptr;
+}
 
 static bool IsOpenGLRendererConfigValid(const FlutterRendererConfig* config) {
   if (config->type != kOpenGL) {
@@ -1338,11 +1360,11 @@ MakeRenderTargetFromBackingStoreImpeller(
 #if defined(SHELL_ENABLE_VULKAN) && defined(IMPELLER_SUPPORTS_RENDERING)
 class EmbedderTextureSourceVK : public impeller::TextureSourceVK {
  public:
-  EmbedderTextureSourceVK(impeller::vk::Image image,
-                          impeller::vk::ImageView image_view,
-                          impeller::TextureDescriptor desc,
-                          std::optional<impeller::ExternalImageOwnershipVK>
-                              external_ownership)
+  EmbedderTextureSourceVK(
+      impeller::vk::Image image,
+      impeller::vk::ImageView image_view,
+      impeller::TextureDescriptor desc,
+      std::optional<impeller::ExternalImageOwnershipVK> external_ownership)
       : TextureSourceVK(desc),
         image_(image),
         image_view_(image_view),
@@ -1355,26 +1377,25 @@ class EmbedderTextureSourceVK : public impeller::TextureSourceVK {
 
   impeller::vk::ImageView GetImageView() const override { return image_view_; }
 
-  impeller::vk::ImageView GetRenderTargetView(uint32_t mip_level,
-                                              uint32_t array_layer) const override {
+  impeller::vk::ImageView GetRenderTargetView(
+      uint32_t mip_level,
+      uint32_t array_layer) const override {
     // Embedder-provided backing store images are single-mip, single-layer.
     return image_view_;
   }
 
   bool IsSwapchainImage() const override { return true; }
 
-  std::optional<impeller::ExternalImageOwnershipVK>
-  GetExternalImageOwnership() const override {
+  std::optional<impeller::ExternalImageOwnershipVK> GetExternalImageOwnership()
+      const override {
     return external_ownership_;
   }
 
  public:
-
   std::shared_ptr<impeller::ExternalSemaphoreVK>
   CreateRenderCompleteSignalSemaphore(
       const std::shared_ptr<impeller::Context>& context) const override {
-    auto semaphore =
-        std::make_shared<impeller::ExternalSemaphoreVK>(context);
+    auto semaphore = std::make_shared<impeller::ExternalSemaphoreVK>(context);
     if (!semaphore || !semaphore->IsValid()) {
       return nullptr;
     }
@@ -1503,12 +1524,12 @@ MakeRenderTargetFromBackingStoreImpeller(
 
   auto render_target = surface->GetRenderTarget();
 
-  fml::closure framebuffer_destruct =
-      [callback = vulkan->destruction_callback, user_data = vulkan->user_data] {
-        if (callback) {
-          callback(user_data);
-        }
-      };
+  fml::closure framebuffer_destruct = [callback = vulkan->destruction_callback,
+                                       user_data = vulkan->user_data] {
+    if (callback) {
+      callback(user_data);
+    }
+  };
 
   return std::make_unique<flutter::EmbedderRenderTargetImpeller>(
       backing_store, aiks_context,
@@ -1758,8 +1779,10 @@ CreateEmbedderRenderTarget(
 ///
 /// When a non-OK status is returned, engine startup should be halted.
 static fml::StatusOr<std::unique_ptr<flutter::EmbedderExternalViewEmbedder>>
-InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
-                                  bool enable_impeller) {
+InferExternalViewEmbedderFromArgs(
+    const FlutterCompositor* compositor,
+    bool enable_impeller,
+    FlutterAvioExtensionFeatures negotiated_avio_features) {
   if (compositor == nullptr) {
     return std::unique_ptr<flutter::EmbedderExternalViewEmbedder>{nullptr};
   }
@@ -1768,8 +1791,14 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
       SAFE_ACCESS(compositor, create_backing_store_callback, nullptr);
   auto c_collect_callback =
       SAFE_ACCESS(compositor, collect_backing_store_callback, nullptr);
+  auto c_present_callback =
+      SAFE_ACCESS(compositor, present_layers_callback, nullptr);
+  auto c_present_view_callback =
+      SAFE_ACCESS(compositor, present_view_callback, nullptr);
   auto c_present_render_target_callback =
       SAFE_ACCESS(compositor, present_render_target_callback, nullptr);
+  const auto compositor_mode =
+      SAFE_ACCESS(compositor, compositor_mode, kFlutterCompositorModeGeneric);
   bool avoid_backing_store_cache =
       SAFE_ACCESS(compositor, avoid_backing_store_cache, false);
 
@@ -1778,9 +1807,41 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
     return fml::Status(fml::StatusCode::kInvalidArgument,
                        "Required compositor callbacks absent.");
   }
-  if (!c_present_render_target_callback) {
-    return fml::Status(fml::StatusCode::kInvalidArgument,
-                       "present_render_target_callback must be provided.");
+  switch (compositor_mode) {
+    case kFlutterCompositorModeGeneric:
+      if ((!c_present_view_callback && !c_present_callback) ||
+          (c_present_view_callback && c_present_callback)) {
+        return fml::Status(fml::StatusCode::kInvalidArgument,
+                           "Generic compositor mode requires exactly one of "
+                           "present_layers_callback or present_view_callback.");
+      }
+      if (c_present_render_target_callback) {
+        return fml::Status(
+            fml::StatusCode::kInvalidArgument,
+            "Generic compositor mode cannot provide a root-target callback.");
+      }
+      break;
+    case kFlutterCompositorModeRootRenderTarget:
+      if ((negotiated_avio_features &
+           kFlutterAvioExtensionFeatureRootRenderTarget) == 0) {
+        return fml::Status(fml::StatusCode::kInvalidArgument,
+                           "Root-target compositor mode was not negotiated.");
+      }
+      if (!c_present_render_target_callback) {
+        return fml::Status(fml::StatusCode::kInvalidArgument,
+                           "Root-target compositor mode requires "
+                           "present_render_target_callback.");
+      }
+      if (c_present_callback || c_present_view_callback) {
+        return fml::Status(
+            fml::StatusCode::kInvalidArgument,
+            "Root-target compositor mode cannot provide generic present "
+            "callbacks.");
+      }
+      break;
+    default:
+      return fml::Status(fml::StatusCode::kInvalidArgument,
+                         "Unknown compositor mode.");
   }
 
   FlutterCompositor captured_compositor = *compositor;
@@ -1796,28 +1857,54 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
                                               enable_impeller);
           };
 
+  flutter::EmbedderExternalViewEmbedder::PresentCallback present_callback;
+  if (c_present_callback) {
+    present_callback = [c_present_callback, user_data = compositor->user_data](
+                           FlutterViewId view_id, const auto& layers) {
+      TRACE_EVENT0("flutter", "FlutterCompositorPresentLayers");
+      return c_present_callback(const_cast<const FlutterLayer**>(layers.data()),
+                                layers.size(), user_data);
+    };
+  } else if (c_present_view_callback) {
+    present_callback = [c_present_view_callback,
+                        user_data = compositor->user_data](
+                           FlutterViewId view_id, const auto& layers) {
+      TRACE_EVENT0("flutter", "FlutterCompositorPresentView");
+      FlutterPresentViewInfo info = {
+          .struct_size = sizeof(FlutterPresentViewInfo),
+          .view_id = view_id,
+          .layers = const_cast<const FlutterLayer**>(layers.data()),
+          .layers_count = layers.size(),
+          .user_data = user_data,
+      };
+      return c_present_view_callback(&info);
+    };
+  }
+
   flutter::EmbedderExternalViewEmbedder::PresentRenderTargetCallback
       present_render_target_callback;
-  present_render_target_callback =
-      [c_present_render_target_callback, user_data = compositor->user_data](
-          FlutterViewId view_id,
-          const FlutterBackingStore* backing_store,
-          const FlutterBackingStorePresentInfo* backing_store_present_info) {
-        TRACE_EVENT0("flutter", "FlutterCompositorPresentRenderTarget");
-
-        FlutterPresentRenderTargetInfo info = {
-            .struct_size = sizeof(FlutterPresentRenderTargetInfo),
-            .target_id = view_id,
-            .backing_store = backing_store,
-            .backing_store_present_info = backing_store_present_info,
-            .user_data = user_data,
+  if (c_present_render_target_callback) {
+    present_render_target_callback =
+        [c_present_render_target_callback, user_data = compositor->user_data](
+            FlutterViewId view_id, FlutterPresentRenderTargetStatus status,
+            const FlutterBackingStore* backing_store,
+            const FlutterBackingStorePresentInfo* backing_store_present_info) {
+          TRACE_EVENT0("flutter", "FlutterCompositorPresentRenderTarget");
+          FlutterPresentRenderTargetInfo info = {
+              .struct_size = sizeof(FlutterPresentRenderTargetInfo),
+              .target_id = view_id,
+              .backing_store = backing_store,
+              .backing_store_present_info = backing_store_present_info,
+              .user_data = user_data,
+              .status = status,
+          };
+          return c_present_render_target_callback(&info);
         };
-        return c_present_render_target_callback(&info);
-      };
+  }
 
   return std::make_unique<flutter::EmbedderExternalViewEmbedder>(
-      avoid_backing_store_cache, create_render_target_callback,
-      present_render_target_callback);
+      compositor_mode, avoid_backing_store_cache, create_render_target_callback,
+      present_callback, present_render_target_callback);
 }
 
 // Translates embedder metrics to engine metrics, or returns a string on error.
@@ -2244,6 +2331,17 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
                               "The Flutter project arguments were missing.");
   }
 
+  const auto* avio_extension_request =
+      SAFE_ACCESS(args, avio_extension_request, nullptr);
+  if (const char* error =
+          ValidateAvioExtensionRequest(avio_extension_request)) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, error);
+  }
+  const FlutterAvioExtensionFeatures negotiated_avio_features =
+      avio_extension_request == nullptr
+          ? 0
+          : avio_extension_request->required_features;
+
   if (SAFE_ACCESS(args, assets_path, nullptr) == nullptr) {
     return LOG_EMBEDDER_ERROR(
         kInvalidArguments,
@@ -2513,7 +2611,7 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
       SAFE_ACCESS(args, compositor, nullptr);
 
   auto external_view_embedder_result = InferExternalViewEmbedderFromArgs(
-      compositor_ptr, settings.enable_impeller);
+      compositor_ptr, settings.enable_impeller, negotiated_avio_features);
   if (!external_view_embedder_result.ok()) {
     FML_LOG(ERROR) << external_view_embedder_result.status().message();
     return LOG_EMBEDDER_ERROR(kInvalidArguments,
@@ -2530,8 +2628,8 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
       settings.on_empty_frame_for_display =
           [c_empty_frame_callback, empty_frame_user_data](
               int64_t display_id, const std::vector<int64_t>& view_ids) {
-            c_empty_frame_callback(display_id, view_ids.data(),
-                                   view_ids.size(), empty_frame_user_data);
+            c_empty_frame_callback(display_id, view_ids.data(), view_ids.size(),
+                                   empty_frame_user_data);
           };
     }
   }
@@ -3643,6 +3741,22 @@ FlutterEngineResult FlutterEngineOnVsyncForDisplay(
   return kSuccess;
 }
 
+FlutterEngineResult FlutterEngineGetAvioExtensionCapabilities(
+    FlutterAvioExtensionCapabilities* capabilities) {
+  if (capabilities == nullptr) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                              "Null Avio capabilities structure.");
+  }
+  if (!STRUCT_HAS_MEMBER(capabilities, supported_features)) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                              "Truncated Avio capabilities structure.");
+  }
+  capabilities->minimum_version = FLUTTER_AVIO_EXTENSION_VERSION;
+  capabilities->maximum_version = FLUTTER_AVIO_EXTENSION_VERSION;
+  capabilities->supported_features = kAvioSupportedFeatures;
+  return kSuccess;
+}
+
 FlutterEngineResult FlutterEngineSetViewDisplay(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
     FlutterViewId view_id,
@@ -3655,8 +3769,7 @@ FlutterEngineResult FlutterEngineSetViewDisplay(
                    "display_id", display_id);
 
   if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)->SetViewDisplay(
-          static_cast<int64_t>(view_id),
-          static_cast<int64_t>(display_id))) {
+          static_cast<int64_t>(view_id), static_cast<int64_t>(display_id))) {
     return LOG_EMBEDDER_ERROR(
         kInternalInconsistency,
         "Could not assign view to display in the running engine instance.");
@@ -4093,8 +4206,8 @@ FlutterEngineResult FlutterEngineScheduleFrameWithRequestKind(
                                 "Invalid FlutterEngineFrameRequestKind.");
   }
 
-  return reinterpret_cast<flutter::EmbedderEngine*>(engine)
-                 ->ScheduleFrame(regenerate_layer_trees)
+  return reinterpret_cast<flutter::EmbedderEngine*>(engine)->ScheduleFrame(
+             regenerate_layer_trees)
              ? kSuccess
              : LOG_EMBEDDER_ERROR(kInvalidArguments,
                                   "Could not schedule frame.");
@@ -4179,9 +4292,9 @@ FlutterEngineResult FlutterEngineScheduleFrameForDisplayViewsWithRequestKind(
                    "display_id", display_id, "request_kind", request_kind);
 
   return reinterpret_cast<flutter::EmbedderEngine*>(engine)
-                 ->ScheduleFrameForDisplayViews(static_cast<int64_t>(display_id),
-                                                std::move(scoped_view_ids),
-                                                regenerate_layer_trees)
+                 ->ScheduleFrameForDisplayViews(
+                     static_cast<int64_t>(display_id),
+                     std::move(scoped_view_ids), regenerate_layer_trees)
              ? kSuccess
              : LOG_EMBEDDER_ERROR(
                    kInvalidArguments,
@@ -4286,6 +4399,8 @@ FlutterEngineResult FlutterEngineGetProcAddresses(
            FlutterEngineScheduleFrameForDisplayWithRequestKind);
   SET_PROC(ScheduleFrameForDisplayViewsWithRequestKind,
            FlutterEngineScheduleFrameForDisplayViewsWithRequestKind);
+  SET_PROC(GetAvioExtensionCapabilities,
+           FlutterEngineGetAvioExtensionCapabilities);
 #undef SET_PROC
 
   return kSuccess;

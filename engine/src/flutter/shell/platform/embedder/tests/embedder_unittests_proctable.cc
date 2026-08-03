@@ -4,6 +4,7 @@
 
 #include "flutter/shell/platform/embedder/embedder.h"
 
+#include <cstddef>
 #include <set>
 
 #include "flutter/testing/testing.h"
@@ -59,6 +60,36 @@ TEST(EmbedderProcTable, CallProc) {
   ASSERT_EQ(FlutterEngineGetProcAddresses(&procs), kSuccess);
 
   EXPECT_NE(procs.GetCurrentTime(), 0ULL);
+}
+
+TEST(EmbedderProcTable, ReportsAvioSemanticCapabilities) {
+  FlutterEngineProcTable procs = {};
+  procs.struct_size = sizeof(FlutterEngineProcTable);
+  ASSERT_EQ(FlutterEngineGetProcAddresses(&procs), kSuccess);
+  ASSERT_NE(procs.GetAvioExtensionCapabilities, nullptr);
+
+  FlutterAvioExtensionCapabilities capabilities = {};
+  capabilities.struct_size = sizeof(capabilities);
+  ASSERT_EQ(procs.GetAvioExtensionCapabilities(&capabilities), kSuccess);
+  EXPECT_EQ(capabilities.minimum_version, FLUTTER_AVIO_EXTENSION_VERSION);
+  EXPECT_EQ(capabilities.maximum_version, FLUTTER_AVIO_EXTENSION_VERSION);
+  EXPECT_EQ(capabilities.supported_features,
+            kFlutterAvioExtensionFeaturePerDisplayVsync |
+                kFlutterAvioExtensionFeatureRootRenderTarget |
+                kFlutterAvioExtensionFeatureExplicitRenderCompletion);
+}
+
+TEST(EmbedderProcTable, RejectsTruncatedAvioCapabilities) {
+  FlutterEngineProcTable procs = {};
+  procs.struct_size = sizeof(FlutterEngineProcTable);
+  ASSERT_EQ(FlutterEngineGetProcAddresses(&procs), kSuccess);
+  ASSERT_NE(procs.GetAvioExtensionCapabilities, nullptr);
+
+  FlutterAvioExtensionCapabilities capabilities = {};
+  capabilities.struct_size =
+      offsetof(FlutterAvioExtensionCapabilities, supported_features);
+  EXPECT_EQ(procs.GetAvioExtensionCapabilities(&capabilities),
+            kInvalidArguments);
 }
 
 }  // namespace testing

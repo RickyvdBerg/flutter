@@ -37,6 +37,27 @@ need "RSS: DisposeThreadLocalCachedResources in EVE submit" \
 need "non-blocking PublishDmabufTexture entry point" \
   $F/shell/platform/embedder/embedder.cc 'FlutterEnginePublishDmabufTexture'
 
+echo "--- Embedder compositor modes ---"
+need "stock generic layer-present ABI" \
+  $F/shell/platform/embedder/embedder.h 'FlutterLayersPresentCallback present_layers_callback'
+need "stock generic per-view present ABI" \
+  $F/shell/platform/embedder/embedder.h 'FlutterPresentViewCallback present_view_callback'
+need "explicit root-target compositor mode" \
+  $F/shell/platform/embedder/embedder.h 'kFlutterCompositorModeRootRenderTarget'
+need "versioned Avio semantic capability query" \
+  $F/shell/platform/embedder/embedder.h 'FlutterEngineGetAvioExtensionCapabilities'
+need "typed root-target terminal results" \
+  $F/shell/platform/embedder/embedder.h 'kFlutterPresentRenderTargetStatusUnsupportedPlatformView'
+need "separate generic and root EVE submission paths" \
+  $F/shell/platform/embedder/embedder_external_view_embedder.cc 'SubmitGenericFlutterView'
+absent_in "Linux desktop embedder root-target override" \
+  $F/shell/platform/linux/fl_engine.cc 'present_render_target_callback'
+absent_in "Windows desktop embedder root-target override" \
+  $F/shell/platform/windows/flutter_windows_engine.cc 'present_render_target_callback'
+absent_in "macOS desktop embedder root-target override" \
+  $F/shell/platform/darwin/macos/framework/Source/FlutterEngine.mm \
+  'present_render_target_callback'
+
 echo "--- Explicit sync chain ---"
 need "render_complete_sync_fd ABI field" \
   $F/shell/platform/embedder/embedder.h 'render_complete_sync_fd'

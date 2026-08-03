@@ -22,14 +22,27 @@ namespace flutter {
 static const auto kRootViewIdentifier = EmbedderExternalView::ViewIdentifier{};
 
 EmbedderExternalViewEmbedder::EmbedderExternalViewEmbedder(
+    FlutterCompositorMode compositor_mode,
     bool avoid_backing_store_cache,
     const CreateRenderTargetCallback& create_render_target_callback,
+    const PresentCallback& present_callback,
     const PresentRenderTargetCallback& present_render_target_callback)
-    : avoid_backing_store_cache_(avoid_backing_store_cache),
+    : compositor_mode_(compositor_mode),
+      avoid_backing_store_cache_(avoid_backing_store_cache),
       create_render_target_callback_(create_render_target_callback),
+      present_callback_(present_callback),
       present_render_target_callback_(present_render_target_callback) {
   FML_DCHECK(create_render_target_callback_);
-  FML_DCHECK(present_render_target_callback_);
+  switch (compositor_mode_) {
+    case kFlutterCompositorModeGeneric:
+      FML_DCHECK(present_callback_);
+      FML_DCHECK(!present_render_target_callback_);
+      break;
+    case kFlutterCompositorModeRootRenderTarget:
+      FML_DCHECK(!present_callback_);
+      FML_DCHECK(present_render_target_callback_);
+      break;
+  }
 }
 
 EmbedderExternalViewEmbedder::~EmbedderExternalViewEmbedder() = default;
@@ -223,7 +236,6 @@ struct PlatformView {
     }
     clipped_frame = clip;
   }
-
 };
 
 /// Each layer will result in a single physical surface that contains Flutter
@@ -327,9 +339,7 @@ class Layer {
   EmbedderExternalView::RenderTargetDescriptor CreateRenderTargetDescriptor(
       const DlISize& frame_size) const {
     return EmbedderExternalView::RenderTargetDescriptor(
-        frame_size,
-        kFlutterBackingStoreRequestTypeView,
-        0);
+        frame_size, kFlutterBackingStoreRequestTypeView, 0);
   }
 
   bool is_empty() const {
@@ -450,8 +460,7 @@ class LayerBuilder {
       std::function<std::unique_ptr<EmbedderRenderTarget>(
           const EmbedderExternalView::RenderTargetDescriptor& descriptor)>;
 
-  explicit LayerBuilder(DlISize frame_size,
-                        DlMatrix surface_transformation)
+  explicit LayerBuilder(DlISize frame_size, DlMatrix surface_transformation)
       : frame_size_(frame_size),
         surface_transformation_(surface_transformation) {
     layers_.push_back(Layer());
@@ -513,11 +522,10 @@ class LayerBuilder {
         }
       }
       if (layer.render_target() != nullptr) {
-        layers.PushBackingStoreLayer(layer.render_target()->GetBackingStore(),
-                                     layer.render_target()->TakeRenderCompleteSyncFD(),
-                                     layer.coverage(),
-                                     kFlutterShellLayerRoleEmbeddedContent,
-                                     0);
+        layers.PushBackingStoreLayer(
+            layer.render_target()->GetBackingStore(),
+            layer.render_target()->TakeRenderCompleteSyncFD(), layer.coverage(),
+            kFlutterShellLayerRoleEmbeddedContent, 0);
       }
     }
   }
@@ -603,6 +611,99 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
     GrDirectContext* context,
     const std::shared_ptr<impeller::AiksContext>& aiks_context,
     std::unique_ptr<SurfaceFrame> frame) {
+  switch (compositor_mode_) {
+    case kFlutterCompositorModeGeneric:
+      SubmitGenericFlutterView(flutter_view_id, context, aiks_context,
+                               std::move(frame));
+      return;
+    case kFlutterCompositorModeRootRenderTarget:
+      SubmitRootRenderTarget(flutter_view_id, context, aiks_context,
+                             std::move(frame));
+      return;
+  }
+}
+
+void EmbedderExternalViewEmbedder::SubmitGenericFlutterView(
+    int64_t flutter_view_id,
+    GrDirectContext* context,
+    const std::shared_ptr<impeller::AiksContext>& aiks_context,
+    std::unique_ptr<SurfaceFrame> frame) {
+  EmbedderRenderTargetCache& render_target_cache =
+      render_target_caches_[flutter_view_id];
+  const DlRect transformed_bounds =
+      DlRect::MakeSize(pending_frame_size_)
+          .TransformAndClipBounds(pending_surface_transformation_);
+  LayerBuilder builder(DlIRect::RoundOut(transformed_bounds).GetSize(),
+                       pending_surface_transformation_);
+
+  for (const auto& view_id : composition_order_) {
+    builder.AddExternalView(pending_views_.at(view_id).get());
+  }
+
+  builder.PrepareBackingStore(
+      [&](const EmbedderExternalView::RenderTargetDescriptor& descriptor) {
+        if (!avoid_backing_store_cache_) {
+          auto cached = render_target_cache.GetRenderTarget(descriptor);
+          if (cached != nullptr) {
+            return cached;
+          }
+        }
+        auto config = MakeBackingStoreConfig(
+            flutter_view_id, descriptor.surface_size, descriptor.request_type,
+            descriptor.shell_visual_identifier);
+        return create_render_target_callback_(context, aiks_context, config);
+      });
+
+  auto deferred_cleanup_render_targets =
+      render_target_cache.ClearAllRenderTargetsInCache();
+
+#if !SLIMPELLER
+  if (context) {
+    context->resetContext(kAll_GrBackendState);
+  }
+#endif  // !SLIMPELLER
+
+  builder.Render();
+
+  if (aiks_context) {
+    aiks_context->GetContext()->DisposeThreadLocalCachedResources();
+  }
+
+#if !SLIMPELLER
+  if (context) {
+    context->flushAndSubmit();
+  }
+#endif  // !SLIMPELLER
+
+  const auto submit_info = frame->submit_info();
+  const uint64_t presentation_time =
+      submit_info.presentation_time.has_value()
+          ? submit_info.presentation_time->ToEpochDelta().ToNanoseconds()
+          : 0;
+  EmbedderLayers presented_layers(
+      pending_frame_size_, pending_device_pixel_ratio_,
+      pending_surface_transformation_, presentation_time);
+  builder.PushLayers(presented_layers);
+  presented_layers.InvokePresentCallback(flutter_view_id, nullptr,
+                                         present_callback_);
+
+  deferred_cleanup_render_targets.clear();
+  for (auto& [descriptor, render_target] :
+       builder.ClearAndCollectRenderTargets()) {
+    if (!avoid_backing_store_cache_) {
+      render_target_cache.CacheRenderTarget(descriptor,
+                                            std::move(render_target));
+    }
+  }
+
+  frame->Submit();
+}
+
+void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
+    int64_t flutter_view_id,
+    GrDirectContext* context,
+    const std::shared_ptr<impeller::AiksContext>& aiks_context,
+    std::unique_ptr<SurfaceFrame> frame) {
   // The unordered_map render_target_cache creates a new entry if the view ID is
   // unrecognized.
   EmbedderRenderTargetCache& render_target_cache =
@@ -611,6 +712,9 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
   if (root_found == pending_views_.end()) {
     FML_LOG(ERROR) << "Explicit render-target presentation requires a root "
                       "Flutter view.";
+    CompleteRootRenderTarget(
+        flutter_view_id,
+        kFlutterPresentRenderTargetStatusInternalInvariantViolation);
     frame->Submit();
     return;
   }
@@ -620,6 +724,9 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
       FML_LOG(ERROR)
           << "Explicit render-target presentation does not support embedded "
              "platform views.";
+      CompleteRootRenderTarget(
+          flutter_view_id,
+          kFlutterPresentRenderTargetStatusUnsupportedPlatformView);
       frame->Submit();
       return;
     }
@@ -627,6 +734,8 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
 
   auto& root_view = root_found->second;
   if (!root_view->HasEngineRenderedContents()) {
+    CompleteRootRenderTarget(flutter_view_id,
+                             kFlutterPresentRenderTargetStatusNoVisualChange);
     frame->Submit();
     return;
   }
@@ -637,16 +746,18 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
     render_target = render_target_cache.GetRenderTarget(descriptor);
   }
   if (render_target == nullptr) {
-    auto config = MakeBackingStoreConfig(flutter_view_id,
-                                         descriptor.surface_size,
-                                         descriptor.request_type,
-                                         descriptor.shell_visual_identifier);
+    auto config = MakeBackingStoreConfig(
+        flutter_view_id, descriptor.surface_size, descriptor.request_type,
+        descriptor.shell_visual_identifier);
     render_target =
         create_render_target_callback_(context, aiks_context, config);
   }
   if (render_target == nullptr) {
     FML_LOG(ERROR) << "Could not acquire an embedder render target for view "
                    << flutter_view_id;
+    CompleteRootRenderTarget(
+        flutter_view_id,
+        kFlutterPresentRenderTargetStatusRenderTargetUnavailable);
     frame->Submit();
     return;
   }
@@ -666,6 +777,8 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
                       "render target for view "
                    << flutter_view_id;
     deferred_cleanup_render_targets.clear();
+    CompleteRootRenderTarget(flutter_view_id,
+                             kFlutterPresentRenderTargetStatusRasterFailed);
     frame->Submit();
     return;
   }
@@ -681,21 +794,20 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
 #endif  // !SLIMPELLER
 
   const auto submit_info = frame->submit_info();
-  auto paint_region_rects =
-      ToFlutterRects(root_view->GetDlRegion().getRects(),
-                     pending_surface_transformation_);
+  auto paint_region_rects = ToFlutterRects(root_view->GetDlRegion().getRects(),
+                                           pending_surface_transformation_);
   FlutterRegion paint_region = {
       .struct_size = sizeof(FlutterRegion),
       .rects_count = paint_region_rects.size(),
       .rects = paint_region_rects.data(),
   };
 
-  auto frame_damage_rects = submit_info.frame_damage.has_value()
-                                ? ToFlutterRects(
-                                      submit_info.frame_damage->getRects(
-                                          /*deband=*/true),
-                                      pending_surface_transformation_)
-                                : std::vector<FlutterRect>{};
+  auto frame_damage_rects =
+      submit_info.frame_damage.has_value()
+          ? ToFlutterRects(submit_info.frame_damage->getRects(
+                               /*deband=*/true),
+                           pending_surface_transformation_)
+          : std::vector<FlutterRect>{};
   FlutterRegion frame_damage_region = {
       .struct_size = sizeof(FlutterRegion),
       .rects_count = frame_damage_rects.size(),
@@ -718,9 +830,9 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
   (void)render_complete_sync_fd;
 #endif
 
-  if (!present_render_target_callback_(flutter_view_id,
-                                       render_target->GetBackingStore(),
-                                       &present_info)) {
+  if (!CompleteRootRenderTarget(
+          flutter_view_id, kFlutterPresentRenderTargetStatusPresented,
+          render_target->GetBackingStore(), &present_info)) {
     FML_LOG(ERROR) << "Could not present explicit render target for view "
                    << flutter_view_id;
   }
@@ -731,6 +843,15 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
   }
 
   frame->Submit();
+}
+
+bool EmbedderExternalViewEmbedder::CompleteRootRenderTarget(
+    int64_t flutter_view_id,
+    FlutterPresentRenderTargetStatus status,
+    const FlutterBackingStore* backing_store,
+    const FlutterBackingStorePresentInfo* backing_store_present_info) const {
+  return present_render_target_callback_(flutter_view_id, status, backing_store,
+                                         backing_store_present_info);
 }
 
 }  // namespace flutter

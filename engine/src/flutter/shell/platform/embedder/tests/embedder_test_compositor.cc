@@ -88,6 +88,21 @@ void EmbedderTestCompositor::SetNextPresentCallback(
   SetPresentCallback(next_present_callback, true);
 }
 
+bool EmbedderTestCompositor::HandleRootRenderTargetResult(
+    const FlutterPresentRenderTargetInfo& info) {
+  if (!root_render_target_result_callback_) {
+    return true;
+  }
+  auto callback = std::move(root_render_target_result_callback_);
+  return callback(info);
+}
+
+void EmbedderTestCompositor::SetNextRootRenderTargetResultCallback(
+    RootRenderTargetResultCallback callback) {
+  FML_CHECK(!root_render_target_result_callback_);
+  root_render_target_result_callback_ = std::move(callback);
+}
+
 void EmbedderTestCompositor::SetPresentCallback(
     const PresentCallback& present_callback,
     bool one_shot) {

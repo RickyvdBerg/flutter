@@ -1000,12 +1000,21 @@ TEST_F(EmbedderTest, CanRenderImplicitViewUsingPresentRenderTargetCallback) {
 
   EmbedderConfigBuilder builder(context);
   builder.SetSurface(DlISize(800, 600));
-  builder.SetCompositor(/* avoid_backing_store_cache = */ false);
+  builder.SetRootRenderTargetCompositor(
+      /* avoid_backing_store_cache = */ false);
   builder.SetDartEntrypoint("render_implicit_view");
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kSoftwareBuffer);
 
   fml::AutoResetWaitableEvent latch;
+
+  context.GetCompositor().SetNextRootRenderTargetResultCallback(
+      [](const FlutterPresentRenderTargetInfo& info) {
+        EXPECT_EQ(info.status, kFlutterPresentRenderTargetStatusPresented);
+        EXPECT_NE(info.backing_store, nullptr);
+        EXPECT_NE(info.backing_store_present_info, nullptr);
+        return true;
+      });
 
   context.GetCompositor().SetNextPresentCallback(
       [&](FlutterViewId view_id, const FlutterLayer** layers,
@@ -1025,6 +1034,79 @@ TEST_F(EmbedderTest, CanRenderImplicitViewUsingPresentRenderTargetCallback) {
             kSuccess);
   ASSERT_TRUE(engine.is_valid());
   latch.Wait();
+}
+
+TEST_F(EmbedderTest, RootRenderTargetRejectsPlatformViews) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor();
+  builder.SetDartEntrypoint("can_composite_platform_views");
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kSoftwareBuffer);
+
+  fml::AutoResetWaitableEvent latch;
+  context.GetCompositor().SetNextRootRenderTargetResultCallback(
+      [&](const FlutterPresentRenderTargetInfo& info) {
+        EXPECT_EQ(info.status,
+                  kFlutterPresentRenderTargetStatusUnsupportedPlatformView);
+        EXPECT_EQ(info.backing_store, nullptr);
+        EXPECT_EQ(info.backing_store_present_info, nullptr);
+        latch.Signal();
+        return true;
+      });
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY([](Dart_NativeArguments args) {}));
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 800;
+  event.height = 600;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(latch.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+}
+
+TEST_F(EmbedderTest, RootRenderTargetReportsUnavailableBackingStore) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor();
+  builder.SetDartEntrypoint("render_implicit_view");
+  builder.GetCompositor().create_backing_store_callback =
+      [](const FlutterBackingStoreConfig* config,
+         FlutterBackingStore* backing_store_out,
+         void* user_data) { return false; };
+
+  fml::AutoResetWaitableEvent latch;
+  context.GetCompositor().SetNextRootRenderTargetResultCallback(
+      [&](const FlutterPresentRenderTargetInfo& info) {
+        EXPECT_EQ(info.status,
+                  kFlutterPresentRenderTargetStatusRenderTargetUnavailable);
+        EXPECT_EQ(info.backing_store, nullptr);
+        EXPECT_EQ(info.backing_store_present_info, nullptr);
+        latch.Signal();
+        return true;
+      });
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 300;
+  event.height = 200;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(latch.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 }
 
 //------------------------------------------------------------------------------
@@ -1077,6 +1159,8 @@ TEST_F(EmbedderTest,
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1124,6 +1208,8 @@ TEST_F(EmbedderTest,
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1171,6 +1257,8 @@ TEST_F(EmbedderTest,
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1296,6 +1384,8 @@ TEST_F(EmbedderTest, NoLayerCreatedForTransparentOverlayOnTopOfPlatformLayer) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -1433,6 +1523,8 @@ TEST_F(EmbedderTest, NoLayerCreatedForNoOverlayOnTopOfPlatformLayer) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -2420,21 +2512,23 @@ TEST_F(EmbedderTest, BackingStoresCorrespondToTheirViews) {
       .collect_backing_store_callback = [](const FlutterBackingStore* renderer,
                                            void* user_data) { return true; },
       .avoid_backing_store_cache = false,
-      .present_render_target_callback =
-          [](const FlutterPresentRenderTargetInfo* info) {
-            if (info->backing_store == nullptr) {
+      .present_view_callback =
+          [](const FlutterPresentViewInfo* info) {
+            if (info->layers_count != 1 || info->layers == nullptr ||
+                info->layers[0] == nullptr ||
+                info->layers[0]->backing_store == nullptr) {
               ADD_FAILURE() << "Expected a backing store.";
               return false;
             }
             // Verify that the given backing store has the same view ID
             // as the target view.
-            int64_t store_view_id =
-                reinterpret_cast<int64_t>(info->backing_store->user_data);
-            EXPECT_EQ(store_view_id, info->target_id);
+            int64_t store_view_id = reinterpret_cast<int64_t>(
+                info->layers[0]->backing_store->user_data);
+            EXPECT_EQ(store_view_id, info->view_id);
             auto compositor_user_data =
                 reinterpret_cast<CompositorUserData*>(info->user_data);
             // Verify that the respective views are rendered.
-            switch (info->target_id) {
+            switch (info->view_id) {
               case 0:
                 compositor_user_data->latch_implicit.Signal();
                 break;
@@ -2650,6 +2744,8 @@ TEST_F(EmbedderTest, VerifyB143464703WithSoftwareBackend) {
           FlutterBackingStorePresentInfo present_info = {
               .struct_size = sizeof(FlutterBackingStorePresentInfo),
               .paint_region = &paint_region,
+              .frame_damage = nullptr,
+              .render_complete_sync_fd = -1,
           };
 
           FlutterLayer layer = {};
@@ -4041,10 +4137,10 @@ TEST_F(EmbedderTest, CanScheduleFrameForDisplay) {
   display.height = 1;
   display.device_pixel_ratio = 1.0;
 
-  ASSERT_EQ(FlutterEngineNotifyDisplayUpdate(
-                engine.get(), kFlutterEngineDisplaysUpdateTypeStartup,
-                &display, 1),
-            kSuccess);
+  ASSERT_EQ(
+      FlutterEngineNotifyDisplayUpdate(
+          engine.get(), kFlutterEngineDisplaysUpdateTypeStartup, &display, 1),
+      kSuccess);
   ASSERT_EQ(
       FlutterEngineSetViewDisplay(engine.get(), kFlutterImplicitViewId, 1),
       kSuccess);

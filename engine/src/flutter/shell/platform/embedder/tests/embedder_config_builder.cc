@@ -205,8 +205,11 @@ void EmbedderConfigBuilder::SetViewFocusChangeRequestCallback(
   context_.SetViewFocusChangeRequestCallback(callback);
 }
 
-void EmbedderConfigBuilder::SetCompositor(bool avoid_backing_store_cache) {
+void EmbedderConfigBuilder::SetCompositor(bool avoid_backing_store_cache,
+                                          bool use_present_layers_callback) {
   context_.SetupCompositor();
+  compositor_ = {};
+  project_args_.avio_extension_request = nullptr;
   auto& compositor = context_.GetCompositor();
   compositor_.struct_size = sizeof(compositor_);
   compositor_.user_data = &compositor;
@@ -225,10 +228,55 @@ void EmbedderConfigBuilder::SetCompositor(bool avoid_backing_store_cache) {
         return reinterpret_cast<EmbedderTestCompositor*>(user_data)
             ->CollectBackingStore(backing_store);
       };
+  if (use_present_layers_callback) {
+    compositor_.present_layers_callback = [](const FlutterLayer** layers,
+                                             size_t layers_count,
+                                             void* user_data) {
+      auto compositor = reinterpret_cast<EmbedderTestCompositor*>(user_data);
+      return compositor->Present(kFlutterImplicitViewId, layers, layers_count);
+    };
+  } else {
+    compositor_.present_view_callback = [](const FlutterPresentViewInfo* info) {
+      auto compositor =
+          reinterpret_cast<EmbedderTestCompositor*>(info->user_data);
+      return compositor->Present(info->view_id, info->layers,
+                                 info->layers_count);
+    };
+  }
+  compositor_.avoid_backing_store_cache = avoid_backing_store_cache;
+  compositor_.compositor_mode = kFlutterCompositorModeGeneric;
+  project_args_.compositor = &compositor_;
+}
+
+void EmbedderConfigBuilder::SetRootRenderTargetCompositor(
+    bool avoid_backing_store_cache,
+    FlutterAvioExtensionFeatures required_features) {
+  context_.SetupCompositor();
+  compositor_ = {};
+  auto& compositor = context_.GetCompositor();
+  compositor_.struct_size = sizeof(compositor_);
+  compositor_.user_data = &compositor;
+  compositor_.create_backing_store_callback =
+      [](const FlutterBackingStoreConfig* config,
+         FlutterBackingStore* backing_store_out, void* user_data) {
+        return reinterpret_cast<EmbedderTestCompositor*>(user_data)
+            ->CreateBackingStore(config, backing_store_out);
+      };
+  compositor_.collect_backing_store_callback =
+      [](const FlutterBackingStore* backing_store, void* user_data) {
+        return reinterpret_cast<EmbedderTestCompositor*>(user_data)
+            ->CollectBackingStore(backing_store);
+      };
   compositor_.present_render_target_callback =
       [](const FlutterPresentRenderTargetInfo* info) {
         auto compositor =
             reinterpret_cast<EmbedderTestCompositor*>(info->user_data);
+        if (!compositor->HandleRootRenderTargetResult(*info)) {
+          return false;
+        }
+        if (info->status != kFlutterPresentRenderTargetStatusPresented) {
+          return true;
+        }
         FlutterLayer layer = {
             .struct_size = sizeof(FlutterLayer),
             .type = kFlutterLayerContentTypeBackingStore,
@@ -248,6 +296,13 @@ void EmbedderConfigBuilder::SetCompositor(bool avoid_backing_store_cache) {
         return compositor->Present(info->target_id, layers, 1);
       };
   compositor_.avoid_backing_store_cache = avoid_backing_store_cache;
+  compositor_.compositor_mode = kFlutterCompositorModeRootRenderTarget;
+  avio_extension_request_ = {
+      .struct_size = sizeof(FlutterAvioExtensionRequest),
+      .version = FLUTTER_AVIO_EXTENSION_VERSION,
+      .required_features = required_features,
+  };
+  project_args_.avio_extension_request = &avio_extension_request_;
   project_args_.compositor = &compositor_;
 }
 

@@ -1049,24 +1049,9 @@ static void SetThreadPriority(FlutterThreadPriority priority) {
                                                   void* user_data                            //
                                                ) { return true; };
 
-  _compositor.present_render_target_callback = [](const FlutterPresentRenderTargetInfo* info) {
-    FlutterLayer layer = {
-        .struct_size = sizeof(FlutterLayer),
-        .type = kFlutterLayerContentTypeBackingStore,
-        .backing_store = info->backing_store,
-        .offset = FlutterPoint{0.0, 0.0},
-        .size = FlutterSize{0.0, 0.0},
-        .backing_store_present_info = const_cast<FlutterBackingStorePresentInfo*>(
-            info->backing_store_present_info),
-        .presentation_time = 0,
-        .shell_layer_role = kFlutterShellLayerRoleUnknown,
-        .shell_visual_identifier = 0,
-        .shell_visual_generation = 0,
-        .shell_chrome_model_serial = 0,
-    };
-    const FlutterLayer* layers[] = {&layer};
+  _compositor.present_view_callback = [](const FlutterPresentViewInfo* info) {
     return reinterpret_cast<flutter::FlutterCompositor*>(info->user_data)
-        ->Present(info->target_id, layers, 1);
+        ->Present(info->view_id, info->layers, info->layers_count);
   };
 
   _compositor.avoid_backing_store_cache = true;

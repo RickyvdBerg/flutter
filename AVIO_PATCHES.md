@@ -35,6 +35,7 @@ Contract for what these patches may and may not do:
 | 20 | [framework] Make MouseTracker device-update phase exception-safe | upstreamable bugfix | submit upstream |
 | 21 | Make DlRegion total over empty rect inputs | upstreamable bugfix (latent upstream infinite loop) | submit upstream |
 | 22 | [framework] Preserve scoped frame authority while ordering residual view work before input | permanent framework correctness fix | none while the shared build tree remains global |
+| 23 | Explicit root-target compositor mode and semantic extension negotiation | permanent ABI extension | none |
 
 ### Patch 22: scoped-frame authority and input ordering
 
@@ -56,38 +57,13 @@ absence of the superseded path. The Avio-side normative contract is
 
 ## Known baseline debt
 
-- `embedder_unittests`: the **layer-present contract test class** — superset
-  of the platform-view tests below. Any upstream test that arms the harness's
-  layer-array present callback (`SetNextPresentCallback(FlutterLayer**)`) or
-  exercises the compositor scene-decomposition contract
-  (`EmbedderTest.Compositor*`) hangs: the fork presents per render target via
-  `present_render_target_callback`, never as upstream layer arrays, so the
-  armed latch never counts down and the 300 s harness timeout kills the run.
-  ~40 of 159 embedder tests fall in this class. The fork's own ABI is covered
-  by the fork-added tests (`EmbedderDmabufMailboxTest.*`,
-  `EmbedderTest.VulkanImpellerCompositor*`,
-  `EmbedderTest.CanRenderImplicitViewUsingPresentRenderTargetCallback`) plus
-  Avio's integration validation. The current exclusion filter is maintained
-  in this repo's CI notes; regenerate per rebase if upstream adds tests.
-- Subset detail, the **embedded-platform-view test class**
-  (`*PlatformView*`, `EmbedderTest.CustomCompositorMustWorkWithCustomTaskRunner`,
-  `EmbedderTest.CompositorMustBeAbleToRenderToOpenGLFramebuffer`, and any
-  test whose Dart fixture calls `SceneBuilder.addPlatformView`) hangs or
-  aborts **by design**, not by defect. Mechanism: the fixture builds a scene
-  with a platform view (`fixtures/main.dart`), the test arms a latch counting
-  the compositor present callback (e.g. `embedder_gl_unittests.cc`), but the
-  explicit render-target path sees the platform-view entry in
-  `composition_order_` and exits early
-  (`embedder_external_view_embedder.cc`: "Explicit render-target presentation
-  does not support embedded platform views") after `frame->Submit()` —
-  `present_render_target_callback_` never fires, the latch never counts down,
-  and the 300 s test harness kills the run (SIGTERM/SIGABRT). Upstream's
-  tests expect Flutter to decompose scenes into backing-store/platform-view
-  layer sandwiches; Avio's contract (engine contract §1) makes the compositor
-  the sole composer of client content, so the fork only presents root render
-  targets. Pre-dates the 2026-06 curation (verified on the pre-cleanup tree).
-  Exclude the class with `--gtest_filter='-*PlatformView*:...'` when running
-  the suite.
+- ~~Generic embedder compositor and platform-view tests required broad
+  exclusions~~ FIXED by patch #23. Stock `present_layers_callback` /
+  `present_view_callback` semantics remain the default generic mode. Avio's
+  single-root behavior requires an explicit negotiated `RootRenderTarget`
+  mode, and every root submission returns a typed terminal result—including
+  unsupported platform-view, backing-store, and raster failures—rather than
+  abandoning a callback latch.
 - `embedder_unittests`: the **GL present-info damage family**
   (`EmbedderTest.PresentInfo*` and related populate-existing-damage render
   tests) hangs after rendering one frame — the OpenGL `present_with_info`
@@ -135,8 +111,8 @@ absence of the superseded path. The Avio-side normative contract is
 3. Pin the target SHA; create `avio/<new-ref>` from the current branch.
 4. `git rebase --onto <target> <old-merge-base> avio/<new-ref>`.
    Conflict hot zones: `shell/platform/embedder/embedder_external_view*`
-   (keep our present-per-render-target path; port upstream rendering fixes
-   into it), `impeller/renderer/backend/vulkan/**` (interface churn — adapt
+   (preserve upstream generic mode and port rendering fixes into the explicit
+   Avio root-target mode), `impeller/renderer/backend/vulkan/**` (interface churn — adapt
    our DmabufTextureSourceVK / timeline files to new virtuals),
    `mock_vulkan.cc` (merge feature advertising into upstream's walker).
 5. `git range-diff <old-base>..<old-branch> <target>..<new-branch>` — every
@@ -152,7 +128,9 @@ absence of the superseded path. The Avio-side normative contract is
    libflutter_linux_gtk.so gen_snapshot flutter_patched_sdk
    flutter/build/dart:copy_dart_sdk embedder_unittests shell_unittests
    impeller_unittests flow_unittests`.
-9. Run the four test suites (exclusions per "Known baseline debt").
+9. Run the four test suites. Only the GL present-info damage-family exclusion
+   remains for `embedder_unittests`; generic compositor and platform-view tests
+   must run.
 10. Rebuild Avio (`cargo build --profile profile`) — bindgen recompiles
     against the fork header and fails loudly on ABI drift — then run the
     validation matrix (Avio `docs/engine-contract.md` §11).

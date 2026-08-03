@@ -476,6 +476,7 @@ mixin WidgetsBinding
     _buildOwner = BuildOwner();
     buildOwner!.onBuildScheduled = _handleBuildScheduled;
     buildOwner!.onElementDirtied = _trackDirtyElementForViewScopedScheduling;
+    buildOwner!.onViewBuildScopeRetired = _retireViewBuildScope;
     platformDispatcher.onLocaleChanged = handleLocaleChanged;
     SystemChannels.navigation.setMethodCallHandler(_handleNavigationInvocation);
     SystemChannels.backGesture.setMethodCallHandler(_handleBackGestureInvocation);
@@ -1449,22 +1450,22 @@ mixin WidgetsBinding
   //      on a single display, route the frame request through
   //      [PlatformDispatcher.scheduleFrameForDisplayViews] instead of the
   //      global path.
+  //   4. Build only the independently owned [BuildScope]s admitted by the
+  //      engine callback before rendering those same views.
   //
-  // The dirty-view registry is cleared at the END of [drawFrame] — once
-  // the frame has processed the dirties, the next batch is independent.
-  // Dirties from `addPostFrameCallback` repopulate it and trigger the
-  // next [scheduleFrame].
+  // Each dirty entry is removed when its owning build scope returns. A later
+  // scope or post-frame callback that dirties the same view adds it again and
+  // therefore requests a distinct compositor-authorized opportunity.
 
-  /// Views (by `FlutterView.viewId`) whose Element trees have a pending
-  /// rebuild not yet processed.  Populated by
-  /// [_trackDirtyElementForViewScopedScheduling]; cleared at end of
-  /// [drawFrame].  Render-side dirties are NOT tracked here; they are
-  /// queried lazily from [PipelineOwner.hasDirtyForFrame].
+  /// Views whose independently owned [BuildScope] has unprocessed work.
   final Set<int> _dirtyBuildViewIds = <int>{};
 
-  /// Whether a dirty element could not be attributed to a [RenderView]
-  /// since the registry was last cleared. Forces the global frame path.
+  /// Whether unprocessed build work exists outside one view-owned scope.
   bool _hasUnattributableDirtyBuild = false;
+
+  void _retireViewBuildScope(int viewId) {
+    _dirtyBuildViewIds.remove(viewId);
+  }
 
   void _trackDirtyElementForViewScopedScheduling(BuildViewIdentity identity) {
     if (identity is AllBuildViews) {
@@ -1522,7 +1523,6 @@ mixin WidgetsBinding
         platformDispatcher.scheduleFrame();
         return;
       }
-      markViewsAwaitingScopedFrame(<int>[viewId]);
       platformDispatcher.scheduleFrameForDisplayViews(displayId, <int>[viewId]);
     }
   }
@@ -1594,7 +1594,6 @@ mixin WidgetsBinding
       super.dispatchPlatformScheduleFrame();
       return;
     }
-    markViewsAwaitingScopedFrame(scoped.viewIds);
     platformDispatcher.scheduleFrameForDisplayViews(scoped.displayId, scoped.viewIds);
   }
 
@@ -1628,6 +1627,53 @@ mixin WidgetsBinding
       return true;
     }());
     ensureVisualUpdate();
+  }
+
+  /// Builds exactly the widget scopes admitted for the current frame.
+  ///
+  /// A legacy global frame builds the non-view root scope followed by every
+  /// registered view scope. A compositor-scoped frame builds only the view IDs
+  /// in [activeFrameViewIds]. Each consumed dirty entry is settled as its
+  /// scope returns, so a mutation caused by a later scope remains pending for
+  /// another opportunity.
+  ///
+  /// Frame-driving subclasses such as the Flutter test binding must call this
+  /// instead of cloning the former global `BuildOwner.buildScope(rootElement)`
+  /// step.
+  @protected
+  void buildDirtyWidgetScopes() {
+    final BuildOwner owner = buildOwner!;
+    final Set<int>? activeViewIds = activeFrameViewIds;
+    if (activeViewIds == null) {
+      if (rootElement != null) {
+        owner.buildScope(rootElement!);
+        _hasUnattributableDirtyBuild = false;
+      }
+      for (final int viewId in owner.registeredViewBuildScopeIds()) {
+        if (owner.buildViewScope(viewId)) {
+          _dirtyBuildViewIds.remove(viewId);
+        }
+      }
+      return;
+    }
+
+    final List<int> orderedViewIds = activeViewIds.toList(growable: false)..sort();
+    for (final viewId in orderedViewIds) {
+      if (owner.buildViewScope(viewId)) {
+        _dirtyBuildViewIds.remove(viewId);
+      }
+    }
+  }
+
+  /// Requests the next frame when this frame left widget scopes unprocessed.
+  ///
+  /// This is build demand, so [WidgetsBinding] owns the follow-up. Render-side
+  /// residual work is scheduled independently by [RendererBinding].
+  @protected
+  void schedulePendingWidgetBuilds() {
+    if (_hasUnattributableDirtyBuild || _dirtyBuildViewIds.isNotEmpty) {
+      scheduleFrame();
+    }
   }
 
   /// Whether we are currently in a frame. This is used to verify
@@ -1738,9 +1784,7 @@ mixin WidgetsBinding
     }
 
     try {
-      if (rootElement != null) {
-        buildOwner!.buildScope(rootElement!);
-      }
+      buildDirtyWidgetScopes();
       super.drawFrame();
       assert(() {
         debugFrameWasSentToEngine = sendFramesToEngine;
@@ -1752,13 +1796,8 @@ mixin WidgetsBinding
         debugBuildingDirtyElements = false;
         return true;
       }());
-      // Clear the eagerly-tracked dirty-view registry: this frame's
-      // pipeline has just processed those dirties (build, layout, paint,
-      // composite, semantics).  Any new dirties from
-      // post-frame callbacks repopulate the set for the next frame.
-      _dirtyBuildViewIds.clear();
-      _hasUnattributableDirtyBuild = false;
     }
+    schedulePendingWidgetBuilds();
     if (!kReleaseMode) {
       if (_needToReportFirstFrame && sendFramesToEngine) {
         developer.Timeline.instantSync('Widgets built first useful frame');

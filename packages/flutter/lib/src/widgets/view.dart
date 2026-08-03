@@ -456,6 +456,11 @@ class _RawViewInternal extends RenderObjectWidget {
 class _RawViewElement extends RenderTreeRootElement {
   _RawViewElement(super.widget);
 
+  final BuildScope _buildScope = BuildScope();
+
+  @override
+  BuildScope get buildScope => _buildScope;
+
   late final BuildViewIdentity _buildViewIdentity = BuildViewIdentity.view(
     (widget as _RawViewInternal).view.viewId,
   );
@@ -515,6 +520,7 @@ class _RawViewElement extends RenderTreeRootElement {
   @override
   void mount(Element? parent, Object? newSlot) {
     super.mount(parent, newSlot);
+    owner!.registerViewBuildScope((widget as _RawViewInternal).view.viewId, this);
     assert(_effectivePipelineOwner.rootNode == null);
     _effectivePipelineOwner.rootNode = renderObject;
     _attachView();
@@ -566,6 +572,7 @@ class _RawViewElement extends RenderTreeRootElement {
   @override
   void activate() {
     super.activate();
+    owner!.registerViewBuildScope((widget as _RawViewInternal).view.viewId, this);
     assert(_effectivePipelineOwner.rootNode == null);
     _effectivePipelineOwner.rootNode = renderObject;
     _attachView();
@@ -573,6 +580,7 @@ class _RawViewElement extends RenderTreeRootElement {
 
   @override
   void deactivate() {
+    owner!.unregisterViewBuildScope((widget as _RawViewInternal).view.viewId, this);
     _detachView();
     assert(_effectivePipelineOwner.rootNode == renderObject);
     _effectivePipelineOwner.rootNode = null; // To satisfy the assert in the super class.
@@ -582,7 +590,10 @@ class _RawViewElement extends RenderTreeRootElement {
   @override
   void update(_RawViewInternal newWidget) {
     super.update(newWidget);
-    _updateChild();
+    // A parent view may update this configuration while only its own build
+    // scope is admitted. Preserve the nested view's coherent widget/render
+    // tree until its scope is admitted as well.
+    markNeedsBuild();
   }
 
   @override

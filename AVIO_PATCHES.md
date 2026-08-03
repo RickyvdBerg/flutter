@@ -57,7 +57,7 @@ already ancestors of the selected main target under their original commits.
 | 19 | [framework] Guard the remaining display lookup in dirty-view forwarding | permanent framework fix | none |
 | 20 | [framework] Make MouseTracker device-update phase exception-safe | upstreamable bugfix | submit upstream |
 | 21 | Make DlRegion total over empty rect inputs | upstreamable bugfix (latent upstream infinite loop) | submit upstream |
-| 22 | [framework] Preserve scoped frame authority while ordering residual view work before input | permanent framework correctness fix | none while the shared build tree remains global |
+| 22 | [framework] Preserve scoped render authority and schedule residual view work | permanent framework correctness fix; input-queue portion superseded by #31 | none while Avio carries view-scoped frame admission |
 | 23 | Explicit root-target compositor mode and semantic extension negotiation | permanent ABI extension | none |
 | 24 | Engine-local vsync leases and exact per-target frame-opportunity terminality | permanent ABI/lifecycle extension | none |
 | 25 | Soften UberSDF antialiasing with high precision and thin-stroke coverage | visual correctness fork | partial overlap with #188821/#189224; retain until equivalent thin-stroke goldens pass upstream behavior |
@@ -66,6 +66,7 @@ already ancestors of the selected main target under their original commits.
 | 28 | Keep normalized degrees below a full circle | upstreamable Impeller correctness fix | submit upstream |
 | 29 | [framework] Maintain typed O(1) element-to-view ownership | permanent framework correctness/performance fix | none while Avio carries view-scoped frame admission |
 | 30 | [framework] Route texture frames to their exact render consumers | upstream-aligned framework/engine fix adapted for compositor pacing | open: flutter/flutter#179874 |
+| 31 | [framework] Give each View an independently admitted BuildScope | permanent framework correctness fix; deletes #22's deferred-input compensation | none while Avio carries view-scoped frame admission |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -87,19 +88,20 @@ queue submission retires its never-executed ID immediately; failure to register
 the timeline callback waits for the exact submitted value and otherwise leaves
 the ID pending rather than asserting unsafe GPU completion.
 
-### Patch 22: scoped-frame authority and input ordering
+### Patch 22: scoped render authority
 
 A framework frame carrying `activeFrameViewIds` may render only those view
-IDs. If the shared widget build dirties another view, the framework schedules a
-separate compositor-authorized frame for that residual work, preserving
-view-scoped dispatch whenever the dirty set resolves to one display. Pointer
-dispatch and post-frame mouse re-hit-testing for that exact view wait for its
-frame, using a bounded per-view queue that is discarded with the view.
+IDs. Residual render work schedules a separate compositor-authorized frame,
+preserving view-scoped dispatch whenever the dirty set resolves to one display.
+Patch #31 supersedes this patch's original deferred-pointer compensation by
+removing the shared widget-build condition that required it.
 
 Never restore the superseded `frameRenderViews` widening path from
 `7a007de9ffc`: synchronously rendering dirty siblings produces presents without
-compositor grants and can overload the embedder pipeline. The focused
-regression is
+compositor grants and can overload the embedder pipeline. Never restore the
+superseded deferred-pointer queue either: its finite overflow path rewrote real
+down/up sequences because it compensated below the shared-build violation. The
+focused regressions are `packages/flutter/test/widgets/view_test.dart` and
 `packages/flutter/test/widgets/view_scoped_frame_scheduling_test.dart`;
 `avio-verify-patches.sh` asserts both the replacement primitives and the
 absence of the superseded path. The Avio-side normative contract is
@@ -174,6 +176,28 @@ request work while the compositor-issued frame opportunity remains the sole
 cadence authority. Never add `Engine::ScheduleFrame` to
 `EmbedderEngine::PublishDmabufTexture`; that would widen one producer update
 back into a global frame.
+
+### Patch 31: View-owned build scopes
+
+Each real `View` owns and registers one native framework `BuildScope` with its
+`BuildOwner`. `WidgetsBinding` resolves the engine-admitted view IDs through
+that O(1) registry and builds only those scopes before rendering the same set.
+A global frame builds the non-view root followed by every registered view in
+stable ID order. Dirty entries settle as their scope returns, so a later scope
+dirtying an already-built sibling remains demand for another opportunity and
+requests that opportunity at the end of the current widget frame.
+Retiring a view also retires its scheduler custody at the same lifecycle edge,
+so a removed scope cannot leave a stale ID widening later frame requests.
+
+This keeps an inactive view on its last coherent widget, render, and hit-test
+tree. Pointer events therefore stay on Flutter's ordinary ordered dispatch
+path; there is no Avio backlog, overflow policy, synthetic cancel, or wait for
+KMS presentation. A parent-driven update to a nested `View` marks that view's
+own scope dirty instead of synchronously crossing the scope boundary. The
+frame-driving Flutter test binding calls the same protected build operation as
+production so conformance cannot drift behind a cloned global-build step. A
+binding-level regression test admits one of two dirty views and pins that the
+unprocessed scope requests the next frame before its demand can be forgotten.
 
 ## Known baseline debt
 

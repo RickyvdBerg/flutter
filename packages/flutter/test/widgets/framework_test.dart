@@ -1671,7 +1671,7 @@ void main() {
           'caused by an ancestor element failing to implement visitChildren correctly, thus '
           'preventing some or all of its descendants from being correctly deactivated.\n'
           'The root of the build scope was:\n'
-          '  [root]\n'
+          '  _RawViewInternal-[_DeprecatedRawViewKey TestFlutterView#00000]\n'
           'The offending element (which does not appear to be a descendant of the root of '
           'the build scope) was:\n'
           '  _StatefulLeaf-[GlobalKey#00000]',

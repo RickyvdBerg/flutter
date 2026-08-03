@@ -2454,7 +2454,7 @@ class AutomatedTestWidgetsFlutterBinding extends TestWidgetsFlutterBinding {
     assert(inTest);
     try {
       debugBuildingDirtyElements = true;
-      buildOwner!.buildScope(rootElement!);
+      buildDirtyWidgetScopes();
       if (_phase != EnginePhase.build) {
         rootPipelineOwner.flushLayout();
         if (_phase != EnginePhase.layout) {
@@ -2480,6 +2480,7 @@ class AutomatedTestWidgetsFlutterBinding extends TestWidgetsFlutterBinding {
     } finally {
       debugBuildingDirtyElements = false;
     }
+    schedulePendingWidgetBuilds();
   }
 
   @override

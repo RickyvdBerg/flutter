@@ -2702,11 +2702,13 @@ sealed class BuildViewIdentity {
 
 /// A build mutation whose affected view cannot be narrowed safely.
 final class AllBuildViews extends BuildViewIdentity {
+  /// Creates the explicit all-views identity.
   const AllBuildViews();
 }
 
 /// A build mutation owned by exactly one Flutter view.
 final class SingleBuildView extends BuildViewIdentity {
+  /// Creates an identity for [viewId].
   const SingleBuildView(this.viewId);
 
   /// The owning `FlutterView.viewId`.
@@ -2966,6 +2968,60 @@ class BuildOwner {
   /// attribution is O(1) here. An [AllBuildViews] value is an explicit
   /// fail-safe result, not a missing lookup.
   void Function(BuildViewIdentity identity)? onElementDirtied;
+
+  /// Called when a view-owned [BuildScope] leaves this owner.
+  ///
+  /// Bindings use this lifecycle edge to retire scheduling custody for work
+  /// that disappeared with the view, rather than carrying a stale view ID into
+  /// later frame requests.
+  void Function(int viewId)? onViewBuildScopeRetired;
+
+  final Map<int, Element> _viewBuildScopeRoots = <int, Element>{};
+
+  /// Registers the root element for one view-owned [BuildScope].
+  ///
+  /// This is framework-internal plumbing between [View] and [WidgetsBinding].
+  /// Keeping the registry on the [BuildOwner] makes a scoped frame an O(1)
+  /// lookup instead of another walk through the shared element tree.
+  @internal
+  void registerViewBuildScope(int viewId, Element root) {
+    assert(root.owner == this);
+    final Element? previous = _viewBuildScopeRoots[viewId];
+    if (previous != null && !identical(previous, root)) {
+      throw FlutterError('A build scope is already registered for view $viewId.');
+    }
+    _viewBuildScopeRoots[viewId] = root;
+  }
+
+  /// Retires [root] as the build-scope root for [viewId].
+  @internal
+  void unregisterViewBuildScope(int viewId, Element root) {
+    if (identical(_viewBuildScopeRoots[viewId], root)) {
+      _viewBuildScopeRoots.remove(viewId);
+      onViewBuildScopeRetired?.call(viewId);
+    }
+  }
+
+  /// A deterministic snapshot of the currently registered view IDs.
+  @internal
+  List<int> registeredViewBuildScopeIds() {
+    return _viewBuildScopeRoots.keys.toList(growable: false)..sort();
+  }
+
+  /// Rebuilds the exact view-owned scope identified by [viewId].
+  ///
+  /// Returns false when the view was retired before this frame reached it.
+  /// The caller can then leave that view's dirty entry unsettled rather
+  /// than inferring that unknown work completed.
+  @internal
+  bool buildViewScope(int viewId) {
+    final Element? root = _viewBuildScopeRoots[viewId];
+    if (root == null) {
+      return false;
+    }
+    buildScope(root);
+    return true;
+  }
 
   final _InactiveElements _inactiveElements = _InactiveElements();
 

@@ -159,14 +159,28 @@ need "scoped renderer consumes only active view ids" \
   $W/lib/src/rendering/binding.dart 'for \(final int viewId in activeViewIds\)'
 need "residual render work gets a follow-up frame" \
   $W/lib/src/rendering/binding.dart '_scheduleResidualRenderWork'
-need "typed scoped-request state gates exact-view input" \
-  $W/lib/src/rendering/binding.dart 'markViewsAwaitingScopedFrame'
-need "deferred pointer input is bounded per view" \
-  $W/lib/src/rendering/binding.dart 'class _DeferredPointerEventQueue'
+need "View roots own independent build scopes" \
+  $W/lib/src/widgets/view.dart 'final BuildScope _buildScope'
+need "BuildOwner indexes view build scopes" \
+  $W/lib/src/widgets/framework.dart 'registerViewBuildScope'
+need "widgets build only admitted view scopes" \
+  $W/lib/src/widgets/binding.dart 'owner\.buildViewScope\(viewId\)'
+need "dirty-view settlement occurs at the owning scope" \
+  $W/lib/src/widgets/binding.dart '_dirtyBuildViewIds\.remove\(viewId\)'
+need "unsettled widget scopes request another opportunity" \
+  $W/lib/src/widgets/binding.dart 'schedulePendingWidgetBuilds\(\)'
+need "retired views release build-scheduling custody" \
+  $W/lib/src/widgets/binding.dart 'onViewBuildScopeRetired = _retireViewBuildScope'
+need "test frames use the production build-scope operation" \
+  packages/flutter_test/lib/src/binding.dart 'buildDirtyWidgetScopes\(\)'
+need "test frames use the production residual-build operation" \
+  packages/flutter_test/lib/src/binding.dart 'schedulePendingWidgetBuilds\(\)'
+absent_in "deferred pointer queue below the build-scope invariant" \
+  $W/lib/src/rendering/binding.dart '_DeferredPointerEventQueue'
+absent_in "synthetic pointer terminal on scoped-frame delay" \
+  $W/lib/src/rendering/binding.dart '_collapseToTerminalState'
 need "post-frame mouse updates remain view-scoped" \
   $W/lib/src/rendering/mouse_tracker.dart 'updateDevicesForViews'
-need "widgets scheduler marks scoped requests before dispatch" \
-  $W/lib/src/widgets/binding.dart 'markViewsAwaitingScopedFrame\(scoped.viewIds\)'
 need "elements carry typed view ownership" \
   $W/lib/src/widgets/framework.dart 'sealed class BuildViewIdentity'
 need "View boundaries seal one child identity" \
@@ -181,16 +195,19 @@ absent_in "dirty-mark RenderView ancestor walk" \
   'findAncestorRenderObjectOfType<RenderView>'
 need "scoped-frame authority regression test" \
   $W/test/widgets/view_scoped_frame_scheduling_test.dart \
-  'scoped frame defers dirty non-active view and its input'
-need "deferred-hover coalescing regression test" \
+  'scoped frame leaves inactive view coherent and its input live'
+need "view BuildScope isolation regression test" \
+  $W/test/widgets/view_test.dart \
+  'view build scopes isolate dirty sibling trees'
+need "nested View updates remain behind their own scope" \
+  $W/test/widgets/view_test.dart \
+  'parent updates cannot rebuild a nested view outside its scope'
+need "residual widget demand schedules another scoped frame" \
+  $W/test/widgets/view_scoped_build_scheduling_test.dart \
+  'unprocessed view scope requests another frame opportunity'
+need "structural pointer preservation regression test" \
   $W/test/widgets/view_scoped_frame_scheduling_test.dart \
-  'deferred hover events coalesce'
-need "view-removal input retirement regression test" \
-  $W/test/widgets/view_scoped_frame_scheduling_test.dart \
-  'removing a view retires its scoped wait and deferred input'
-need "bounded deferred-input regression test" \
-  $W/test/widgets/view_scoped_frame_scheduling_test.dart \
-  'deferred pointer backlog is bounded'
+  'scoped render demand never rewrites structural pointer events'
 absent_in "cross-view frameRenderViews widening (forbidden, patch #22)" \
   $W/lib/src/rendering/binding.dart 'frameRenderViews'
 

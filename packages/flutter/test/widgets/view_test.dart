@@ -152,7 +152,7 @@ void main() {
     final probeKey = GlobalKey<_DirtyProbeState>();
     final identities = <BuildViewIdentity>[];
     final BuildOwner owner = tester.binding.buildOwner!;
-    final previousCallback = owner.onElementDirtied;
+    final void Function(BuildViewIdentity)? previousCallback = owner.onElementDirtied;
     owner.onElementDirtied = (BuildViewIdentity identity) {
       identities.add(identity);
       previousCallback?.call(identity);
@@ -190,6 +190,122 @@ void main() {
     probeKey.currentState!.markDirty();
     expect(identities.single, isA<SingleBuildView>());
     expect((identities.single as SingleBuildView).viewId, secondView.viewId);
+    final int buildsBeforeScopedFlush = probeKey.currentState!.buildCount;
+    expect(owner.buildViewScope(firstView.viewId), isTrue);
+    expect(probeKey.currentState!.buildCount, buildsBeforeScopedFlush);
+    expect(owner.buildViewScope(secondView.viewId), isTrue);
+    expect(probeKey.currentState!.buildCount, buildsBeforeScopedFlush + 1);
+  });
+
+  testWidgets('view build scopes isolate dirty sibling trees', (WidgetTester tester) async {
+    final firstView = FakeView(tester.view, viewId: 301);
+    final secondView = FakeView(tester.view, viewId: 302);
+    final firstKey = GlobalKey<_DirtyProbeState>();
+    final secondKey = GlobalKey<_DirtyProbeState>();
+
+    await tester.pumpWidget(
+      wrapWithView: false,
+      ViewCollection(
+        views: <Widget>[
+          View(
+            view: firstView,
+            child: _DirtyProbe(key: firstKey, child: const SizedBox()),
+          ),
+          View(
+            view: secondView,
+            child: _DirtyProbe(key: secondKey, child: const SizedBox()),
+          ),
+        ],
+      ),
+    );
+
+    final BuildOwner owner = tester.binding.buildOwner!;
+    final int firstBuilds = firstKey.currentState!.buildCount;
+    final int secondBuilds = secondKey.currentState!.buildCount;
+    firstKey.currentState!.markDirty();
+    secondKey.currentState!.markDirty();
+
+    expect(owner.buildViewScope(firstView.viewId), isTrue);
+    expect(firstKey.currentState!.buildCount, firstBuilds + 1);
+    expect(secondKey.currentState!.buildCount, secondBuilds);
+
+    expect(owner.buildViewScope(secondView.viewId), isTrue);
+    expect(secondKey.currentState!.buildCount, secondBuilds + 1);
+  });
+
+  testWidgets('parent updates cannot rebuild a nested view outside its scope', (
+    WidgetTester tester,
+  ) async {
+    final outerView = FakeView(tester.view, viewId: 401);
+    final nestedView = FakeView(tester.view, viewId: 402);
+    late StateSetter updateOuter;
+    var configuredLabel = 'initial';
+    var presentedLabel = '';
+    var nestedBuilds = 0;
+
+    await tester.pumpWidget(
+      wrapWithView: false,
+      ViewCollection(
+        views: <Widget>[
+          View(
+            view: outerView,
+            child: StatefulBuilder(
+              builder: (BuildContext context, StateSetter setState) {
+                updateOuter = setState;
+                return ViewAnchor(
+                  view: View(
+                    view: nestedView,
+                    child: Builder(
+                      builder: (BuildContext context) {
+                        nestedBuilds += 1;
+                        presentedLabel = configuredLabel;
+                        return const SizedBox();
+                      },
+                    ),
+                  ),
+                  child: const SizedBox(),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+
+    expect(nestedBuilds, 1);
+    expect(presentedLabel, 'initial');
+
+    updateOuter(() => configuredLabel = 'updated');
+    final BuildOwner owner = tester.binding.buildOwner!;
+    expect(owner.buildViewScope(outerView.viewId), isTrue);
+    expect(nestedBuilds, 1);
+    expect(presentedLabel, 'initial');
+
+    expect(owner.buildViewScope(nestedView.viewId), isTrue);
+    expect(nestedBuilds, 2);
+    expect(presentedLabel, 'updated');
+  });
+
+  testWidgets('retiring a view retires its build-scheduling custody', (WidgetTester tester) async {
+    final retiredView = FakeView(tester.view, viewId: 403);
+    final BuildOwner owner = tester.binding.buildOwner!;
+    final retiredViewIds = <int>[];
+    final void Function(int viewId)? previousCallback = owner.onViewBuildScopeRetired;
+    owner.onViewBuildScopeRetired = (int viewId) {
+      retiredViewIds.add(viewId);
+      previousCallback?.call(viewId);
+    };
+    addTearDown(() => owner.onViewBuildScopeRetired = previousCallback);
+
+    await tester.pumpWidget(
+      wrapWithView: false,
+      ViewCollection(
+        views: <Widget>[View(view: retiredView, child: const SizedBox())],
+      ),
+    );
+    await tester.pumpWidget(wrapWithView: false, const ViewCollection(views: <Widget>[]));
+
+    expect(retiredViewIds, contains(retiredView.viewId));
   });
 
   testWidgets('elements outside a view carry explicit all-views authority', (
@@ -198,7 +314,7 @@ void main() {
     final probeKey = GlobalKey<_DirtyProbeState>();
     final identities = <BuildViewIdentity>[];
     final BuildOwner owner = tester.binding.buildOwner!;
-    final previousCallback = owner.onElementDirtied;
+    final void Function(BuildViewIdentity)? previousCallback = owner.onElementDirtied;
     owner.onElementDirtied = (BuildViewIdentity identity) {
       identities.add(identity);
       previousCallback?.call(identity);
@@ -870,12 +986,17 @@ class _DirtyProbe extends StatefulWidget {
 }
 
 class _DirtyProbeState extends State<_DirtyProbe> {
+  int buildCount = 0;
+
   void markDirty() {
     setState(() {});
   }
 
   @override
-  Widget build(BuildContext context) => widget.child;
+  Widget build(BuildContext context) {
+    buildCount += 1;
+    return widget.child;
+  }
 }
 
 class SpyRenderWidget extends SizedBox {

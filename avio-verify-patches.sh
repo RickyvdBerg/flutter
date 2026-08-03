@@ -58,6 +58,32 @@ absent_in "macOS desktop embedder root-target override" \
   $F/shell/platform/darwin/macos/framework/Source/FlutterEngine.mm \
   'present_render_target_callback'
 
+echo "--- Exact frame opportunities ---"
+need "exact opportunity feature negotiation" \
+  $F/shell/platform/embedder/embedder.h \
+  'kFlutterAvioExtensionFeatureFrameOpportunityOutcomes'
+need "engine-local opportunity conservation ledger" \
+  $F/common/frame_opportunity.h 'class FrameOpportunityRegistry'
+need "exact returned-opportunity cancellation ABI" \
+  $F/shell/platform/embedder/embedder.h \
+  'FlutterEngineCancelFrameOpportunity'
+need "scheduled return names exact targets" \
+  $F/shell/platform/embedder/embedder.h 'const FlutterViewId\* target_ids'
+need "typed per-target terminal outcomes" \
+  $F/shell/platform/embedder/embedder.h \
+  'kFlutterFrameOpportunityOutcomeBackpressured'
+absent_in "process-global vsync baton registry" \
+  $F/shell/platform/embedder/vsync_waiter_embedder.cc \
+  'PendingBatonRegistry|kMaxPendingBatons'
+absent_in "Animator frame-path IMPORTANT/high-water logging" \
+  $F/shell/common/animator.cc 'FML_LOG\(IMPORTANT\)|LogStateHighWatermarks'
+absent_in "platform-configuration frame-path IMPORTANT/high-water logging" \
+  $F/lib/ui/window/platform_configuration.cc \
+  'FML_LOG\(IMPORTANT\)|LogStateHighWatermarks'
+absent_in "signal/poll raster watchdog" \
+  $F/shell/common/shell.cc \
+  'raster_watchdog|RasterStallSigHandler|SIGUSR1|WATCHDOG:'
+
 echo "--- Explicit sync chain ---"
 need "render_complete_sync_fd ABI field" \
   $F/shell/platform/embedder/embedder.h 'render_complete_sync_fd'

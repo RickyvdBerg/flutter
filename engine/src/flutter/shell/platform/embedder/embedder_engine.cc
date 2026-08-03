@@ -8,8 +8,8 @@
 #include "flutter/shell/platform/embedder/vsync_waiter_embedder.h"
 
 #ifdef __linux__
-#include <set>
 #include <unistd.h>
+#include <set>
 
 #include "flutter/fml/file.h"
 #endif
@@ -101,7 +101,9 @@ EmbedderEngine::EmbedderEngine(
       shell_args_(std::make_unique<ShellArgs>(settings,
                                               on_create_platform_view,
                                               on_create_rasterizer)),
-      external_texture_resolver_(std::move(external_texture_resolver))
+      external_texture_resolver_(std::move(external_texture_resolver)),
+      avio_extension_features_(settings.avio_extension_features),
+      frame_opportunity_registry_(settings.frame_opportunity_registry)
 #ifdef __linux__
       ,
       dmabuf_mailbox_(std::make_unique<DmabufTextureMailbox>())
@@ -331,24 +333,112 @@ bool EmbedderEngine::DispatchSemanticsAction(int64_t view_id,
 bool EmbedderEngine::OnVsyncEvent(intptr_t baton,
                                   fml::TimePoint frame_start_time,
                                   fml::TimePoint frame_target_time) {
-  if (!IsValid()) {
+  if (!IsValid() ||
+      (avio_extension_features_ &
+       kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) != 0) {
     return false;
   }
 
-  return VsyncWaiterEmbedder::OnEmbedderVsync(
-      task_runners_, baton, frame_start_time, frame_target_time);
+  auto waiter = shell_->GetVsyncWaiter().lock();
+  return waiter &&
+         waiter->ReturnVsync(VsyncWaiter::kDefaultDisplayId, baton,
+                             frame_start_time, frame_target_time, std::nullopt);
 }
 
 bool EmbedderEngine::OnVsyncEventForDisplay(intptr_t baton,
                                             int64_t display_id,
                                             fml::TimePoint frame_start_time,
                                             fml::TimePoint frame_target_time) {
-  if (!IsValid()) {
+  if (!IsValid() ||
+      (avio_extension_features_ &
+       kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) != 0) {
     return false;
   }
 
-  return VsyncWaiterEmbedder::OnEmbedderVsyncForDisplay(
-      task_runners_, baton, display_id, frame_start_time, frame_target_time);
+  auto waiter = shell_->GetVsyncWaiter().lock();
+  return waiter && waiter->ReturnVsync(display_id, baton, frame_start_time,
+                                       frame_target_time, std::nullopt);
+}
+
+bool EmbedderEngine::OnVsyncEventForDisplayWithOpportunity(
+    intptr_t baton,
+    int64_t display_id,
+    uint64_t frame_opportunity_id,
+    const std::vector<int64_t>& target_ids,
+    fml::TimePoint frame_start_time,
+    fml::TimePoint frame_target_time) {
+  if (!IsValid() || frame_opportunity_id == 0 ||
+      (avio_extension_features_ &
+       kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) == 0 ||
+      !frame_opportunity_registry_ ||
+      !frame_opportunity_registry_->Open(frame_opportunity_id, display_id,
+                                         target_ids)) {
+    return false;
+  }
+
+  auto waiter = shell_->GetVsyncWaiter().lock();
+  if (waiter && waiter->ReturnVsync(display_id, baton, frame_start_time,
+                                    frame_target_time, frame_opportunity_id)) {
+    return true;
+  }
+  frame_opportunity_registry_->Abandon(frame_opportunity_id, display_id);
+  return false;
+}
+
+bool EmbedderEngine::CancelVsyncForDisplay(
+    intptr_t baton,
+    int64_t display_id,
+    VsyncWaiter::CancellationReason reason,
+    fml::closure completion) {
+  if (!IsValid() || (avio_extension_features_ &
+                     kFlutterAvioExtensionFeatureExactVsyncCancellation) == 0) {
+    return false;
+  }
+
+  auto waiter = shell_->GetVsyncWaiter().lock();
+  return waiter &&
+         waiter->CancelVsync(display_id, baton, reason, std::move(completion));
+}
+
+bool EmbedderEngine::CancelFrameOpportunity(
+    uint64_t frame_opportunity_id,
+    int64_t display_id,
+    VsyncWaiter::CancellationReason reason,
+    fml::closure completion) {
+  if (!IsValid() || !frame_opportunity_registry_ ||
+      (avio_extension_features_ &
+       kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) == 0) {
+    return false;
+  }
+
+  const FrameOpportunityOutcome outcome =
+      reason == VsyncWaiter::CancellationReason::kTargetRemoved
+          ? FrameOpportunityOutcome::kTargetRemoved
+          : FrameOpportunityOutcome::kCancelledByEpoch;
+  if (!frame_opportunity_registry_->Cancel(frame_opportunity_id, display_id,
+                                           outcome)) {
+    return false;
+  }
+
+  auto waiter = shell_->GetVsyncWaiter().lock();
+  if (waiter && waiter->CancelFrameOpportunity(display_id, frame_opportunity_id,
+                                               reason, completion)) {
+    return true;
+  }
+
+  auto cancel_on_ui = [engine = shell_->GetEngine(), display_id,
+                       frame_opportunity_id, reason,
+                       completion = std::move(completion)]() mutable {
+    if (engine) {
+      engine->CancelFrameOpportunity(display_id, frame_opportunity_id, reason);
+    }
+    if (completion) {
+      completion();
+    }
+  };
+  fml::TaskRunner::RunNowOrPostTask(shell_->GetTaskRunners().GetUITaskRunner(),
+                                    std::move(cancel_on_ui));
+  return true;
 }
 
 bool EmbedderEngine::SetViewDisplay(int64_t view_id, int64_t display_id) {
@@ -441,7 +531,8 @@ bool EmbedderEngine::ScheduleFrame(bool regenerate_layer_trees) {
   }
 
   auto ui_runner = shell_->GetTaskRunners().GetUITaskRunner();
-  auto schedule_frame = [engine = shell_->GetEngine(), regenerate_layer_trees]() {
+  auto schedule_frame = [engine = shell_->GetEngine(),
+                         regenerate_layer_trees]() {
     if (engine) {
       engine->ScheduleFrame(regenerate_layer_trees);
     }

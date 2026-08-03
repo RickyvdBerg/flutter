@@ -65,6 +65,7 @@ class Pipeline {
  public:
   using Resource = R;
   using ResourcePtr = std::unique_ptr<Resource>;
+  using RejectionCallback = std::function<void(ResourcePtr)>;
 
   /// Denotes a spot in the pipeline reserved for the producer to finish
   /// preparing a completed pipeline resource.
@@ -101,7 +102,12 @@ class Pipeline {
         result = continuation_(std::move(resource), trace_id_);
         continuation_ = nullptr;
         TRACE_EVENT_ASYNC_END0("flutter", "PipelineProduce", trace_id_);
-        TRACE_FLOW_STEP("flutter", "PipelineItem", trace_id_);
+        if (result.success) {
+          TRACE_FLOW_STEP("flutter", "PipelineItem", trace_id_);
+        } else {
+          TRACE_FLOW_END("flutter", "PipelineItem", trace_id_);
+          TRACE_EVENT_ASYNC_END0("flutter", "PipelineItem", trace_id_);
+        }
       }
       return result;
     }
@@ -165,7 +171,8 @@ class Pipeline {
   ///
   /// Prefer using |Produce|. ProducerContinuation returned by this method
   /// doesn't guarantee that the frame will be rendered.
-  ProducerContinuation ProduceIfEmpty() {
+  ProducerContinuation ProduceIfEmpty(
+      RejectionCallback rejection_callback = nullptr) {
     if (!empty_.TryWait()) {
       return {};
     }
@@ -176,9 +183,12 @@ class Pipeline {
     );
 
     return ProducerContinuation{
-        std::bind(&Pipeline::ProducerCommitIfEmpty, this, std::placeholders::_1,
-                  std::placeholders::_2),  // continuation
-        GetNextPipelineTraceID()};         // trace id
+        [this, rejection_callback = std::move(rejection_callback)](
+            ResourcePtr resource, size_t trace_id) mutable {
+          return ProducerCommitIfEmpty(std::move(resource), trace_id,
+                                       rejection_callback);
+        },
+        GetNextPipelineTraceID()};  // trace id
   }
 
   using Consumer = std::function<void(ResourcePtr)>;
@@ -206,8 +216,7 @@ class Pipeline {
 
     consumer(std::move(resource));
 
-    empty_.Signal();
-    --inflight_;
+    ReleaseReservation();
 
     TRACE_FLOW_END("flutter", "PipelineItem", trace_id);
     TRACE_EVENT_ASYNC_END0("flutter", "PipelineItem", trace_id);
@@ -226,6 +235,10 @@ class Pipeline {
   /// Commits a produced resource to the queue and signals the consumer that a
   /// resource is available.
   PipelineProduceResult ProducerCommit(ResourcePtr resource, size_t trace_id) {
+    if (!resource) {
+      ReleaseReservation();
+      return {.success = false, .is_first_item = false};
+    }
     bool is_first_item = false;
     {
       std::scoped_lock lock(queue_mutex_);
@@ -238,22 +251,40 @@ class Pipeline {
     return {.success = true, .is_first_item = is_first_item};
   }
 
-  PipelineProduceResult ProducerCommitIfEmpty(ResourcePtr resource,
-                                              size_t trace_id) {
+  PipelineProduceResult ProducerCommitIfEmpty(
+      ResourcePtr resource,
+      size_t trace_id,
+      const RejectionCallback& rejection_callback) {
+    bool rejected = !resource;
     {
       std::scoped_lock lock(queue_mutex_);
-      if (!queue_.empty()) {
-        // Bail if the queue is not empty, opens up spaces to produce other
-        // frames.
-        empty_.Signal();
-        return {.success = false, .is_first_item = false};
+      if (!rejected && queue_.empty()) {
+        queue_.emplace_back(std::move(resource), trace_id);
+      } else {
+        rejected = true;
       }
-      queue_.emplace_back(std::move(resource), trace_id);
+    }
+
+    if (rejected) {
+      ReleaseReservation();
+      if (resource && rejection_callback) {
+        rejection_callback(std::move(resource));
+      }
+      return {.success = false, .is_first_item = false};
     }
 
     // Ensure the queue mutex is not held as that would be a pessimization.
     available_.Signal();
     return {.success = true, .is_first_item = true};
+  }
+
+  void ReleaseReservation() {
+    empty_.Signal();
+    --inflight_;
+    FML_TRACE_COUNTER("flutter", "Pipeline Depth",
+                      reinterpret_cast<int64_t>(this),      //
+                      "frames in flight", inflight_.load()  //
+    );
   }
 
   FML_DISALLOW_COPY_AND_ASSIGN(Pipeline);

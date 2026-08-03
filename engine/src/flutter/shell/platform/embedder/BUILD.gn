@@ -392,6 +392,7 @@ if (enable_unittests) {
     sources = [
       "tests/embedder_frozen_unittests.cc",
       "tests/embedder_unittests.cc",
+      "tests/vsync_waiter_embedder_unittests.cc",
     ]
 
     deps = [ ":embedder_unittests_library" ]

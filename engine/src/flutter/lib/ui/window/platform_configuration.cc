@@ -38,39 +38,6 @@ PlatformConfiguration::PlatformConfiguration(
 
 PlatformConfiguration::~PlatformConfiguration() {}
 
-void PlatformConfiguration::LogContainerHighWatermarks(const char* reason) {
-  bool should_log = false;
-
-  if (metrics_.size() > metrics_high_water_) {
-    metrics_high_water_ = metrics_.size();
-    should_log = true;
-  }
-
-  if (last_microseconds_per_display_.size() >
-      last_microseconds_per_display_high_water_) {
-    last_microseconds_per_display_high_water_ =
-        last_microseconds_per_display_.size();
-    should_log = true;
-  }
-
-  if (pending_responses_.size() > pending_responses_high_water_) {
-    pending_responses_high_water_ = pending_responses_.size();
-    should_log = true;
-  }
-
-  if (!should_log) {
-    return;
-  }
-
-  FML_LOG(IMPORTANT) << "PlatformConfiguration high-water (" << reason
-                     << "): metrics=" << metrics_high_water_
-                     << ", display_timestamps="
-                     << last_microseconds_per_display_high_water_
-                     << ", pending_responses="
-                     << pending_responses_high_water_
-                     << ", total_responses_created=" << (next_response_id_ - 1);
-}
-
 void PlatformConfiguration::DidCreateIsolate() {
   Dart_Handle library = Dart_LookupLibrary(tonic::ToDart("dart:ui"));
 
@@ -138,7 +105,6 @@ bool PlatformConfiguration::AddView(int64_t view_id,
     FML_LOG(ERROR) << "View #" << view_id << " already exists.";
     return false;
   }
-  LogContainerHighWatermarks("AddView");
 
   std::shared_ptr<tonic::DartState> dart_state = add_view_.dart_state().lock();
   if (!dart_state) {
@@ -193,7 +159,6 @@ bool PlatformConfiguration::RemoveView(int64_t view_id) {
     FML_LOG(ERROR) << "View #" << view_id << " doesn't exist.";
     return false;
   }
-  LogContainerHighWatermarks("RemoveView");
 
   std::shared_ptr<tonic::DartState> dart_state =
       remove_view_.dart_state().lock();
@@ -307,7 +272,8 @@ void PlatformConfiguration::UpdateDisplays(
     refresh_rates.push_back(display.refresh_rate);
   }
 
-  // Keep per-display frame timestamp state bounded to currently active displays.
+  // Keep per-display frame timestamp state bounded to currently active
+  // displays.
   std::unordered_set<int64_t> active_display_ids(ids.begin(), ids.end());
   for (auto it = last_microseconds_per_display_.begin();
        it != last_microseconds_per_display_.end();) {
@@ -317,7 +283,6 @@ void PlatformConfiguration::UpdateDisplays(
       ++it;
     }
   }
-  LogContainerHighWatermarks("UpdateDisplays");
 
   std::shared_ptr<tonic::DartState> dart_state =
       update_displays_.dart_state().lock();
@@ -429,7 +394,6 @@ void PlatformConfiguration::DispatchPlatformMessage(
   if (auto response = message->response()) {
     response_id = next_response_id_++;
     pending_responses_[response_id] = response;
-    LogContainerHighWatermarks("DispatchPlatformMessage");
   }
 
   tonic::CheckAndHandleError(
@@ -528,9 +492,9 @@ void PlatformConfiguration::BeginFrame(fml::TimePoint frameTime,
   if (last_microseconds_ > microseconds) {
     // Do not allow time traveling frametimes
     // github.com/flutter/flutter/issues/106277
-    // Demoted from ERROR: in multi-display compositors, minor timestamp regression
-    // is expected when two outputs at different refresh rates share a single
-    // BeginFrame callback. The clamping handles it correctly.
+    // Demoted from ERROR: in multi-display compositors, minor timestamp
+    // regression is expected when two outputs at different refresh rates share
+    // a single BeginFrame callback. The clamping handles it correctly.
     FML_LOG(WARNING)
         << "Reported frame time is older than the last one; clamping. "
         << microseconds << " < " << last_microseconds_
@@ -568,11 +532,10 @@ void PlatformConfiguration::BeginFrameForDisplay(
   // last_microseconds independently, so a 60Hz display's older timestamp
   // never gets clamped by a 240Hz display's newer timestamp.
   int64_t& last_us = last_microseconds_per_display_[display_id];
-  LogContainerHighWatermarks("BeginFrameForDisplay");
   if (last_us > microseconds) {
-    FML_LOG(WARNING)
-        << "Per-display frame time regression for display " << display_id
-        << "; clamping. " << microseconds << " < " << last_us;
+    FML_LOG(WARNING) << "Per-display frame time regression for display "
+                     << display_id << "; clamping. " << microseconds << " < "
+                     << last_us;
     microseconds = last_us;
   }
   last_us = microseconds;
@@ -595,10 +558,10 @@ void PlatformConfiguration::BeginFrameForDisplay(
     Dart_ListSetAt(view_id_list, i++, Dart_NewInteger(view_id));
   }
 
-  tonic::CheckAndHandleError(tonic::DartInvoke(
-      begin_frame_for_display_.Get(),
-      {Dart_NewInteger(microseconds), Dart_NewInteger(display_id),
-       view_id_list}));
+  tonic::CheckAndHandleError(
+      tonic::DartInvoke(begin_frame_for_display_.Get(),
+                        {Dart_NewInteger(microseconds),
+                         Dart_NewInteger(display_id), view_id_list}));
 
   UIDartState::Current()->FlushMicrotasksNow();
 

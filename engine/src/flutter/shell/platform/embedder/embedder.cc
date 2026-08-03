@@ -182,7 +182,9 @@ static FlutterEngineResult LogEmbedderError(FlutterEngineResult code,
 static constexpr FlutterAvioExtensionFeatures kAvioSupportedFeatures =
     kFlutterAvioExtensionFeaturePerDisplayVsync |
     kFlutterAvioExtensionFeatureRootRenderTarget |
-    kFlutterAvioExtensionFeatureExplicitRenderCompletion;
+    kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+    kFlutterAvioExtensionFeatureExactVsyncCancellation |
+    kFlutterAvioExtensionFeatureFrameOpportunityOutcomes;
 
 static const char* ValidateAvioExtensionRequest(
     const FlutterAvioExtensionRequest* request) {
@@ -198,7 +200,61 @@ static const char* ValidateAvioExtensionRequest(
   if ((request->required_features & ~kAvioSupportedFeatures) != 0) {
     return "The engine does not implement every required Avio extension.";
   }
+  if ((request->required_features &
+       kFlutterAvioExtensionFeatureExactVsyncCancellation) != 0 &&
+      (request->required_features &
+       kFlutterAvioExtensionFeaturePerDisplayVsync) == 0) {
+    return "Exact Vsync cancellation requires per-display Vsync.";
+  }
+  if ((request->required_features &
+       kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) != 0 &&
+      ((request->required_features &
+        kFlutterAvioExtensionFeatureRootRenderTarget) == 0 ||
+       (request->required_features &
+        kFlutterAvioExtensionFeatureExactVsyncCancellation) == 0 ||
+       (request->required_features &
+        kFlutterAvioExtensionFeatureExplicitRenderCompletion) == 0)) {
+    return "Exact frame outcomes require root targets, explicit render "
+           "completion, and exact Vsync cancellation.";
+  }
   return nullptr;
+}
+
+static FlutterFrameOpportunityOutcome ToPublicFrameOpportunityOutcome(
+    flutter::FrameOpportunityOutcome outcome) {
+  switch (outcome) {
+    case flutter::FrameOpportunityOutcome::kNoVisualChange:
+      return kFlutterFrameOpportunityOutcomeNoVisualChange;
+    case flutter::FrameOpportunityOutcome::kBackpressured:
+      return kFlutterFrameOpportunityOutcomeBackpressured;
+    case flutter::FrameOpportunityOutcome::kTargetRemoved:
+      return kFlutterFrameOpportunityOutcomeTargetRemoved;
+    case flutter::FrameOpportunityOutcome::kCancelledByEpoch:
+      return kFlutterFrameOpportunityOutcomeCancelledByEpoch;
+    case flutter::FrameOpportunityOutcome::kRasterFailed:
+      return kFlutterFrameOpportunityOutcomeRasterFailed;
+    case flutter::FrameOpportunityOutcome::kHostRejected:
+      return kFlutterFrameOpportunityOutcomeHostRejected;
+  }
+  FML_UNREACHABLE();
+}
+
+static void SendFrameOpportunityOutcome(
+    FlutterFrameOpportunityOutcomeCallback callback,
+    void* user_data,
+    flutter::FrameOpportunityId opportunity_id,
+    int64_t display_id,
+    int64_t target_id,
+    flutter::FrameOpportunityOutcome outcome) {
+  FlutterFrameOpportunityOutcomeInfo info = {
+      .struct_size = sizeof(FlutterFrameOpportunityOutcomeInfo),
+      .opportunity_id = opportunity_id,
+      .display_id = static_cast<FlutterEngineDisplayId>(display_id),
+      .target_id = target_id,
+      .outcome = ToPublicFrameOpportunityOutcome(outcome),
+      .user_data = user_data,
+  };
+  callback(&info);
 }
 
 static bool IsOpenGLRendererConfigValid(const FlutterRendererConfig* config) {
@@ -1782,7 +1838,9 @@ static fml::StatusOr<std::unique_ptr<flutter::EmbedderExternalViewEmbedder>>
 InferExternalViewEmbedderFromArgs(
     const FlutterCompositor* compositor,
     bool enable_impeller,
-    FlutterAvioExtensionFeatures negotiated_avio_features) {
+    FlutterAvioExtensionFeatures negotiated_avio_features,
+    const std::shared_ptr<flutter::FrameOpportunityRegistry>&
+        frame_opportunity_registry) {
   if (compositor == nullptr) {
     return std::unique_ptr<flutter::EmbedderExternalViewEmbedder>{nullptr};
   }
@@ -1831,6 +1889,14 @@ InferExternalViewEmbedderFromArgs(
         return fml::Status(fml::StatusCode::kInvalidArgument,
                            "Root-target compositor mode requires "
                            "present_render_target_callback.");
+      }
+      if ((negotiated_avio_features &
+           kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) != 0 &&
+          SAFE_ACCESS(compositor, frame_opportunity_outcome_callback,
+                      nullptr) == nullptr) {
+        return fml::Status(
+            fml::StatusCode::kInvalidArgument,
+            "Exact frame opportunities require an outcome callback.");
       }
       if (c_present_callback || c_present_view_callback) {
         return fml::Status(
@@ -1884,9 +1950,14 @@ InferExternalViewEmbedderFromArgs(
   flutter::EmbedderExternalViewEmbedder::PresentRenderTargetCallback
       present_render_target_callback;
   if (c_present_render_target_callback) {
+    auto c_frame_opportunity_callback =
+        SAFE_ACCESS(compositor, frame_opportunity_outcome_callback, nullptr);
     present_render_target_callback =
-        [c_present_render_target_callback, user_data = compositor->user_data](
-            FlutterViewId view_id, FlutterPresentRenderTargetStatus status,
+        [c_present_render_target_callback, c_frame_opportunity_callback,
+         frame_opportunity_registry, user_data = compositor->user_data](
+            FlutterViewId view_id, FlutterFrameOpportunityId opportunity_id,
+            FlutterEngineDisplayId display_id,
+            FlutterPresentRenderTargetStatus status,
             const FlutterBackingStore* backing_store,
             const FlutterBackingStorePresentInfo* backing_store_present_info) {
           TRACE_EVENT0("flutter", "FlutterCompositorPresentRenderTarget");
@@ -1897,8 +1968,28 @@ InferExternalViewEmbedderFromArgs(
               .backing_store_present_info = backing_store_present_info,
               .user_data = user_data,
               .status = status,
+              .opportunity_id = opportunity_id,
+              .display_id = display_id,
           };
-          return c_present_render_target_callback(&info);
+          if (frame_opportunity_registry) {
+            if (opportunity_id == 0 ||
+                !frame_opportunity_registry->ClaimTarget(
+                    opportunity_id, static_cast<int64_t>(display_id),
+                    view_id)) {
+              return false;
+            }
+          }
+
+          const bool accepted = c_present_render_target_callback(&info);
+          if (!accepted &&
+              status == kFlutterPresentRenderTargetStatusPresented &&
+              opportunity_id != 0 && c_frame_opportunity_callback != nullptr) {
+            SendFrameOpportunityOutcome(
+                c_frame_opportunity_callback, user_data, opportunity_id,
+                static_cast<int64_t>(display_id), view_id,
+                flutter::FrameOpportunityOutcome::kHostRejected);
+          }
+          return accepted;
         };
   }
 
@@ -2341,6 +2432,13 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
       avio_extension_request == nullptr
           ? 0
           : avio_extension_request->required_features;
+  if ((negotiated_avio_features &
+       kFlutterAvioExtensionFeaturePerDisplayVsync) != 0 &&
+      SAFE_ACCESS(args, vsync_for_display_callback, nullptr) == nullptr) {
+    return LOG_EMBEDDER_ERROR(
+        kInvalidArguments,
+        "Per-display Vsync was negotiated without its callback.");
+  }
 
   if (SAFE_ACCESS(args, assets_path, nullptr) == nullptr) {
     return LOG_EMBEDDER_ERROR(
@@ -2389,6 +2487,7 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
   }
 
   flutter::Settings settings = flutter::SettingsFromCommandLine(command_line);
+  settings.avio_extension_features = negotiated_avio_features;
 
   if (SAFE_ACCESS(args, aot_data, nullptr)) {
     if (SAFE_ACCESS(args, vm_snapshot_data, nullptr) ||
@@ -2610,8 +2709,43 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
   const FlutterCompositor* compositor_ptr =
       SAFE_ACCESS(args, compositor, nullptr);
 
+  std::shared_ptr<flutter::FrameOpportunityRegistry> frame_opportunity_registry;
+  if ((negotiated_avio_features &
+       kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) != 0) {
+    if (compositor_ptr == nullptr) {
+      return LOG_EMBEDDER_ERROR(
+          kInvalidArguments, "Exact frame opportunities require a compositor.");
+    }
+    auto c_opportunity_callback = SAFE_ACCESS(
+        compositor_ptr, frame_opportunity_outcome_callback, nullptr);
+    if (c_opportunity_callback == nullptr) {
+      return LOG_EMBEDDER_ERROR(
+          kInvalidArguments,
+          "Exact frame opportunities require an outcome callback.");
+    }
+    auto opportunity_user_data = compositor_ptr->user_data;
+    frame_opportunity_registry =
+        std::make_shared<flutter::FrameOpportunityRegistry>(
+            [c_opportunity_callback, opportunity_user_data](
+                flutter::FrameOpportunityId opportunity_id, int64_t display_id,
+                int64_t target_id, flutter::FrameOpportunityOutcome outcome) {
+              SendFrameOpportunityOutcome(c_opportunity_callback,
+                                          opportunity_user_data, opportunity_id,
+                                          display_id, target_id, outcome);
+            });
+    settings.frame_opportunity_registry = frame_opportunity_registry;
+    settings.on_frame_opportunity_outcome =
+        [frame_opportunity_registry](flutter::FrameOpportunityId opportunity_id,
+                                     int64_t display_id, int64_t target_id,
+                                     flutter::FrameOpportunityOutcome outcome) {
+          return frame_opportunity_registry->Complete(
+              opportunity_id, display_id, target_id, outcome);
+        };
+  }
+
   auto external_view_embedder_result = InferExternalViewEmbedderFromArgs(
-      compositor_ptr, settings.enable_impeller, negotiated_avio_features);
+      compositor_ptr, settings.enable_impeller, negotiated_avio_features,
+      frame_opportunity_registry);
   if (!external_view_embedder_result.ok()) {
     FML_LOG(ERROR) << external_view_embedder_result.status().message();
     return LOG_EMBEDDER_ERROR(kInvalidArguments,
@@ -3741,6 +3875,156 @@ FlutterEngineResult FlutterEngineOnVsyncForDisplay(
   return kSuccess;
 }
 
+FlutterEngineResult FlutterEngineOnVsyncForDisplayWithOpportunity(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    intptr_t baton,
+    FlutterEngineDisplayId display_id,
+    FlutterFrameOpportunityId opportunity_id,
+    const FlutterViewId* target_ids,
+    size_t target_ids_count,
+    uint64_t frame_start_time_nanos,
+    uint64_t frame_target_time_nanos) {
+  if (engine == nullptr || baton <= 0 || opportunity_id == 0 ||
+      target_ids == nullptr || target_ids_count == 0) {
+    return LOG_EMBEDDER_ERROR(
+        kInvalidArguments,
+        "Exact per-display Vsync requires an engine, baton, opportunity, and "
+        "targets.");
+  }
+
+  std::vector<int64_t> targets(target_ids, target_ids + target_ids_count);
+
+  auto start_time = fml::TimePoint::FromEpochDelta(
+      fml::TimeDelta::FromNanoseconds(frame_start_time_nanos));
+  auto target_time = fml::TimePoint::FromEpochDelta(
+      fml::TimeDelta::FromNanoseconds(frame_target_time_nanos));
+
+  if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)
+           ->OnVsyncEventForDisplayWithOpportunity(
+               baton, static_cast<int64_t>(display_id), opportunity_id, targets,
+               start_time, target_time)) {
+    return LOG_EMBEDDER_ERROR(
+        kInternalInconsistency,
+        "The exact per-display Vsync baton was not pending.");
+  }
+  return kSuccess;
+}
+
+FlutterEngineResult FlutterEngineCancelVsyncForDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    intptr_t baton,
+    FlutterEngineDisplayId display_id,
+    FlutterVsyncCancellationReason reason,
+    FlutterVsyncCancellationCallback callback,
+    void* user_data) {
+  if (engine == nullptr || baton <= 0 || callback == nullptr) {
+    return LOG_EMBEDDER_ERROR(
+        kInvalidArguments,
+        "Exact Vsync cancellation requires an engine, baton, and callback.");
+  }
+
+  flutter::VsyncWaiter::CancellationReason internal_reason;
+  switch (reason) {
+    case kFlutterVsyncCancellationReasonTransportLost:
+      internal_reason =
+          flutter::VsyncWaiter::CancellationReason::kTransportLost;
+      break;
+    case kFlutterVsyncCancellationReasonTargetRemoved:
+      internal_reason =
+          flutter::VsyncWaiter::CancellationReason::kTargetRemoved;
+      break;
+    case kFlutterVsyncCancellationReasonEpochReplaced:
+      internal_reason =
+          flutter::VsyncWaiter::CancellationReason::kEpochReplaced;
+      break;
+    case kFlutterVsyncCancellationReasonHostTerminated:
+      internal_reason =
+          flutter::VsyncWaiter::CancellationReason::kHostTerminated;
+      break;
+    default:
+      return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                                "Unknown Vsync cancellation reason.");
+  }
+
+  auto completion = [callback, user_data, baton, display_id, reason]() {
+    FlutterVsyncCancellationInfo info = {
+        .struct_size = sizeof(FlutterVsyncCancellationInfo),
+        .baton = baton,
+        .display_id = display_id,
+        .reason = reason,
+        .user_data = user_data,
+    };
+    callback(&info);
+  };
+
+  if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)
+           ->CancelVsyncForDisplay(baton, static_cast<int64_t>(display_id),
+                                   internal_reason, std::move(completion))) {
+    return LOG_EMBEDDER_ERROR(kInternalInconsistency,
+                              "The exact Vsync baton was not pending.");
+  }
+  return kSuccess;
+}
+
+FlutterEngineResult FlutterEngineCancelFrameOpportunity(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterFrameOpportunityId opportunity_id,
+    FlutterEngineDisplayId display_id,
+    FlutterVsyncCancellationReason reason,
+    FlutterFrameOpportunityCancellationCallback callback,
+    void* user_data) {
+  if (engine == nullptr || opportunity_id == 0 || callback == nullptr) {
+    return LOG_EMBEDDER_ERROR(
+        kInvalidArguments,
+        "Frame-opportunity cancellation requires an engine, opportunity, "
+        "and callback.");
+  }
+
+  flutter::VsyncWaiter::CancellationReason internal_reason;
+  switch (reason) {
+    case kFlutterVsyncCancellationReasonTransportLost:
+      internal_reason =
+          flutter::VsyncWaiter::CancellationReason::kTransportLost;
+      break;
+    case kFlutterVsyncCancellationReasonTargetRemoved:
+      internal_reason =
+          flutter::VsyncWaiter::CancellationReason::kTargetRemoved;
+      break;
+    case kFlutterVsyncCancellationReasonEpochReplaced:
+      internal_reason =
+          flutter::VsyncWaiter::CancellationReason::kEpochReplaced;
+      break;
+    case kFlutterVsyncCancellationReasonHostTerminated:
+      internal_reason =
+          flutter::VsyncWaiter::CancellationReason::kHostTerminated;
+      break;
+    default:
+      return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                                "Unknown frame cancellation reason.");
+  }
+
+  auto completion = [callback, user_data, opportunity_id, display_id,
+                     reason]() {
+    FlutterFrameOpportunityCancellationInfo info = {
+        .struct_size = sizeof(FlutterFrameOpportunityCancellationInfo),
+        .opportunity_id = opportunity_id,
+        .display_id = display_id,
+        .reason = reason,
+        .user_data = user_data,
+    };
+    callback(&info);
+  };
+
+  if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)
+           ->CancelFrameOpportunity(opportunity_id,
+                                    static_cast<int64_t>(display_id),
+                                    internal_reason, std::move(completion))) {
+    return LOG_EMBEDDER_ERROR(kInternalInconsistency,
+                              "The exact frame opportunity was not pending.");
+  }
+  return kSuccess;
+}
+
 FlutterEngineResult FlutterEngineGetAvioExtensionCapabilities(
     FlutterAvioExtensionCapabilities* capabilities) {
   if (capabilities == nullptr) {
@@ -4401,6 +4685,10 @@ FlutterEngineResult FlutterEngineGetProcAddresses(
            FlutterEngineScheduleFrameForDisplayViewsWithRequestKind);
   SET_PROC(GetAvioExtensionCapabilities,
            FlutterEngineGetAvioExtensionCapabilities);
+  SET_PROC(OnVsyncForDisplayWithOpportunity,
+           FlutterEngineOnVsyncForDisplayWithOpportunity);
+  SET_PROC(CancelVsyncForDisplay, FlutterEngineCancelVsyncForDisplay);
+  SET_PROC(CancelFrameOpportunity, FlutterEngineCancelFrameOpportunity);
 #undef SET_PROC
 
   return kSuccess;

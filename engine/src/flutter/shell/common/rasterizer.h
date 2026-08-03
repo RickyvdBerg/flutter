@@ -8,6 +8,7 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <set>
 #include <unordered_map>
 
 #include "flutter/common/settings.h"
@@ -68,6 +69,8 @@ enum class DrawStatus {
 enum class DrawSurfaceStatus {
   // The layer tree was successfully rasterized.
   kSuccess,
+  // The target was valid but damage proved no new pixels were needed.
+  kNoVisualChange,
   // The layer tree must be submitted again.
   //
   // This can occur on Android when switching the background surface to
@@ -178,6 +181,17 @@ class Rasterizer final : public SnapshotDelegate,
 
     virtual bool ShouldDiscardLayerTree(int64_t view_id,
                                         const flutter::LayerTree& tree) = 0;
+
+    virtual bool OnFrameOpportunityOutcome(FrameOpportunityId opportunity_id,
+                                           int64_t display_id,
+                                           int64_t target_id,
+                                           FrameOpportunityOutcome outcome) {
+      return false;
+    }
+
+    virtual void OnFrameOpportunityBackpressured(
+        int64_t display_id,
+        const std::set<int64_t>& target_ids) {}
   };
 
   //----------------------------------------------------------------------------
@@ -311,6 +325,13 @@ class Rasterizer final : public SnapshotDelegate,
   ///
   void DrawLastLayerTrees(
       std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder);
+
+  /// Per-display retained-tree draw. Only the named targets are consumed;
+  /// unrelated displays keep their retained trees and cannot inherit this
+  /// frame opportunity.
+  void DrawLastLayerTreesForViews(
+      std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder,
+      const std::set<int64_t>& view_ids);
 
   // |SnapshotDelegate|
   GrDirectContext* GetGrContext() override;
@@ -771,6 +792,14 @@ class Rasterizer final : public SnapshotDelegate,
   std::unique_ptr<FrameItem> DrawToSurfacesUnsafe(
       FrameTimingsRecorder& frame_timings_recorder,
       std::vector<std::unique_ptr<LayerTreeTask>> tasks);
+
+  bool CompleteFrameOpportunity(const FrameTimingsRecorder& recorder,
+                                int64_t target_id,
+                                FrameOpportunityOutcome outcome);
+  std::set<int64_t> CompleteFrameItemOpportunity(
+      const FrameItem& item,
+      FrameOpportunityOutcome outcome);
+  void CompleteBackpressuredFrameItem(const FrameItem& item);
 
   // Draws the layer tree to the specified view, assuming we have access to the
   // GPU.

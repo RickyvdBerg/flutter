@@ -732,6 +732,12 @@ void Engine::ScheduleFrameForDisplayViews(int64_t display_id,
   }
 }
 
+void Engine::CancelFrameOpportunity(int64_t display_id,
+                                    FrameOpportunityId opportunity_id,
+                                    VsyncWaiter::CancellationReason reason) {
+  animator_->CancelFrameOpportunity(display_id, opportunity_id, reason);
+}
+
 void Engine::ShutdownPlatformIsolates() {
   runtime_controller_->ShutdownPlatformIsolates();
 }

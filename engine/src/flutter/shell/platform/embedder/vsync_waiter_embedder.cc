@@ -4,154 +4,9 @@
 
 #include "flutter/shell/platform/embedder/vsync_waiter_embedder.h"
 
-#include <deque>
-#include <mutex>
-#include <optional>
-#include <unordered_map>
+#include <limits>
 
 namespace flutter {
-
-namespace {
-
-using DisplayId = VsyncWaiter::DisplayId;
-
-constexpr size_t kMaxPendingBatons = 512;
-
-struct BatonKey {
-  uintptr_t waiter_owner;
-  DisplayId display_id;
-
-  bool operator==(const BatonKey& other) const {
-    return waiter_owner == other.waiter_owner && display_id == other.display_id;
-  }
-};
-
-struct BatonKeyHasher {
-  size_t operator()(const BatonKey& key) const {
-    const size_t owner_hash = std::hash<uintptr_t>{}(key.waiter_owner);
-    const size_t display_hash = std::hash<DisplayId>{}(key.display_id);
-    return owner_hash ^ (display_hash + 0x9e3779b9 + (owner_hash << 6) +
-                         (owner_hash >> 2));
-  }
-};
-
-struct PendingBaton {
-  std::weak_ptr<VsyncWaiter> waiter;
-  BatonKey key;
-};
-
-class PendingBatonRegistry {
- public:
-  static PendingBatonRegistry& GetInstance() {
-    static PendingBatonRegistry instance;
-    return instance;
-  }
-
-  intptr_t Register(const std::weak_ptr<VsyncWaiter>& waiter,
-                    uintptr_t owner,
-                    DisplayId display_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    const BatonKey key{owner, display_id};
-
-    auto latest_it = latest_by_key_.find(key);
-    if (latest_it != latest_by_key_.end()) {
-      pending_by_token_.erase(latest_it->second);
-      latest_by_key_.erase(latest_it);
-    }
-
-    intptr_t token = next_token_++;
-    if (token == 0) {
-      token = next_token_++;
-    }
-
-    pending_by_token_[token] = PendingBaton{waiter, key};
-    latest_by_key_[key] = token;
-    insertion_order_.push_back(token);
-
-    TrimLocked();
-    return token;
-  }
-
-  std::optional<PendingBaton> Take(intptr_t token) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto pending_it = pending_by_token_.find(token);
-    if (pending_it == pending_by_token_.end()) {
-      return std::nullopt;
-    }
-
-    PendingBaton pending = std::move(pending_it->second);
-    pending_by_token_.erase(pending_it);
-
-    auto latest_it = latest_by_key_.find(pending.key);
-    if (latest_it != latest_by_key_.end() && latest_it->second == token) {
-      latest_by_key_.erase(latest_it);
-    }
-
-    return pending;
-  }
-
-  void RemoveOwner(uintptr_t owner) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    for (auto it = latest_by_key_.begin(); it != latest_by_key_.end();) {
-      if (it->first.waiter_owner != owner) {
-        ++it;
-        continue;
-      }
-      pending_by_token_.erase(it->second);
-      it = latest_by_key_.erase(it);
-    }
-
-    CompactOrderLocked();
-  }
-
- private:
-  void TrimLocked() {
-    while (pending_by_token_.size() > kMaxPendingBatons &&
-           !insertion_order_.empty()) {
-      const intptr_t oldest_token = insertion_order_.front();
-      insertion_order_.pop_front();
-
-      auto pending_it = pending_by_token_.find(oldest_token);
-      if (pending_it == pending_by_token_.end()) {
-        continue;
-      }
-
-      auto latest_it = latest_by_key_.find(pending_it->second.key);
-      if (latest_it != latest_by_key_.end() &&
-          latest_it->second == oldest_token) {
-        latest_by_key_.erase(latest_it);
-      }
-      pending_by_token_.erase(pending_it);
-    }
-
-    CompactOrderLocked();
-  }
-
-  void CompactOrderLocked() {
-    if (insertion_order_.size() <= (kMaxPendingBatons * 4)) {
-      return;
-    }
-
-    std::deque<intptr_t> compacted;
-    for (intptr_t token : insertion_order_) {
-      if (pending_by_token_.find(token) != pending_by_token_.end()) {
-        compacted.push_back(token);
-      }
-    }
-    insertion_order_.swap(compacted);
-  }
-
-  std::mutex mutex_;
-  intptr_t next_token_ = 1;
-  std::unordered_map<intptr_t, PendingBaton> pending_by_token_;
-  std::unordered_map<BatonKey, intptr_t, BatonKeyHasher> latest_by_key_;
-  std::deque<intptr_t> insertion_order_;
-};
-
-}  // namespace
 
 VsyncWaiterEmbedder::VsyncWaiterEmbedder(
     const VsyncCallback& vsync_callback,
@@ -173,15 +28,78 @@ VsyncWaiterEmbedder::VsyncWaiterEmbedder(
   FML_DCHECK(vsync_callback_);
 }
 
-VsyncWaiterEmbedder::~VsyncWaiterEmbedder() {
-  PendingBatonRegistry::GetInstance().RemoveOwner(
-      reinterpret_cast<uintptr_t>(this));
+VsyncWaiterEmbedder::~VsyncWaiterEmbedder() = default;
+
+intptr_t VsyncWaiterEmbedder::RegisterBaton(DisplayId display_id) {
+  std::scoped_lock lock(baton_mutex_);
+  FML_CHECK(batons_by_display_.find(display_id) == batons_by_display_.end())
+      << "A display cannot own more than one embedder vsync baton";
+  FML_CHECK(next_baton_ <=
+            static_cast<uint64_t>(std::numeric_limits<intptr_t>::max()))
+      << "Embedder vsync baton space exhausted";
+
+  const intptr_t baton = static_cast<intptr_t>(next_baton_++);
+  batons_by_display_.emplace(display_id, baton);
+  displays_by_baton_.emplace(baton, display_id);
+  return baton;
+}
+
+bool VsyncWaiterEmbedder::TakeBaton(DisplayId display_id, intptr_t baton) {
+  if (baton <= 0) {
+    return false;
+  }
+  std::scoped_lock lock(baton_mutex_);
+  auto display_it = batons_by_display_.find(display_id);
+  auto baton_it = displays_by_baton_.find(baton);
+  if (display_it == batons_by_display_.end() ||
+      baton_it == displays_by_baton_.end() || display_it->second != baton ||
+      baton_it->second != display_id) {
+    return false;
+  }
+  batons_by_display_.erase(display_it);
+  displays_by_baton_.erase(baton_it);
+  return true;
+}
+
+bool VsyncWaiterEmbedder::TakeBatonForOpportunity(
+    DisplayId display_id,
+    intptr_t baton,
+    FrameOpportunityId opportunity_id) {
+  if (baton <= 0 || opportunity_id == 0) {
+    return false;
+  }
+  std::scoped_lock lock(baton_mutex_);
+  auto display_it = batons_by_display_.find(display_id);
+  auto baton_it = displays_by_baton_.find(baton);
+  if (display_it == batons_by_display_.end() ||
+      baton_it == displays_by_baton_.end() || display_it->second != baton ||
+      baton_it->second != display_id ||
+      returned_opportunities_by_display_.find(display_id) !=
+          returned_opportunities_by_display_.end()) {
+    return false;
+  }
+  batons_by_display_.erase(display_it);
+  displays_by_baton_.erase(baton_it);
+  returned_opportunities_by_display_.emplace(display_id, opportunity_id);
+  return true;
+}
+
+bool VsyncWaiterEmbedder::TakeReturnedOpportunity(
+    DisplayId display_id,
+    FrameOpportunityId opportunity_id) {
+  std::scoped_lock lock(baton_mutex_);
+  auto opportunity = returned_opportunities_by_display_.find(display_id);
+  if (opportunity == returned_opportunities_by_display_.end() ||
+      opportunity->second != opportunity_id) {
+    return false;
+  }
+  returned_opportunities_by_display_.erase(opportunity);
+  return true;
 }
 
 // |VsyncWaiter|
 void VsyncWaiterEmbedder::AwaitVSync() {
-  intptr_t baton = PendingBatonRegistry::GetInstance().Register(
-      shared_from_this(), reinterpret_cast<uintptr_t>(this), kDefaultDisplayId);
+  intptr_t baton = RegisterBaton(kDefaultDisplayId);
   if (vsync_for_display_callback_) {
     vsync_for_display_callback_(baton, kDefaultDisplayId);
   } else {
@@ -191,8 +109,7 @@ void VsyncWaiterEmbedder::AwaitVSync() {
 
 // |VsyncWaiter| Per-display override.
 void VsyncWaiterEmbedder::AwaitVSync(DisplayId display_id) {
-  intptr_t baton = PendingBatonRegistry::GetInstance().Register(
-      shared_from_this(), reinterpret_cast<uintptr_t>(this), display_id);
+  intptr_t baton = RegisterBaton(display_id);
   if (vsync_for_display_callback_) {
     vsync_for_display_callback_(baton, display_id);
   } else {
@@ -202,33 +119,38 @@ void VsyncWaiterEmbedder::AwaitVSync(DisplayId display_id) {
   }
 }
 
-// static
-bool VsyncWaiterEmbedder::OnEmbedderVsync(
-    const flutter::TaskRunners& task_runners,
+bool VsyncWaiterEmbedder::ReturnVsync(
+    DisplayId display_id,
     intptr_t baton,
     fml::TimePoint frame_start_time,
-    fml::TimePoint frame_target_time) {
-  if (baton == 0) {
+    fml::TimePoint frame_target_time,
+    std::optional<uint64_t> frame_opportunity_id) {
+  const bool exact_opportunity = frame_opportunity_id.has_value();
+  if (exact_opportunity ? !TakeBatonForOpportunity(display_id, baton,
+                                                   frame_opportunity_id.value())
+                        : !TakeBaton(display_id, baton)) {
     return false;
   }
 
-  std::optional<PendingBaton> pending =
-      PendingBatonRegistry::GetInstance().Take(baton);
-  if (!pending.has_value()) {
-    return false;
-  }
-
-  std::weak_ptr<VsyncWaiter> weak_waiter = pending->waiter;
+  std::weak_ptr<VsyncWaiter> weak_waiter = shared_from_this();
 
   // If the time here is in the future, the contract for `FlutterEngineOnVsync`
   // says that the engine will only process the frame when the time becomes
   // current.
-  task_runners.GetUITaskRunner()->PostTaskForTime(
+  task_runners_.GetUITaskRunner()->PostTaskForTime(
       [frame_start_time, frame_target_time,
-       weak_waiter = std::move(weak_waiter)]() {
+       weak_waiter = std::move(weak_waiter), display_id,
+       frame_opportunity_id]() {
         auto vsync_waiter = weak_waiter.lock();
-        if (vsync_waiter) {
-          vsync_waiter->FireCallback(frame_start_time, frame_target_time);
+        auto embedder_waiter =
+            std::static_pointer_cast<VsyncWaiterEmbedder>(vsync_waiter);
+        if (embedder_waiter &&
+            (!frame_opportunity_id.has_value() ||
+             embedder_waiter->TakeReturnedOpportunity(
+                 display_id, frame_opportunity_id.value()))) {
+          vsync_waiter->FireCallback(
+              display_id, frame_start_time, frame_target_time,
+              /*pause_secondary_tasks=*/true, frame_opportunity_id);
         }
       },
       frame_start_time);
@@ -236,37 +158,25 @@ bool VsyncWaiterEmbedder::OnEmbedderVsync(
   return true;
 }
 
-// static
-bool VsyncWaiterEmbedder::OnEmbedderVsyncForDisplay(
-    const flutter::TaskRunners& task_runners,
-    intptr_t baton,
+bool VsyncWaiterEmbedder::CancelVsync(DisplayId display_id,
+                                      intptr_t baton,
+                                      CancellationReason reason,
+                                      fml::closure completion) {
+  if (!TakeBaton(display_id, baton)) {
+    return false;
+  }
+  return CancelCallback(display_id, reason, std::move(completion));
+}
+
+bool VsyncWaiterEmbedder::CancelFrameOpportunity(
     DisplayId display_id,
-    fml::TimePoint frame_start_time,
-    fml::TimePoint frame_target_time) {
-  if (baton == 0) {
+    FrameOpportunityId opportunity_id,
+    CancellationReason reason,
+    fml::closure completion) {
+  if (!TakeReturnedOpportunity(display_id, opportunity_id)) {
     return false;
   }
-
-  std::optional<PendingBaton> pending =
-      PendingBatonRegistry::GetInstance().Take(baton);
-  if (!pending.has_value()) {
-    return false;
-  }
-
-  std::weak_ptr<VsyncWaiter> weak_waiter = pending->waiter;
-
-  task_runners.GetUITaskRunner()->PostTaskForTime(
-      [frame_start_time, frame_target_time, display_id,
-       weak_waiter = std::move(weak_waiter)]() {
-        auto vsync_waiter = weak_waiter.lock();
-        if (vsync_waiter) {
-          vsync_waiter->FireCallback(display_id, frame_start_time,
-                                     frame_target_time);
-        }
-      },
-      frame_start_time);
-
-  return true;
+  return CancelCallback(display_id, reason, std::move(completion));
 }
 
 }  // namespace flutter

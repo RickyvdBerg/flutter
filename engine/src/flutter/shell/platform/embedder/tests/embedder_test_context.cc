@@ -320,5 +320,16 @@ void EmbedderTestContext::RunVsyncCallback(intptr_t baton) {
   vsync_callback_(baton);
 }
 
+void EmbedderTestContext::SetVsyncForDisplayCallback(
+    std::function<void(intptr_t, FlutterEngineDisplayId)> callback) {
+  vsync_for_display_callback_ = std::move(callback);
+}
+
+void EmbedderTestContext::RunVsyncForDisplayCallback(
+    intptr_t baton,
+    FlutterEngineDisplayId display_id) {
+  vsync_for_display_callback_(baton, display_id);
+}
+
 }  // namespace testing
 }  // namespace flutter

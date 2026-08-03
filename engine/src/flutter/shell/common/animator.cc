@@ -4,6 +4,8 @@
 
 #include "flutter/shell/common/animator.h"
 
+#include <algorithm>
+
 #include "flutter/common/constants.h"
 #include "flutter/flow/frame_timings.h"
 #include "flutter/fml/time/time_point.h"
@@ -94,56 +96,6 @@ Animator::Animator(Delegate& delegate,
 
 Animator::~Animator() = default;
 
-size_t Animator::TotalTrackedDisplayViews() const {
-  size_t total = 0;
-  for (const auto& entry : display_states_) {
-    total += entry.second.view_ids.size();
-  }
-  return total;
-}
-
-void Animator::LogStateHighWatermarks(const char* reason) {
-  bool should_log = false;
-
-  if (layer_trees_tasks_.size() > layer_trees_tasks_high_water_) {
-    layer_trees_tasks_high_water_ = layer_trees_tasks_.size();
-    should_log = true;
-  }
-
-  if (display_states_.size() > display_states_high_water_) {
-    display_states_high_water_ = display_states_.size();
-    should_log = true;
-  }
-
-  if (view_to_display_.size() > view_to_display_high_water_) {
-    view_to_display_high_water_ = view_to_display_.size();
-    should_log = true;
-  }
-
-  if (default_state_.view_ids.size() > default_view_ids_high_water_) {
-    default_view_ids_high_water_ = default_state_.view_ids.size();
-    should_log = true;
-  }
-
-  const size_t display_view_ids = TotalTrackedDisplayViews();
-  if (display_view_ids > display_view_ids_high_water_) {
-    display_view_ids_high_water_ = display_view_ids;
-    should_log = true;
-  }
-
-  if (!should_log) {
-    return;
-  }
-
-  FML_LOG(IMPORTANT) << "Animator high-water (" << reason
-                     << "): layer_trees_tasks=" << layer_trees_tasks_high_water_
-                     << ", display_states=" << display_states_high_water_
-                     << ", view_to_display=" << view_to_display_high_water_
-                     << ", default_views=" << default_view_ids_high_water_
-                     << ", display_views=" << display_view_ids_high_water_
-                     << ", render_calls_total=" << render_calls_total_;
-}
-
 void Animator::ScheduleImmediateFrame(uint64_t configure_serial) {
   pending_configure_serial_ = configure_serial;
 
@@ -209,11 +161,7 @@ void Animator::BeginFrame(
                                 "Animator::BeginFrame", flow_id_count,
                                 flow_ids.get());
 
-  while (!trace_flow_ids_.empty()) {
-    uint64_t trace_flow_id = trace_flow_ids_.front();
-    TRACE_FLOW_END("flutter", "PointerEvent", trace_flow_id);
-    trace_flow_ids_.pop_front();
-  }
+  EndTraceFlowIds();
 
   frame_scheduled_ = false;
   if (!preserve_regenerate_layer_trees) {
@@ -326,7 +274,6 @@ void Animator::Render(int64_t view_id,
                       std::unique_ptr<flutter::LayerTree> layer_tree,
                       float device_pixel_ratio) {
   has_rendered_ = true;
-  render_calls_total_++;
 
   if (!frame_timings_recorder_) {
     // Framework can directly call render with a built scene. A major reason is
@@ -347,13 +294,8 @@ void Animator::Render(int64_t view_id,
   // draw callbacks, which can emit multiple Render calls for the same view
   // before that display's frame drains. Replacing here prevents stale layer
   // trees from being replayed and keeps scanout deterministic.
-  const bool inserted_new_task =
-      layer_trees_tasks_.find(view_id) == layer_trees_tasks_.end();
   layer_trees_tasks_[view_id] = std::make_unique<LayerTreeTask>(
       view_id, std::move(layer_tree), device_pixel_ratio);
-  if (inserted_new_task) {
-    LogStateHighWatermarks("Render");
-  }
 
   // Per-display frame completion tracking. When all views for a display
   // have rendered, end that display's frame so it can be rasterized
@@ -526,8 +468,6 @@ void Animator::AddDisplay(int64_t display_id, double refresh_rate) {
       ++it;
     }
   }
-
-  LogStateHighWatermarks("AddDisplay");
 }
 
 void Animator::RemoveDisplay(int64_t display_id) {
@@ -540,14 +480,34 @@ void Animator::RemoveDisplay(int64_t display_id) {
     return;
   }
 
+  DisplayFrameState& state = it->second;
+  FML_DCHECK(!state.frame_in_progress)
+      << "Display removal cannot interrupt a synchronous UI frame";
+
+  // Preserve only the targets named by the pending frame request until its
+  // baton is either returned or exactly cancelled. Naming every view on the
+  // display here would invent outcomes for targets the host never admitted.
+  state.retired = true;
+  if (state.pending_frame_all_views) {
+    state.removed_target_ids.insert(state.view_ids.begin(),
+                                    state.view_ids.end());
+  } else {
+    state.removed_target_ids.insert(state.pending_frame_view_ids.begin(),
+                                    state.pending_frame_view_ids.end());
+  }
+
   // Move views from the removed display to the default display.
-  for (int64_t view_id : it->second.view_ids) {
+  for (int64_t view_id : state.view_ids) {
     view_to_display_.erase(view_id);
     default_state_.view_ids.insert(view_id);
   }
-  display_states_.erase(it);
+  state.view_ids.clear();
+  state.pending_frame_view_ids.clear();
+  state.current_frame_view_ids.clear();
 
-  LogStateHighWatermarks("RemoveDisplay");
+  if (!state.frame_scheduled) {
+    display_states_.erase(it);
+  }
 }
 
 void Animator::RemoveStaleDisplays(const std::set<int64_t>& active_ids) {
@@ -572,6 +532,17 @@ void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
     auto state_it = display_states_.find(prev_display);
     if (state_it != display_states_.end()) {
       DisplayFrameState& prev_state = state_it->second;
+      if (prev_state.frame_in_progress &&
+          prev_state.current_frame_view_ids.count(view_id) > 0) {
+        CompleteFrameOpportunity(prev_state, {view_id},
+                                 FrameOpportunityOutcome::kTargetRemoved);
+        delegate_.OnAnimatorEmptyFrameForDisplay(prev_state.display_id,
+                                                 {view_id});
+      } else if (prev_state.frame_scheduled &&
+                 (prev_state.pending_frame_all_views ||
+                  prev_state.pending_frame_view_ids.count(view_id) > 0)) {
+        prev_state.removed_target_ids.insert(view_id);
+      }
       prev_state.view_ids.erase(view_id);
       prev_state.pending_frame_view_ids.erase(view_id);
       prev_state.current_frame_view_ids.erase(view_id);
@@ -601,8 +572,6 @@ void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
     view_to_display_[view_id] = display_id;
     default_state_.view_ids.insert(view_id);
   }
-
-  LogStateHighWatermarks("SetViewDisplay");
 }
 
 void Animator::RemoveView(int64_t view_id) {
@@ -628,6 +597,16 @@ void Animator::RemoveView(int64_t view_id) {
   }
 
   DisplayFrameState& state = state_it->second;
+  if (state.frame_in_progress &&
+      state.current_frame_view_ids.count(view_id) > 0) {
+    CompleteFrameOpportunity(state, {view_id},
+                             FrameOpportunityOutcome::kTargetRemoved);
+    delegate_.OnAnimatorEmptyFrameForDisplay(state.display_id, {view_id});
+  } else if (state.frame_scheduled &&
+             (state.pending_frame_all_views ||
+              state.pending_frame_view_ids.count(view_id) > 0)) {
+    state.removed_target_ids.insert(view_id);
+  }
   state.view_ids.erase(view_id);
   state.pending_frame_view_ids.erase(view_id);
   state.current_frame_view_ids.erase(view_id);
@@ -652,15 +631,45 @@ void Animator::RequestFrameForDisplayViews(int64_t display_id,
   RequestFrameForDisplayInternal(display_id, &view_ids, regenerate_layer_trees);
 }
 
-void Animator::RequestFrameForDisplayInternal(
-    int64_t display_id,
-    const std::set<int64_t>* view_ids,
-    bool regenerate_layer_trees) {
+void Animator::CancelFrameOpportunity(int64_t display_id,
+                                      FrameOpportunityId opportunity_id,
+                                      VsyncWaiter::CancellationReason reason) {
+  DisplayFrameState* state = GetDisplayState(display_id);
+  if (!state) {
+    return;
+  }
+
+  if (state->current_opportunity_id == opportunity_id) {
+    FML_DCHECK(!state->frame_in_progress)
+        << "A UI task cannot interleave with a synchronous frame build";
+    state->current_frame_view_ids.clear();
+    state->rendered_views_this_frame.clear();
+    state->frame_timings_recorder = nullptr;
+    state->current_opportunity_id = std::nullopt;
+    state->frame_regenerate_layer_trees = true;
+    return;
+  }
+
+  if (state->last_delivered_opportunity_id == opportunity_id) {
+    // The frame already crossed the UI boundary. The engine-local registry
+    // suppresses any later raster/root-target completion for this id.
+    return;
+  }
+
+  if (state->frame_scheduled) {
+    // Return won the waiter race, but its UI callback has not run yet.
+    state->cancelled_opportunity_id = opportunity_id;
+    state->cancelled_opportunity_reason = reason;
+  }
+}
+
+void Animator::RequestFrameForDisplayInternal(int64_t display_id,
+                                              const std::set<int64_t>* view_ids,
+                                              bool regenerate_layer_trees) {
   // Only proceed if the display has been explicitly registered.
   if (display_states_.find(display_id) == display_states_.end()) {
     // A view-scoped request against an unknown display can never produce a
-    // frame. Complete it through the empty-frame path so the embedder's
-    // per-view in-flight bookkeeping does not starve until its watchdog.
+    // frame. Complete it through the legacy empty-frame compatibility path.
     if (view_ids != nullptr && !view_ids->empty()) {
       delegate_.OnAnimatorEmptyFrameForDisplay(display_id, *view_ids);
     }
@@ -671,12 +680,9 @@ void Animator::RequestFrameForDisplayInternal(
     return;
   }
 
-  // Requested views that are not homed on this display are silently filtered
-  // by LatchDisplayFrameRequest and would otherwise complete only via the
-  // embedder's recovery watchdog. Report them as unrendered immediately: the
-  // embedder retires the request and re-resolves the view's display on the
-  // next attempt, making a homing/scheduling mismatch self-healing instead of
-  // a per-request 500 ms stall.
+  // Requested views that are not homed on this display are filtered by
+  // LatchDisplayFrameRequest. Report them through the legacy empty-frame
+  // compatibility path so callers can re-resolve their current display.
   if (view_ids != nullptr) {
     std::set<int64_t> unhomed_view_ids;
     for (int64_t view_id : *view_ids) {
@@ -716,10 +722,17 @@ void Animator::ScheduleDisplayVsync(DisplayFrameState& state) {
                display_id_str.c_str());
 
   waiter_->AsyncWaitForVsync(
-      display_id, [self = weak_factory_.GetWeakPtr(),
-                   display_id](std::unique_ptr<FrameTimingsRecorder> recorder) {
+      display_id,
+      [self = weak_factory_.GetWeakPtr(),
+       display_id](std::unique_ptr<FrameTimingsRecorder> recorder) {
         if (self) {
           self->OnDisplayVsync(display_id, std::move(recorder));
+        }
+      },
+      [self = weak_factory_.GetWeakPtr(),
+       display_id](VsyncWaiter::CancellationReason reason) {
+        if (self) {
+          self->OnDisplayVsyncCancelled(display_id, reason);
         }
       });
 }
@@ -740,13 +753,62 @@ void Animator::OnDisplayVsync(int64_t display_id,
   }
 
   state->frame_scheduled = false;
+  state->frame_timings_recorder = std::move(recorder);
+  const auto frame_opportunity =
+      state->frame_timings_recorder->GetFrameOpportunity();
+  state->current_opportunity_id =
+      frame_opportunity.has_value()
+          ? std::optional<FrameOpportunityId>(frame_opportunity->id)
+          : std::nullopt;
+
+  if (state->cancelled_opportunity_id.has_value()) {
+    const bool cancelled_current =
+        state->current_opportunity_id == state->cancelled_opportunity_id;
+    const bool preserve_demand =
+        state->cancelled_opportunity_reason ==
+        VsyncWaiter::CancellationReason::kTransportLost;
+    state->cancelled_opportunity_id = std::nullopt;
+    state->cancelled_opportunity_reason = std::nullopt;
+    if (cancelled_current) {
+      state->last_delivered_opportunity_id = state->current_opportunity_id;
+      if (!preserve_demand) {
+        state->pending_frame_view_ids.clear();
+        state->pending_frame_all_views = false;
+        state->pending_regenerate_layer_trees = false;
+        state->removed_target_ids.clear();
+      }
+      state->frame_timings_recorder = nullptr;
+      state->current_opportunity_id = std::nullopt;
+      if (state->retired) {
+        display_states_.erase(display_id);
+      }
+      return;
+    }
+  }
+  state->last_delivered_opportunity_id = state->current_opportunity_id;
+
+  if (state->retired) {
+    CompleteFrameOpportunity(*state, state->removed_target_ids,
+                             FrameOpportunityOutcome::kTargetRemoved);
+    if (!state->removed_target_ids.empty()) {
+      delegate_.OnAnimatorEmptyFrameForDisplay(display_id,
+                                               state->removed_target_ids);
+    }
+    display_states_.erase(display_id);
+    return;
+  }
+
+  if (!state->removed_target_ids.empty()) {
+    CompleteFrameOpportunity(*state, state->removed_target_ids,
+                             FrameOpportunityOutcome::kTargetRemoved);
+    delegate_.OnAnimatorEmptyFrameForDisplay(display_id,
+                                             state->removed_target_ids);
+    state->removed_target_ids.clear();
+  }
   state->frame_regenerate_layer_trees = state->pending_regenerate_layer_trees;
   state->pending_regenerate_layer_trees = false;
-  // Capture the requested set before resolution consumes it: when none of
-  // the requested views resolve (for example a view was removed between the
-  // request and this vsync), the embedder must still be told no output is
-  // coming, or its in-flight bookkeeping for those views is retired only by
-  // its recovery watchdog.
+  // Capture the requested set before resolution consumes it. When none of the
+  // requested views remain, each exact target still needs a terminal result.
   std::set<int64_t> requested_view_ids = state->pending_frame_all_views
                                              ? state->view_ids
                                              : state->pending_frame_view_ids;
@@ -754,14 +816,69 @@ void Animator::OnDisplayVsync(int64_t display_id,
   if (state->current_frame_view_ids.empty()) {
     state->frame_regenerate_layer_trees = true;
     if (!requested_view_ids.empty()) {
+      CompleteFrameOpportunity(*state, requested_view_ids,
+                               FrameOpportunityOutcome::kTargetRemoved);
       delegate_.OnAnimatorEmptyFrameForDisplay(state->display_id,
                                                requested_view_ids);
     }
+    state->frame_timings_recorder = nullptr;
+    state->current_opportunity_id = std::nullopt;
     return;
   }
-  state->frame_timings_recorder = std::move(recorder);
 
   BeginFrameForDisplay(*state);
+}
+
+void Animator::OnDisplayVsyncCancelled(
+    int64_t display_id,
+    VsyncWaiter::CancellationReason cancellation_reason) {
+  const auto display_id_str = std::to_string(display_id);
+  TRACE_EVENT1("flutter", "Animator::OnDisplayVsyncCancelled", "display_id",
+               display_id_str.c_str());
+
+  DisplayFrameState* state = GetDisplayState(display_id);
+  if (!state) {
+    return;
+  }
+
+  FML_DCHECK(state->frame_scheduled);
+  FML_DCHECK(!state->frame_in_progress);
+  state->frame_scheduled = false;
+  state->cancelled_opportunity_id = std::nullopt;
+  state->cancelled_opportunity_reason = std::nullopt;
+
+  if (cancellation_reason == VsyncWaiter::CancellationReason::kTransportLost) {
+    // Demand remains latched but intentionally unarmed. A new transport epoch
+    // or a later explicit framework request is the only event allowed to ask
+    // for another platform baton.
+    return;
+  }
+
+  state->pending_frame_view_ids.clear();
+  state->pending_frame_all_views = false;
+  state->pending_regenerate_layer_trees = false;
+  state->removed_target_ids.clear();
+  if (state->retired) {
+    display_states_.erase(display_id);
+  }
+}
+
+std::set<int64_t> Animator::CompleteFrameOpportunity(
+    DisplayFrameState& state,
+    const std::set<int64_t>& target_ids,
+    FrameOpportunityOutcome outcome) {
+  if (!state.current_opportunity_id.has_value()) {
+    return target_ids;
+  }
+  std::set<int64_t> completed_target_ids;
+  for (int64_t target_id : target_ids) {
+    if (delegate_.OnAnimatorFrameOpportunityOutcome(
+            state.current_opportunity_id.value(), state.display_id, target_id,
+            outcome)) {
+      completed_target_ids.insert(target_id);
+    }
+  }
+  return completed_target_ids;
 }
 
 void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
@@ -770,31 +887,29 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
                display_id_str.c_str());
 
   FML_DCHECK(!state.frame_in_progress);
-  state.total_frames++;
-
+  EndTraceFlowIds();
   if (!state.frame_regenerate_layer_trees) {
     if (!has_rendered_ || pending_configure_serial_ != 0) {
       state.frame_regenerate_layer_trees = true;
     } else {
-      state.consecutive_empty_frames = 0;
       if (!state.frame_timings_recorder) {
         state.frame_timings_recorder = std::make_unique<FrameTimingsRecorder>();
         const fml::TimePoint now = fml::TimePoint::Now();
         state.frame_timings_recorder->RecordVsync(now, now);
       }
-      DrawLastLayerTreesForDisplay(std::move(state.frame_timings_recorder));
+      const fml::TimePoint build_time = fml::TimePoint::Now();
+      state.frame_timings_recorder->RecordBuildStart(build_time);
+      state.frame_timings_recorder->RecordBuildEnd(build_time);
+      delegate_.OnAnimatorDrawLastLayerTreesForDisplay(
+          std::move(state.frame_timings_recorder),
+          state.current_frame_view_ids);
       state.frame_timings_recorder = nullptr;
+      state.current_opportunity_id = std::nullopt;
       state.frame_regenerate_layer_trees = true;
-      // This frame consumed the latched view set without running the UI
-      // frame, so no per-view Render()/present is coming for it. Report the
-      // views as unrendered — the last outcome-less consumer of a latched
-      // request set. Without this, a view-scoped request that coalesces into
-      // a reuse frame starves until the embedder's recovery watchdog.
-      if (!state.current_frame_view_ids.empty()) {
-        delegate_.OnAnimatorEmptyFrameForDisplay(state.display_id,
-                                                 state.current_frame_view_ids);
-        state.current_frame_view_ids.clear();
-      }
+      // Rasterization of the retained trees carries the opportunity id into
+      // the exact root-target callback. It is real produced work, not an empty
+      // frame. EO3 narrows the retained-tree selection to this target set.
+      state.current_frame_view_ids.clear();
       return;
     }
   }
@@ -810,35 +925,20 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
     producer_continuation_ = state.pipeline->Produce();
     if (!producer_continuation_) {
       TRACE_EVENT0("flutter", "PipelineFull");
-      state.pipeline_full_count++;
-      // Throttled diagnostic: log at 1, 100, 1000, then every 5000.
-      if (state.pipeline_full_count == 1 ||
-          state.pipeline_full_count == 100 ||
-          state.pipeline_full_count == 1000 ||
-          (state.pipeline_full_count > 1000 &&
-           state.pipeline_full_count % 5000 == 0)) {
-        FML_LOG(IMPORTANT)
-            << "Animator: PipelineFull for display " << state.display_id
-            << " (count=" << state.pipeline_full_count
-            << ", total_frames=" << state.total_frames
-            << ", inflight=" << state.pipeline->GetInflightCount()
-            << ", render_calls_total=" << render_calls_total_ << ")";
-      }
-      // Notify the embedder that no compositor output will be produced for
-      // the latched views this vsync. Without this, a starved request fires
-      // neither the present callback nor the empty-frame callback and is
-      // retired only by the embedder's recovery watchdog (the AVIO_PATCHES
-      // known issue: PipelineFull aborts before BeginFrame).
+      const auto retry_targets =
+          CompleteFrameOpportunity(state, state.current_frame_view_ids,
+                                   FrameOpportunityOutcome::kBackpressured);
       delegate_.OnAnimatorEmptyFrameForDisplay(state.display_id,
                                                state.current_frame_view_ids);
-      // Re-request so we try again on the next vsync, preserving the latched
-      // view scope instead of widening to all of the display's views.
-      RequestFrameForDisplayViews(state.display_id,
-                                  state.current_frame_view_ids);
+      state.current_frame_view_ids.clear();
+      state.frame_timings_recorder = nullptr;
+      state.current_opportunity_id = std::nullopt;
+      // Retry demand is a separate edge from terminal backpressure.
+      if (!retry_targets.empty()) {
+        RequestFrameForDisplayViews(state.display_id, retry_targets);
+      }
       return;
     }
-    // Pipeline acquired; reset full counter.
-    state.pipeline_full_count = 0;
   }
 
   state.frame_in_progress = true;
@@ -875,7 +975,6 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
   if (state.frame_in_progress) {
     EndFrameForDisplay(state);
   }
-
 }
 
 void Animator::EndFrameForDisplay(DisplayFrameState& state) {
@@ -896,8 +995,6 @@ void Animator::EndFrameForDisplay(DisplayFrameState& state) {
   }
 
   if (!display_layer_trees.empty()) {
-    state.consecutive_empty_frames = 0;
-
     state.frame_timings_recorder->RecordBuildEnd(fml::TimePoint::Now());
 
     delegate_.OnAnimatorUpdateLatestFrameTargetTime(
@@ -909,48 +1006,29 @@ void Animator::EndFrameForDisplay(DisplayFrameState& state) {
 
     if (!result.success) {
       FML_DLOG(INFO) << "Failed to commit per-display frame to pipeline";
+      CompleteFrameOpportunity(state, state.current_frame_view_ids,
+                               FrameOpportunityOutcome::kRasterFailed);
     } else {
       delegate_.OnAnimatorDraw(state.pipeline);
-    }
-
-    // A view can be part of this frame's request set yet produce no layer
-    // tree (its widget subtree built nothing new). The display frame itself
-    // is non-empty — sibling views rendered — so without a per-view signal
-    // the embedder's in-flight bookkeeping for the silent view would starve
-    // until its recovery watchdog fires. Notify the empty-frame path with
-    // exactly the requested-but-unrendered subset.
-    std::set<int64_t> unrendered_view_ids;
-    for (int64_t view_id : state.current_frame_view_ids) {
-      if (state.rendered_views_this_frame.count(view_id) == 0) {
-        unrendered_view_ids.insert(view_id);
+      // A view can be part of this frame's request set yet produce no layer
+      // tree. Its sibling render jobs continue; this target terminalizes
+      // independently as no visual change.
+      std::set<int64_t> unrendered_view_ids;
+      for (int64_t view_id : state.current_frame_view_ids) {
+        if (state.rendered_views_this_frame.count(view_id) == 0) {
+          unrendered_view_ids.insert(view_id);
+        }
+      }
+      if (!unrendered_view_ids.empty()) {
+        CompleteFrameOpportunity(state, unrendered_view_ids,
+                                 FrameOpportunityOutcome::kNoVisualChange);
+        delegate_.OnAnimatorEmptyFrameForDisplay(state.display_id,
+                                                 unrendered_view_ids);
       }
     }
-    if (!unrendered_view_ids.empty()) {
-      delegate_.OnAnimatorEmptyFrameForDisplay(state.display_id,
-                                               unrendered_view_ids);
-    }
   } else {
-    state.empty_frames++;
-    state.consecutive_empty_frames++;
-    // Emit a periodic warning when a display stalls for many consecutive
-    // empty frames (no Render() calls from Dart for this display's views).
-    if (state.consecutive_empty_frames == 10 ||
-        (state.consecutive_empty_frames > 10 &&
-         state.consecutive_empty_frames % 1000 == 0)) {
-      FML_LOG(IMPORTANT)
-          << "Animator: display " << state.display_id << " has "
-          << state.consecutive_empty_frames
-          << " consecutive empty frames (total_frames=" << state.total_frames
-          << ", empty_frames=" << state.empty_frames
-          << ", render_calls_total=" << render_calls_total_
-          << ", layer_trees_tasks_size=" << layer_trees_tasks_.size()
-          << ", view_ids=" << state.view_ids.size()
-          << ", current_view_ids=" << state.current_frame_view_ids.size()
-          << ", rendered_this_frame=" << state.rendered_views_this_frame.size()
-          << ")";
-    }
-    // Notify the delegate so the embedder can retire stale in-flight
-    // frame-request bookkeeping for this display's views.
+    CompleteFrameOpportunity(state, state.current_frame_view_ids,
+                             FrameOpportunityOutcome::kNoVisualChange);
     delegate_.OnAnimatorEmptyFrameForDisplay(state.display_id,
                                              state.current_frame_view_ids);
   }
@@ -961,6 +1039,7 @@ void Animator::EndFrameForDisplay(DisplayFrameState& state) {
   state.rendered_views_this_frame.clear();
   state.current_frame_view_ids.clear();
   state.frame_timings_recorder = nullptr;
+  state.current_opportunity_id = std::nullopt;
   state.frame_regenerate_layer_trees = true;
 
   // Only request the next frame if a new request was latched while this
@@ -995,13 +1074,37 @@ int64_t Animator::GetDisplayForView(int64_t view_id) const {
 }
 
 void Animator::ScheduleMaybeClearTraceFlowIds() {
+  if (IsPerDisplayMode()) {
+    // The embedder's exact per-display batons represent compositor frame
+    // opportunities. Trace cleanup is observability, not frame demand, so it
+    // must not mint a second, targetless platform baton. A real display frame
+    // ends these flows in BeginFrameForDisplay; otherwise the next UI turn
+    // does.
+    task_runners_.GetUITaskRunner()->PostTask(
+        [self = weak_factory_.GetWeakPtr()] {
+          if (!self) {
+            return;
+          }
+          const bool frame_pending =
+              std::any_of(self->display_states_.begin(),
+                          self->display_states_.end(), [](const auto& entry) {
+                            return entry.second.frame_scheduled ||
+                                   entry.second.frame_in_progress;
+                          });
+          if (!frame_pending) {
+            self->EndTraceFlowIds();
+          }
+        });
+    return;
+  }
+
   waiter_->ScheduleSecondaryCallback(
       reinterpret_cast<uintptr_t>(this), [self = weak_factory_.GetWeakPtr()] {
         if (!self) {
           return;
         }
         if (!self->frame_scheduled_ && !self->trace_flow_ids_.empty()) {
-          size_t flow_id_count = self->trace_flow_ids_.size();
+          const size_t flow_id_count = self->trace_flow_ids_.size();
           std::unique_ptr<uint64_t[]> flow_ids =
               std::make_unique<uint64_t[]>(flow_id_count);
           for (size_t i = 0; i < flow_id_count; ++i) {
@@ -1012,13 +1115,17 @@ void Animator::ScheduleMaybeClearTraceFlowIds() {
               "flutter", "Animator::ScheduleMaybeClearTraceFlowIds - callback",
               flow_id_count, flow_ids.get());
 
-          while (!self->trace_flow_ids_.empty()) {
-            auto flow_id = self->trace_flow_ids_.front();
-            TRACE_FLOW_END("flutter", "PointerEvent", flow_id);
-            self->trace_flow_ids_.pop_front();
-          }
+          self->EndTraceFlowIds();
         }
       });
+}
+
+void Animator::EndTraceFlowIds() {
+  while (!trace_flow_ids_.empty()) {
+    const uint64_t flow_id = trace_flow_ids_.front();
+    TRACE_FLOW_END("flutter", "PointerEvent", flow_id);
+    trace_flow_ids_.pop_front();
+  }
 }
 
 }  // namespace flutter

@@ -76,7 +76,9 @@ TEST(EmbedderProcTable, ReportsAvioSemanticCapabilities) {
   EXPECT_EQ(capabilities.supported_features,
             kFlutterAvioExtensionFeaturePerDisplayVsync |
                 kFlutterAvioExtensionFeatureRootRenderTarget |
-                kFlutterAvioExtensionFeatureExplicitRenderCompletion);
+                kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+                kFlutterAvioExtensionFeatureExactVsyncCancellation |
+                kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
 }
 
 TEST(EmbedderProcTable, RejectsTruncatedAvioCapabilities) {

@@ -77,7 +77,14 @@ void EmbedderExternalViewEmbedder::CancelFrame() {
 // |ExternalViewEmbedder|
 void EmbedderExternalViewEmbedder::BeginFrame(
     GrDirectContext* context,
-    const fml::RefPtr<fml::RasterThreadMerger>& raster_thread_merger) {}
+    const fml::RefPtr<fml::RasterThreadMerger>& raster_thread_merger) {
+  pending_frame_opportunity_ = std::nullopt;
+}
+
+void EmbedderExternalViewEmbedder::SetFrameOpportunity(
+    std::optional<FrameOpportunityContext> frame_opportunity) {
+  pending_frame_opportunity_ = frame_opportunity;
+}
 
 // |ExternalViewEmbedder|
 void EmbedderExternalViewEmbedder::PrepareFlutterView(
@@ -850,8 +857,15 @@ bool EmbedderExternalViewEmbedder::CompleteRootRenderTarget(
     FlutterPresentRenderTargetStatus status,
     const FlutterBackingStore* backing_store,
     const FlutterBackingStorePresentInfo* backing_store_present_info) const {
-  return present_render_target_callback_(flutter_view_id, status, backing_store,
-                                         backing_store_present_info);
+  return present_render_target_callback_(
+      flutter_view_id,
+      pending_frame_opportunity_.has_value() ? pending_frame_opportunity_->id
+                                             : 0,
+      pending_frame_opportunity_.has_value()
+          ? static_cast<FlutterEngineDisplayId>(
+                pending_frame_opportunity_->display_id)
+          : 0,
+      status, backing_store, backing_store_present_info);
 }
 
 }  // namespace flutter

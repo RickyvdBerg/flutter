@@ -6,12 +6,14 @@
 #define FLUTTER_FLOW_EMBEDDED_VIEWS_H_
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "display_list/geometry/dl_geometry_types.h"
 #include "display_list/geometry/dl_path.h"
+#include "flutter/common/frame_opportunity.h"
 #include "flutter/display_list/dl_builder.h"
 #include "flutter/display_list/geometry/dl_geometry_conversions.h"
 #include "flutter/flow/surface_frame.h"
@@ -463,6 +465,12 @@ class ExternalViewEmbedder {
   virtual void BeginFrame(
       GrDirectContext* context,
       const fml::RefPtr<fml::RasterThreadMerger>& raster_thread_merger) = 0;
+
+  // Opaque cadence identity for the frame currently entering rasterization.
+  // Generic embedders ignore it; Avio root-target mode echoes it on every
+  // terminal render-target callback.
+  virtual void SetFrameOpportunity(
+      std::optional<FrameOpportunityContext> frame_opportunity) {}
 
   virtual void PrerollCompositeEmbeddedView(
       int64_t platform_view_id,

@@ -24,8 +24,10 @@ VsyncWaiter::VsyncWaiter(const TaskRunners& task_runners)
 VsyncWaiter::~VsyncWaiter() = default;
 
 // Per-display variant: requests a vsync for a specific display.
-void VsyncWaiter::AsyncWaitForVsync(DisplayId display_id,
-                                    const Callback& callback) {
+void VsyncWaiter::AsyncWaitForVsync(
+    DisplayId display_id,
+    const Callback& callback,
+    const CancellationCallback& cancellation_callback) {
   if (!callback) {
     return;
   }
@@ -45,6 +47,7 @@ void VsyncWaiter::AsyncWaitForVsync(DisplayId display_id,
         return;
       }
       callback_ = callback;
+      cancellation_callback_ = cancellation_callback;
       if (!secondary_callbacks_.empty()) {
         return;
       }
@@ -54,6 +57,7 @@ void VsyncWaiter::AsyncWaitForVsync(DisplayId display_id,
         return;
       }
       display_callbacks_[display_id] = callback;
+      display_cancellation_callbacks_[display_id] = cancellation_callback;
     }
   }
   AwaitVSync(display_id);
@@ -106,7 +110,8 @@ void VsyncWaiter::ScheduleSecondaryCallback(uintptr_t id,
 
 void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
                                fml::TimePoint frame_target_time,
-                               bool pause_secondary_tasks) {
+                               bool pause_secondary_tasks,
+                               std::optional<uint64_t> frame_opportunity_id) {
   FML_DCHECK(fml::TimePoint::Now() >= frame_start_time);
 
   Callback callback;
@@ -115,6 +120,7 @@ void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
   {
     std::scoped_lock lock(callback_mutex_);
     callback = std::move(callback_);
+    cancellation_callback_ = nullptr;
     for (auto& pair : secondary_callbacks_) {
       secondary_callbacks.push_back(std::move(pair.second));
     }
@@ -149,13 +155,17 @@ void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
         task_runners_.GetUITaskRunner()->GetTaskQueueId();
     task_runners_.GetUITaskRunner()->PostTask(
         [ui_task_queue_id, callback, flow_identifier, frame_start_time,
-         frame_target_time, pause_secondary_tasks]() {
+         frame_target_time, pause_secondary_tasks, frame_opportunity_id]() {
           FML_TRACE_EVENT_WITH_FLOW_IDS(
               "flutter", kVsyncTraceName, /*flow_id_count=*/1,
               /*flow_ids=*/&flow_identifier, "StartTime", frame_start_time,
               "TargetTime", frame_target_time);
           std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder =
               std::make_unique<FrameTimingsRecorder>();
+          if (frame_opportunity_id.has_value()) {
+            frame_timings_recorder->SetFrameOpportunity(
+                frame_opportunity_id.value(), kDefaultDisplayId);
+          }
           frame_timings_recorder->RecordVsync(frame_start_time,
                                               frame_target_time);
           callback(std::move(frame_timings_recorder));
@@ -174,11 +184,13 @@ void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
 void VsyncWaiter::FireCallback(DisplayId display_id,
                                fml::TimePoint frame_start_time,
                                fml::TimePoint frame_target_time,
-                               bool pause_secondary_tasks) {
+                               bool pause_secondary_tasks,
+                               std::optional<uint64_t> frame_opportunity_id) {
   if (display_id == kDefaultDisplayId) {
     // Delegate to the legacy path which handles both callback_ and
     // secondary_callbacks_.
-    FireCallback(frame_start_time, frame_target_time, pause_secondary_tasks);
+    FireCallback(frame_start_time, frame_target_time, pause_secondary_tasks,
+                 frame_opportunity_id);
     return;
   }
 
@@ -196,6 +208,7 @@ void VsyncWaiter::FireCallback(DisplayId display_id,
     }
     callback = std::move(it->second);
     display_callbacks_.erase(it);
+    display_cancellation_callbacks_.erase(display_id);
   }
 
   if (!callback) {
@@ -217,23 +230,68 @@ void VsyncWaiter::FireCallback(DisplayId display_id,
 
   fml::TaskQueueId ui_task_queue_id =
       task_runners_.GetUITaskRunner()->GetTaskQueueId();
-  task_runners_.GetUITaskRunner()->PostTask([ui_task_queue_id, callback,
-                                             flow_identifier, frame_start_time,
-                                             frame_target_time,
-                                             pause_secondary_tasks]() {
-    FML_TRACE_EVENT_WITH_FLOW_IDS(
-        "flutter", kVsyncTraceName, /*flow_id_count=*/1,
-        /*flow_ids=*/&flow_identifier, "StartTime", frame_start_time,
-        "TargetTime", frame_target_time);
-    std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder =
-        std::make_unique<FrameTimingsRecorder>();
-    frame_timings_recorder->RecordVsync(frame_start_time, frame_target_time);
-    callback(std::move(frame_timings_recorder));
-    TRACE_FLOW_END("flutter", kVsyncFlowName, flow_identifier);
-    if (pause_secondary_tasks) {
-      ResumeDartEventLoopTasks(ui_task_queue_id);
+  task_runners_.GetUITaskRunner()->PostTask(
+      [ui_task_queue_id, callback, flow_identifier, frame_start_time,
+       frame_target_time, pause_secondary_tasks, frame_opportunity_id,
+       display_id]() {
+        FML_TRACE_EVENT_WITH_FLOW_IDS(
+            "flutter", kVsyncTraceName, /*flow_id_count=*/1,
+            /*flow_ids=*/&flow_identifier, "StartTime", frame_start_time,
+            "TargetTime", frame_target_time);
+        std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder =
+            std::make_unique<FrameTimingsRecorder>();
+        if (frame_opportunity_id.has_value()) {
+          frame_timings_recorder->SetFrameOpportunity(
+              frame_opportunity_id.value(), display_id);
+        }
+        frame_timings_recorder->RecordVsync(frame_start_time,
+                                            frame_target_time);
+        callback(std::move(frame_timings_recorder));
+        TRACE_FLOW_END("flutter", kVsyncFlowName, flow_identifier);
+        if (pause_secondary_tasks) {
+          ResumeDartEventLoopTasks(ui_task_queue_id);
+        }
+      });
+}
+
+bool VsyncWaiter::CancelCallback(DisplayId display_id,
+                                 CancellationReason reason,
+                                 fml::closure completion) {
+  CancellationCallback cancellation_callback;
+  {
+    std::scoped_lock lock(callback_mutex_);
+    if (display_id == kDefaultDisplayId) {
+      if (!callback_ && secondary_callbacks_.empty()) {
+        return false;
+      }
+      callback_ = nullptr;
+      cancellation_callback = std::move(cancellation_callback_);
+      secondary_callbacks_.clear();
+    } else {
+      auto callback_it = display_callbacks_.find(display_id);
+      if (callback_it == display_callbacks_.end()) {
+        return false;
+      }
+      display_callbacks_.erase(callback_it);
+      auto cancellation_it = display_cancellation_callbacks_.find(display_id);
+      if (cancellation_it != display_cancellation_callbacks_.end()) {
+        cancellation_callback = std::move(cancellation_it->second);
+        display_cancellation_callbacks_.erase(cancellation_it);
+      }
     }
-  });
+  }
+
+  task_runners_.GetUITaskRunner()->PostTask(
+      [cancellation_callback = std::move(cancellation_callback), reason,
+       completion = std::move(completion)]() mutable {
+        if (cancellation_callback) {
+          cancellation_callback(reason);
+        }
+        if (completion) {
+          completion();
+        }
+      });
+  return true;
 }
 
 void VsyncWaiter::PauseDartEventLoopTasks() {

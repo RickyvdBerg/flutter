@@ -117,6 +117,12 @@ class EmbedderTestContext {
   // Runs the vsync callback.
   void RunVsyncCallback(intptr_t baton);
 
+  void SetVsyncForDisplayCallback(
+      std::function<void(intptr_t, FlutterEngineDisplayId)> callback);
+
+  void RunVsyncForDisplayCallback(intptr_t baton,
+                                  FlutterEngineDisplayId display_id);
+
   // TODO(gw280): encapsulate these properly for subclasses to use
  protected:
   // This allows the builder to access the hooks.
@@ -146,6 +152,8 @@ class EmbedderTestContext {
   NextSceneCallback next_scene_callback_;
   DlMatrix root_surface_transformation_;
   std::function<void(intptr_t)> vsync_callback_ = nullptr;
+  std::function<void(intptr_t, FlutterEngineDisplayId)>
+      vsync_for_display_callback_ = nullptr;
 
   static VoidCallback GetIsolateCreateCallbackHook();
 

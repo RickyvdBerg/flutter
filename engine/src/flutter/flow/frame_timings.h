@@ -6,7 +6,9 @@
 #define FLUTTER_FLOW_FRAME_TIMINGS_H_
 
 #include <mutex>
+#include <optional>
 
+#include "flutter/common/frame_opportunity.h"
 #include "flutter/common/settings.h"
 #include "flutter/flow/raster_cache.h"
 #include "flutter/fml/macros.h"
@@ -122,6 +124,21 @@ class FrameTimingsRecorder {
   void SetConfigureSerial(uint64_t serial) { configure_serial_ = serial; }
   uint64_t GetConfigureSerial() const { return configure_serial_; }
 
+  // Avio root-target mode stamps the exact host-authorized frame opportunity
+  // on the recorder at vsync return. The recorder is the existing object that
+  // crosses UI -> raster custody, so carrying the opaque identity here avoids
+  // a parallel frame registry. Zero is never a valid opportunity id.
+  void SetFrameOpportunity(uint64_t opportunity_id, int64_t display_id) {
+    FML_DCHECK(opportunity_id != 0);
+    frame_opportunity_ = FrameOpportunityContext{
+        .id = opportunity_id,
+        .display_id = display_id,
+    };
+  }
+  std::optional<FrameOpportunityContext> GetFrameOpportunity() const {
+    return frame_opportunity_;
+  }
+
   /// Asserts in unopt builds that the recorder is current at the specified
   /// state.
   ///
@@ -167,6 +184,7 @@ class FrameTimingsRecorder {
   FrameTiming timing_;
 
   uint64_t configure_serial_ = 0;
+  std::optional<FrameOpportunityContext> frame_opportunity_;
 
   FML_DISALLOW_COPY_ASSIGN_AND_MOVE(FrameTimingsRecorder);
 };

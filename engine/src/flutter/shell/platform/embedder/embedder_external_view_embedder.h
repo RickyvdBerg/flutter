@@ -39,6 +39,8 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
                          const std::vector<const FlutterLayer*>& layers)>;
   using PresentRenderTargetCallback = std::function<bool(
       FlutterViewId view_id,
+      FlutterFrameOpportunityId opportunity_id,
+      FlutterEngineDisplayId display_id,
       FlutterPresentRenderTargetStatus status,
       const FlutterBackingStore* backing_store,
       const FlutterBackingStorePresentInfo* backing_store_present_info)>;
@@ -97,6 +99,10 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
                       raster_thread_merger) override;
 
   // |ExternalViewEmbedder|
+  void SetFrameOpportunity(
+      std::optional<FrameOpportunityContext> frame_opportunity) override;
+
+  // |ExternalViewEmbedder|
   void PrepareFlutterView(DlISize frame_size,
                           double device_pixel_ratio) override;
 
@@ -152,6 +158,7 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
   DlMatrix pending_surface_transformation_;
   EmbedderExternalView::PendingViews pending_views_;
   std::vector<EmbedderExternalView::ViewIdentifier> composition_order_;
+  std::optional<FrameOpportunityContext> pending_frame_opportunity_;
   // The render target caches for views. Each key is a view ID.
   std::unordered_map<int64_t, EmbedderRenderTargetCache> render_target_caches_;
 

@@ -10,6 +10,8 @@ config("flutter_config") {
 
 source_set("common") {
   sources = [
+    "frame_opportunity.cc",
+    "frame_opportunity.h",
     "macros.h",
     "settings.cc",
     "settings.h",

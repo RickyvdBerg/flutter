@@ -166,6 +166,17 @@ TEST(FrameTimingsRecorderTest, ClonedHasSameFrameNumber) {
   ASSERT_EQ(recorder->GetFrameNumber(), cloned->GetFrameNumber());
 }
 
+TEST(FrameTimingsRecorderTest, ClonePreservesFrameOpportunity) {
+  auto recorder = std::make_unique<FrameTimingsRecorder>();
+  recorder->SetFrameOpportunity(73, 11);
+
+  auto cloned =
+      recorder->CloneUntil(FrameTimingsRecorder::State::kUninitialized);
+  ASSERT_TRUE(cloned->GetFrameOpportunity().has_value());
+  EXPECT_EQ(cloned->GetFrameOpportunity()->id, 73u);
+  EXPECT_EQ(cloned->GetFrameOpportunity()->display_id, 11);
+}
+
 TEST(FrameTimingsRecorderTest, ClonedHasSameVsyncStartAndTarget) {
   auto recorder = std::make_unique<FrameTimingsRecorder>();
 

@@ -271,6 +271,7 @@ std::unique_ptr<FrameTimingsRecorder> FrameTimingsRecorder::CloneUntil(
   }
 
   recorder->configure_serial_ = configure_serial_;
+  recorder->frame_opportunity_ = frame_opportunity_;
   return recorder;
 }
 

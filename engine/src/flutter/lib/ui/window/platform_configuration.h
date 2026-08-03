@@ -614,8 +614,6 @@ class PlatformConfiguration final {
  private:
   FML_FRIEND_TEST(testing::PlatformConfigurationTest, BeginFrameMonotonic);
 
-  void LogContainerHighWatermarks(const char* reason);
-
   PlatformConfigurationClient* client_;
   tonic::DartPersistentValue on_error_;
   tonic::DartPersistentValue add_view_;
@@ -650,10 +648,6 @@ class PlatformConfiguration final {
   int next_response_id_ = 1;
   std::unordered_map<int, fml::RefPtr<PlatformMessageResponse>>
       pending_responses_;
-
-  size_t metrics_high_water_ = 0;
-  size_t last_microseconds_per_display_high_water_ = 0;
-  size_t pending_responses_high_water_ = 0;
 };
 
 //----------------------------------------------------------------------------

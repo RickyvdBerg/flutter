@@ -828,8 +828,7 @@ class Engine final : public RuntimeDelegate, PointerDataDispatcher::Delegate {
   ///                                      layer trees or reuse the latest
   ///                                      cached scene.
   ///
-  void ScheduleFrameForDisplay(int64_t display_id,
-                               bool regenerate_layer_trees);
+  void ScheduleFrameForDisplay(int64_t display_id, bool regenerate_layer_trees);
   void ScheduleFrameForDisplay(int64_t display_id) {
     ScheduleFrameForDisplay(display_id, true);
   }
@@ -841,6 +840,10 @@ class Engine final : public RuntimeDelegate, PointerDataDispatcher::Delegate {
   void ScheduleFrameForDisplayViews(int64_t display_id,
                                     const std::set<int64_t>& view_ids,
                                     bool regenerate_layer_trees) override;
+
+  void CancelFrameOpportunity(int64_t display_id,
+                              FrameOpportunityId opportunity_id,
+                              VsyncWaiter::CancellationReason reason);
 
   //----------------------------------------------------------------------------
   /// @brief      Notifies the engine that the embedder has sent it a message.

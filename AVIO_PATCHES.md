@@ -36,6 +36,7 @@ Contract for what these patches may and may not do:
 | 21 | Make DlRegion total over empty rect inputs | upstreamable bugfix (latent upstream infinite loop) | submit upstream |
 | 22 | [framework] Preserve scoped frame authority while ordering residual view work before input | permanent framework correctness fix | none while the shared build tree remains global |
 | 23 | Explicit root-target compositor mode and semantic extension negotiation | permanent ABI extension | none |
+| 24 | Engine-local vsync leases and exact per-target frame-opportunity terminality | permanent ABI/lifecycle extension | none |
 
 ### Patch 22: scoped-frame authority and input ordering
 
@@ -54,6 +55,24 @@ regression is
 `avio-verify-patches.sh` asserts both the replacement primitives and the
 absence of the superseded path. The Avio-side normative contract is
 `avio/docs/engine-contract.md` core invariant 10.
+
+### Patch 24: exact cadence, work, and cancellation
+
+Each engine instance owns at most one delivered vsync baton per display; the
+old process-global 512-token registry and silent eviction are gone. Returning
+a baton names a non-empty target set and opens an engine-local
+`FrameOpportunityId`. Every target must claim that record exactly once through
+the root-target callback or a typed non-render outcome. A produced-target claim
+and cancellation are one mutex-serialized race, so late raster work from a
+retired epoch cannot escape to the host.
+
+Pending batons and already-returned future opportunities have distinct exact
+cancellation entry points. Both acknowledge only after the UI-side Animator
+state has settled. Pipeline rejection releases its reservation immediately;
+typed `Backpressured` completion and fresh demand are separate edges. The
+semantic feature request requires per-display vsync, root-target mode, explicit
+render completion, and the terminal-outcome callback as one indivisible
+contract.
 
 ## Known baseline debt
 
@@ -74,21 +93,22 @@ absence of the superseded path. The Avio-side normative contract is
   only if a GL deployment ever becomes relevant.
 - `flow_unittests`: `PerformanceOverlayLayerDefault.Gold` fails locally
   (golden-image fixture, environmental).
-- `FML_LOG(IMPORTANT)` "high-water" probes remain in
-  `lib/ui/window/platform_configuration.cc` and `shell/common/animator.cc`
-  (engine-contract §10 hot-path-logging debt; remove in a follow-up patch).
+- ~~Frame-path high-water probes and the signal-driven raster watchdog~~
+  REMOVED by patch #24. Exact opportunity identities and terminal outcomes are
+  the causal evidence now; production starts no polling thread, owns no
+  process-global signal handler, and emits no per-frame `IMPORTANT` stream.
 - ~~`on_empty_frame_callback` never fires at runtime~~ FIXED (25c4418f63,
   2026-07-03): both silent abort paths in `Animator` (PipelineFull before
   BeginFrame, and a vsync whose requested views resolve to none) now notify
   `OnAnimatorEmptyFrameForDisplay` with the latched/requested view set, and
-  the PipelineFull retry stays view-scoped. Avio's recovery watchdog is back
-  to being a true last resort; sustained `Cleared timed-out in-flight
-  Flutter frame request` warnings are a regression signal again.
+  the PipelineFull retry stays view-scoped. Patch #24 supersedes the old
+  recovery-watchdog inference entirely: backpressure terminalizes the exact
+  target and re-arms typed demand as a separate edge.
 - Per-view frame-request completion is now a **contract guarantee** of
   patch #5 (extended by 321a62c83b + the reuse-frame notify, 2026-07-08,
   squash into #5 at the next rebase): every view named in a view-scoped
-  frame request completes exactly once — rendered (present), unrendered at
-  frame end, or reported through `OnAnimatorEmptyFrameForDisplay`
+  frame request completes exactly once — produced through its root-target
+  callback or terminalized by a typed exact-opportunity outcome
   immediately when (a) the request targets an unregistered display, (b) a
   view not homed on that display (`LatchDisplayFrameRequest` used to filter
   those silently; the 2026-07-08 live RCA measured ~550 half-second watchdog
@@ -97,6 +117,7 @@ absence of the superseded path. The Avio-side normative contract is
   latched set without running a UI frame. Preserve this guarantee when
   rebasing `Animator::RequestFrameForDisplayInternal` /
   `BeginFrameForDisplay`.
+
 - Avio-side follow-up (rendering-plan step 4): scene assembly latches
   window elements on a newly-hosting output without their chrome binding;
   `synthesize_window_chrome_binding` in `presentation/latch.rs` papers over

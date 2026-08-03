@@ -81,8 +81,7 @@ typedef uint64_t FlutterAvioExtensionFeatures;
 #define kFlutterAvioExtensionFeatureRootRenderTarget 0x0000000000000002ULL
 #define kFlutterAvioExtensionFeatureExplicitRenderCompletion \
   0x0000000000000004ULL
-#define kFlutterAvioExtensionFeatureExactVsyncCancellation \
-  0x0000000000000008ULL
+#define kFlutterAvioExtensionFeatureExactVsyncCancellation 0x0000000000000008ULL
 #define kFlutterAvioExtensionFeatureFrameOpportunityOutcomes \
   0x0000000000000010ULL
 #define kFlutterAvioExtensionFeatureSelectedTargetDamage 0x0000000000000020ULL
@@ -677,6 +676,46 @@ typedef void (*VsyncCallback)(void* /* user data */, intptr_t /* baton */);
 /// `FlutterVsyncForDisplayCallback` can reference it; the canonical
 /// definition is below with the display structures.
 typedef uint64_t FlutterEngineDisplayId;
+
+/// Opaque cadence identity minted by an Avio embedder when it returns a
+/// scheduled per-display vsync baton. Zero is reserved for stock/unidentified
+/// frame paths.
+typedef uint64_t FlutterFrameOpportunityId;
+
+typedef enum {
+  kFlutterVsyncCancellationReasonTransportLost = 0,
+  kFlutterVsyncCancellationReasonTargetRemoved,
+  kFlutterVsyncCancellationReasonEpochReplaced,
+  kFlutterVsyncCancellationReasonHostTerminated,
+} FlutterVsyncCancellationReason;
+
+typedef struct {
+  /// The size of this struct.
+  size_t struct_size;
+  intptr_t baton;
+  FlutterEngineDisplayId display_id;
+  FlutterVsyncCancellationReason reason;
+  void* user_data;
+} FlutterVsyncCancellationInfo;
+
+/// Called exactly once after a successful exact cancellation has removed the
+/// pending waiter callback and settled its UI-side animator state.
+typedef void (*FlutterVsyncCancellationCallback)(
+    const FlutterVsyncCancellationInfo* info);
+
+typedef struct {
+  /// The size of this struct.
+  size_t struct_size;
+  FlutterFrameOpportunityId opportunity_id;
+  FlutterEngineDisplayId display_id;
+  FlutterVsyncCancellationReason reason;
+  void* user_data;
+} FlutterFrameOpportunityCancellationInfo;
+
+/// Called exactly once after cancellation has terminalized every still-open
+/// target and settled the UI-side frame state for the named opportunity.
+typedef void (*FlutterFrameOpportunityCancellationCallback)(
+    const FlutterFrameOpportunityCancellationInfo* info);
 
 /// Per-display vsync callback. The engine calls this when it needs a vsync
 /// event for a specific display. The baton must be returned via
@@ -2395,6 +2434,35 @@ typedef enum {
   kFlutterPresentRenderTargetStatusInternalInvariantViolation,
 } FlutterPresentRenderTargetStatus;
 
+typedef enum {
+  /// The admitted target built no new visual content.
+  kFlutterFrameOpportunityOutcomeNoVisualChange = 0,
+  /// The shared raster pipeline could not admit this attempt. Demand is
+  /// re-armed separately and this opportunity is terminal.
+  kFlutterFrameOpportunityOutcomeBackpressured,
+  /// The target disappeared before it could produce a render job.
+  kFlutterFrameOpportunityOutcomeTargetRemoved,
+  /// The transport or authority epoch which admitted the work was replaced.
+  kFlutterFrameOpportunityOutcomeCancelledByEpoch,
+  /// Rasterization failed before a render target reached the host.
+  kFlutterFrameOpportunityOutcomeRasterFailed,
+  /// The host rejected a produced render target.
+  kFlutterFrameOpportunityOutcomeHostRejected,
+} FlutterFrameOpportunityOutcome;
+
+typedef struct {
+  /// The size of this struct.
+  size_t struct_size;
+  FlutterFrameOpportunityId opportunity_id;
+  FlutterEngineDisplayId display_id;
+  FlutterViewId target_id;
+  FlutterFrameOpportunityOutcome outcome;
+  void* user_data;
+} FlutterFrameOpportunityOutcomeInfo;
+
+typedef void (*FlutterFrameOpportunityOutcomeCallback)(
+    const FlutterFrameOpportunityOutcomeInfo* info);
+
 typedef struct {
   /// The size of this struct.
   /// Must be sizeof(FlutterPresentRenderTargetInfo).
@@ -2415,6 +2483,14 @@ typedef struct {
   /// The terminal result of this root-target submission. `backing_store` and
   /// `backing_store_present_info` are non-null only for `Presented`.
   FlutterPresentRenderTargetStatus status;
+
+  /// Exact cadence opportunity which produced this target. Zero means the
+  /// frame arrived through a stock/unidentified API path.
+  FlutterFrameOpportunityId opportunity_id;
+
+  /// Display which owned the exact opportunity. Zero is the stock/default
+  /// display when no exact opportunity was supplied.
+  FlutterEngineDisplayId display_id;
 } FlutterPresentRenderTargetInfo;
 
 typedef bool (*FlutterBackingStoreCreateCallback)(
@@ -2541,6 +2617,11 @@ typedef struct {
                                   const int64_t* view_ids,
                                   size_t view_ids_count,
                                   void* user_data);
+
+  /// Exact non-render terminal outcomes for Avio frame opportunities. Root
+  /// render-target callbacks carry their opportunity id directly; this
+  /// callback covers exits that occur before a target reaches that path.
+  FlutterFrameOpportunityOutcomeCallback frame_opportunity_outcome_callback;
 } FlutterCompositor;
 
 typedef struct {
@@ -3753,6 +3834,58 @@ FlutterEngineResult FlutterEngineOnVsyncForDisplay(
     uint64_t frame_target_time_nanos);
 
 //------------------------------------------------------------------------------
+/// @brief      Returns an exact Avio per-display vsync baton and atomically
+///             opens the named frame opportunity.
+///
+/// This operation and `FlutterEngineCancelVsyncForDisplay` are mutually
+/// exclusive consumers of the same baton. `opportunity_id` must be non-zero.
+/// `target_ids` must name the complete, non-empty, duplicate-free target set
+/// admitted by this opportunity; each target subsequently terminalizes once.
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineOnVsyncForDisplayWithOpportunity(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    intptr_t baton,
+    FlutterEngineDisplayId display_id,
+    FlutterFrameOpportunityId opportunity_id,
+    const FlutterViewId* target_ids,
+    size_t target_ids_count,
+    uint64_t frame_start_time_nanos,
+    uint64_t frame_target_time_nanos);
+
+//------------------------------------------------------------------------------
+/// @brief      Cancels one exact pending Avio per-display vsync baton without
+///             firing its frame callback.
+///
+/// The completion callback is invoked on the engine's UI task runner only
+/// after waiter and animator state have both settled. A successful API return
+/// guarantees exactly one completion callback.
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineCancelVsyncForDisplay(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    intptr_t baton,
+    FlutterEngineDisplayId display_id,
+    FlutterVsyncCancellationReason reason,
+    FlutterVsyncCancellationCallback callback,
+    void* user_data);
+
+//------------------------------------------------------------------------------
+/// @brief      Cancels an accepted Avio frame opportunity after its scheduled
+///             baton was returned.
+///
+/// Cancellation claims every target that has not already terminalized and
+/// reports TargetRemoved or CancelledByEpoch before acknowledging UI-state
+/// settlement. Work which already reached a terminal edge wins the race and
+/// is not reported again.
+FLUTTER_EXPORT
+FlutterEngineResult FlutterEngineCancelFrameOpportunity(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterFrameOpportunityId opportunity_id,
+    FlutterEngineDisplayId display_id,
+    FlutterVsyncCancellationReason reason,
+    FlutterFrameOpportunityCancellationCallback callback,
+    void* user_data);
+
+//------------------------------------------------------------------------------
 /// @brief      Reports the semantic Avio extension surface implemented by this
 ///             engine build. Embedders call this through the proc table before
 ///             engine initialization and then provide an exact request in
@@ -4232,6 +4365,30 @@ typedef FlutterEngineResult (*FlutterEngineOnVsyncForDisplayFnPtr)(
     FlutterEngineDisplayId display_id,
     uint64_t frame_start_time_nanos,
     uint64_t frame_target_time_nanos);
+typedef FlutterEngineResult (
+    *FlutterEngineOnVsyncForDisplayWithOpportunityFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    intptr_t baton,
+    FlutterEngineDisplayId display_id,
+    FlutterFrameOpportunityId opportunity_id,
+    const FlutterViewId* target_ids,
+    size_t target_ids_count,
+    uint64_t frame_start_time_nanos,
+    uint64_t frame_target_time_nanos);
+typedef FlutterEngineResult (*FlutterEngineCancelVsyncForDisplayFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    intptr_t baton,
+    FlutterEngineDisplayId display_id,
+    FlutterVsyncCancellationReason reason,
+    FlutterVsyncCancellationCallback callback,
+    void* user_data);
+typedef FlutterEngineResult (*FlutterEngineCancelFrameOpportunityFnPtr)(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    FlutterFrameOpportunityId opportunity_id,
+    FlutterEngineDisplayId display_id,
+    FlutterVsyncCancellationReason reason,
+    FlutterFrameOpportunityCancellationCallback callback,
+    void* user_data);
 typedef FlutterEngineResult (*FlutterEngineGetAvioExtensionCapabilitiesFnPtr)(
     FlutterAvioExtensionCapabilities* capabilities);
 typedef FlutterEngineResult (*FlutterEngineSetViewDisplayFnPtr)(
@@ -4375,6 +4532,10 @@ typedef struct {
   FlutterEngineScheduleFrameForDisplayViewsWithRequestKindFnPtr
       ScheduleFrameForDisplayViewsWithRequestKind;
   FlutterEngineGetAvioExtensionCapabilitiesFnPtr GetAvioExtensionCapabilities;
+  FlutterEngineOnVsyncForDisplayWithOpportunityFnPtr
+      OnVsyncForDisplayWithOpportunity;
+  FlutterEngineCancelVsyncForDisplayFnPtr CancelVsyncForDisplay;
+  FlutterEngineCancelFrameOpportunityFnPtr CancelFrameOpportunity;
 } FlutterEngineProcTable;
 
 //------------------------------------------------------------------------------

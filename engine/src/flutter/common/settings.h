@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "flutter/common/frame_opportunity.h"
 #include "flutter/fml/build_config.h"
 #include "flutter/fml/closure.h"
 #include "flutter/fml/mapping.h"
@@ -344,6 +345,23 @@ struct Settings {
   // completed with no output" and retire stale in-flight bookkeeping.
   std::function<void(int64_t display_id, const std::vector<int64_t>& view_ids)>
       on_empty_frame_for_display;
+
+  // Exact Avio root-target completion for work which terminalizes before the
+  // external-view-embedder render-target callback.
+  std::function<bool(FrameOpportunityId opportunity_id,
+                     int64_t display_id,
+                     int64_t target_id,
+                     FrameOpportunityOutcome outcome)>
+      on_frame_opportunity_outcome;
+
+  // Shared exact-opportunity conservation ledger for this engine. It is
+  // present only when the host negotiated FrameOpportunityOutcomes.
+  std::shared_ptr<FrameOpportunityRegistry> frame_opportunity_registry;
+
+  // Semantically negotiated Avio embedder features for this engine instance.
+  // Stock embedders leave this zero. Keeping the value instance-local lets
+  // extension entry points reject calls that were not negotiated.
+  uint64_t avio_extension_features = 0;
 
   // This data will be available to the isolate immediately on launch via the
   // PlatformDispatcher.getPersistentIsolateData callback. This is meant for

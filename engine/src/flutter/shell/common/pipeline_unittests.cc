@@ -121,10 +121,39 @@ TEST(PipelineTest, ProduceIfEmptyDoesNotConsumeWhenQueueIsNotEmpty) {
   ASSERT_EQ(result.is_first_item, true);
   result = continuation_2.Complete(std::make_unique<int>(test_val_2));
   ASSERT_EQ(result.success, false);
+  EXPECT_EQ(pipeline->GetInflightCount(), 1);
 
   PipelineConsumeResult consume_result_1 = pipeline->Consume(
       [&test_val_1](std::unique_ptr<int> v) { ASSERT_EQ(*v, test_val_1); });
   ASSERT_EQ(consume_result_1, PipelineConsumeResult::Done);
+  EXPECT_EQ(pipeline->GetInflightCount(), 0);
+}
+
+TEST(PipelineTest, ProduceIfEmptyReturnsRejectedResource) {
+  auto pipeline = std::make_shared<IntPipeline>(2);
+  Continuation first = pipeline->Produce();
+  std::unique_ptr<int> rejected;
+  Continuation second = pipeline->ProduceIfEmpty(
+      [&](std::unique_ptr<int> value) { rejected = std::move(value); });
+
+  ASSERT_TRUE(first.Complete(std::make_unique<int>(1)).success);
+  EXPECT_FALSE(second.Complete(std::make_unique<int>(2)).success);
+  ASSERT_TRUE(rejected);
+  EXPECT_EQ(*rejected, 2);
+  EXPECT_EQ(pipeline->GetInflightCount(), 1);
+}
+
+TEST(PipelineTest, DroppedContinuationReleasesItsReservation) {
+  auto pipeline = std::make_shared<IntPipeline>(1);
+  {
+    Continuation continuation = pipeline->Produce();
+    EXPECT_EQ(pipeline->GetInflightCount(), 1);
+  }
+
+  EXPECT_EQ(pipeline->GetInflightCount(), 0);
+  EXPECT_EQ(pipeline->Consume([](std::unique_ptr<int>) { FAIL(); }),
+            PipelineConsumeResult::NoneAvailable);
+  EXPECT_TRUE(pipeline->Produce());
 }
 
 TEST(PipelineTest, ProduceIfEmptySuccessfulIfQueueIsEmpty) {

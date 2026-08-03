@@ -9,6 +9,7 @@
 #include <memory>
 #include <set>
 #include <unordered_map>
+#include <vector>
 
 #include "flutter/fml/macros.h"
 #include "flutter/shell/common/shell.h"
@@ -91,6 +92,24 @@ class EmbedderEngine {
                               fml::TimePoint frame_start_time,
                               fml::TimePoint frame_target_time);
 
+  bool OnVsyncEventForDisplayWithOpportunity(
+      intptr_t baton,
+      int64_t display_id,
+      uint64_t frame_opportunity_id,
+      const std::vector<int64_t>& target_ids,
+      fml::TimePoint frame_start_time,
+      fml::TimePoint frame_target_time);
+
+  bool CancelVsyncForDisplay(intptr_t baton,
+                             int64_t display_id,
+                             VsyncWaiter::CancellationReason reason,
+                             fml::closure completion);
+
+  bool CancelFrameOpportunity(uint64_t frame_opportunity_id,
+                              int64_t display_id,
+                              VsyncWaiter::CancellationReason reason,
+                              fml::closure completion);
+
   /// Assigns a view to a display in the Animator's per-display tracking.
   bool SetViewDisplay(int64_t view_id, int64_t display_id);
 
@@ -129,6 +148,8 @@ class EmbedderEngine {
   std::unique_ptr<ShellArgs> shell_args_;
   std::unique_ptr<Shell> shell_;
   std::unique_ptr<EmbedderExternalTextureResolver> external_texture_resolver_;
+  const FlutterAvioExtensionFeatures avio_extension_features_;
+  const std::shared_ptr<FrameOpportunityRegistry> frame_opportunity_registry_;
 #ifdef __linux__
   std::unique_ptr<DmabufTextureMailbox> dmabuf_mailbox_;
 #endif

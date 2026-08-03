@@ -7,9 +7,11 @@
 
 #include <cstddef>
 #include <deque>
+#include <optional>
 #include <set>
 #include <unordered_map>
 
+#include "flutter/common/frame_opportunity.h"
 #include "flutter/common/task_runners.h"
 #include "flutter/flow/frame_timings.h"
 #include "flutter/fml/memory/ref_ptr.h"
@@ -60,6 +62,12 @@ class Animator final {
     virtual void OnAnimatorDrawLastLayerTrees(
         std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder) = 0;
 
+    virtual void OnAnimatorDrawLastLayerTreesForDisplay(
+        std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder,
+        const std::set<int64_t>& view_ids) {
+      OnAnimatorDrawLastLayerTrees(std::move(frame_timings_recorder));
+    }
+
     /// Notifies the delegate that a scheduled frame for the given display
     /// completed without producing any layer trees (no Render() calls from
     /// Dart for this display's views).
@@ -69,6 +77,14 @@ class Animator final {
     virtual void OnAnimatorEmptyFrameForDisplay(
         int64_t display_id,
         const std::set<int64_t>& view_ids) {}
+
+    virtual bool OnAnimatorFrameOpportunityOutcome(
+        FrameOpportunityId opportunity_id,
+        int64_t display_id,
+        int64_t target_id,
+        FrameOpportunityOutcome outcome) {
+      return false;
+    }
   };
 
   Animator(Delegate& delegate,
@@ -127,6 +143,11 @@ class Animator final {
     // view ids that actually changed.
     std::set<int64_t> current_frame_view_ids;
     std::set<int64_t> rendered_views_this_frame;
+    // Targets removed after demand was admitted but before the exact frame
+    // opportunity reached its UI callback remain named until that opportunity
+    // terminalizes them.
+    std::set<int64_t> removed_target_ids;
+    bool retired = false;
     bool frame_scheduled = false;
     bool frame_in_progress = false;
     // Latch the strongest mode for the next scheduled vsync. A full rebuild
@@ -135,6 +156,10 @@ class Animator final {
     // Tracks whether the current display frame must rebuild layer trees.
     bool frame_regenerate_layer_trees = true;
     std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder;
+    std::optional<FrameOpportunityId> current_opportunity_id;
+    std::optional<FrameOpportunityId> last_delivered_opportunity_id;
+    std::optional<FrameOpportunityId> cancelled_opportunity_id;
+    std::optional<VsyncWaiter::CancellationReason> cancelled_opportunity_reason;
     // All displays share the engine's single raster pipeline. Display-scoped
     // scheduling stays independent, but downstream raster backpressure and
     // resubmission logic remain coherent because frame items drain through one
@@ -142,12 +167,6 @@ class Animator final {
     // Animator; storing one reservation per display can reserve every slot
     // with empty frames and deadlock unrelated displays.
     std::shared_ptr<FramePipeline> pipeline;
-
-    // Frame-flow stall diagnostics.
-    uint64_t total_frames = 0;
-    uint64_t empty_frames = 0;
-    uint64_t consecutive_empty_frames = 0;
-    uint64_t pipeline_full_count = 0;
   };
 
   /// Registers a display with the given refresh rate.
@@ -174,6 +193,13 @@ class Animator final {
   void RequestFrameForDisplayViews(int64_t display_id,
                                    const std::set<int64_t>& view_ids,
                                    bool regenerate_layer_trees = true);
+
+  // Settles UI-side state for an opportunity cancelled after its scheduled
+  // baton was returned. Registry terminality is owned outside Animator; this
+  // method only prevents or abandons the matching frame turn.
+  void CancelFrameOpportunity(int64_t display_id,
+                              FrameOpportunityId opportunity_id,
+                              VsyncWaiter::CancellationReason reason);
 
   /// Returns true if per-display mode is active.
   bool IsPerDisplayMode() const;
@@ -235,6 +261,7 @@ class Animator final {
 
   // Clear |trace_flow_ids_| if |frame_scheduled_| is false.
   void ScheduleMaybeClearTraceFlowIds();
+  void EndTraceFlowIds();
 
   // -----------------------------------------------------------------------
   // Per-Display Frame Lifecycle (Private)
@@ -243,6 +270,14 @@ class Animator final {
   /// Callback invoked when a display's vsync fires.
   void OnDisplayVsync(int64_t display_id,
                       std::unique_ptr<FrameTimingsRecorder> recorder);
+
+  /// Settles the scheduled half of a display frame when its embedder baton is
+  /// cancelled before return. Transport cancellation preserves the latched
+  /// demand for a later explicit request; authority/target teardown retires
+  /// it with the epoch that owned the baton.
+  void OnDisplayVsyncCancelled(
+      int64_t display_id,
+      VsyncWaiter::CancellationReason cancellation_reason);
 
   /// Begins a frame for the given display: acquires a pipeline slot,
   /// notifies the delegate to invoke Dart callbacks for this display's views.
@@ -254,6 +289,11 @@ class Animator final {
 
   void ScheduleDisplayVsync(DisplayFrameState& state);
 
+  std::set<int64_t> CompleteFrameOpportunity(
+      DisplayFrameState& state,
+      const std::set<int64_t>& target_ids,
+      FrameOpportunityOutcome outcome);
+
   /// Ends a frame for the given display: packages layer trees into a
   /// FrameItem and submits to the pipeline.
   void EndFrameForDisplay(DisplayFrameState& state);
@@ -263,9 +303,6 @@ class Animator final {
 
   /// Returns the display ID for the given view.
   int64_t GetDisplayForView(int64_t view_id) const;
-
-  size_t TotalTrackedDisplayViews() const;
-  void LogStateHighWatermarks(const char* reason);
 
   Delegate& delegate_;
   TaskRunners task_runners_;
@@ -300,14 +337,6 @@ class Animator final {
 
   /// Fallback state used when no displays are registered.
   DisplayFrameState default_state_;
-
-  // Total Render() calls across all views (frame-flow stall diagnostic).
-  uint64_t render_calls_total_ = 0;
-  size_t layer_trees_tasks_high_water_ = 0;
-  size_t display_states_high_water_ = 0;
-  size_t view_to_display_high_water_ = 0;
-  size_t default_view_ids_high_water_ = 0;
-  size_t display_view_ids_high_water_ = 0;
 
   fml::TaskRunnerAffineWeakPtrFactory<Animator> weak_factory_;
 

@@ -1109,6 +1109,175 @@ TEST_F(EmbedderTest, RootRenderTargetReportsUnavailableBackingStore) {
   ASSERT_FALSE(latch.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 }
 
+TEST_F(EmbedderTest, ExactVsyncCancellationRequiresPerDisplayVsync) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      false, kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureExactVsyncCancellation);
+
+  auto engine = builder.LaunchEngine();
+  EXPECT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, ExactFrameOutcomesRequireTerminalCallback) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      false, kFlutterAvioExtensionFeaturePerDisplayVsync |
+                 kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+                 kFlutterAvioExtensionFeatureExactVsyncCancellation |
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+  builder.GetProjectArgs().vsync_for_display_callback =
+      [](void*, intptr_t, FlutterEngineDisplayId) {};
+
+  auto engine = builder.LaunchEngine();
+  EXPECT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, ExactFrameOutcomesRequireCompositor) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      false, kFlutterAvioExtensionFeaturePerDisplayVsync |
+                 kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+                 kFlutterAvioExtensionFeatureExactVsyncCancellation |
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+  builder.GetProjectArgs().vsync_for_display_callback =
+      [](void*, intptr_t, FlutterEngineDisplayId) {};
+  builder.GetProjectArgs().compositor = nullptr;
+
+  auto engine = builder.LaunchEngine();
+  EXPECT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, ExactFrameOutcomesRequireExplicitRenderCompletion) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      false, kFlutterAvioExtensionFeaturePerDisplayVsync |
+                 kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureExactVsyncCancellation |
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+  builder.GetProjectArgs().vsync_for_display_callback =
+      [](void*, intptr_t, FlutterEngineDisplayId) {};
+  builder.GetCompositor().frame_opportunity_outcome_callback =
+      [](const FlutterFrameOpportunityOutcomeInfo*) {};
+
+  auto engine = builder.LaunchEngine();
+  EXPECT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, ExactFrameOpportunityContractCanBeNegotiated) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      false, kFlutterAvioExtensionFeaturePerDisplayVsync |
+                 kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+                 kFlutterAvioExtensionFeatureExactVsyncCancellation |
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+  builder.GetProjectArgs().vsync_for_display_callback =
+      [](void*, intptr_t, FlutterEngineDisplayId) {};
+  builder.GetCompositor().frame_opportunity_outcome_callback =
+      [](const FlutterFrameOpportunityOutcomeInfo*) {};
+
+  auto engine = builder.LaunchEngine();
+  EXPECT_TRUE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, ReturnedFrameOpportunityCancelsThroughPublicAbi) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      false, kFlutterAvioExtensionFeaturePerDisplayVsync |
+                 kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+                 kFlutterAvioExtensionFeatureExactVsyncCancellation |
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+
+  fml::AutoResetWaitableEvent baton_latch;
+  std::optional<intptr_t> baton;
+  context.SetVsyncForDisplayCallback(
+      [&](intptr_t next_baton, FlutterEngineDisplayId display_id) {
+        if (display_id == 19) {
+          baton = next_baton;
+          baton_latch.Signal();
+        }
+      });
+  builder.GetProjectArgs().vsync_for_display_callback =
+      [](void* user_data, intptr_t next_baton,
+         FlutterEngineDisplayId display_id) {
+        reinterpret_cast<EmbedderTestContext*>(user_data)
+            ->RunVsyncForDisplayCallback(next_baton, display_id);
+      };
+  builder.GetCompositor().frame_opportunity_outcome_callback =
+      [](const FlutterFrameOpportunityOutcomeInfo*) {};
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterEngineDisplay display = {};
+  display.struct_size = sizeof(FlutterEngineDisplay);
+  display.display_id = 19;
+  display.single_display = true;
+  display.refresh_rate = 60.0;
+  display.width = 800;
+  display.height = 600;
+  display.device_pixel_ratio = 1.0;
+  ASSERT_EQ(
+      FlutterEngineNotifyDisplayUpdate(
+          engine.get(), kFlutterEngineDisplaysUpdateTypeStartup, &display, 1),
+      kSuccess);
+  ASSERT_EQ(FlutterEngineSetViewDisplay(engine.get(), kFlutterImplicitViewId,
+                                        display.display_id),
+            kSuccess);
+  ASSERT_FALSE(baton_latch.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_TRUE(baton.has_value());
+
+  const FlutterViewId target_id = kFlutterImplicitViewId;
+  const uint64_t now = FlutterEngineGetCurrentTime();
+  ASSERT_EQ(FlutterEngineOnVsyncForDisplayWithOpportunity(
+                engine.get(), baton.value(), display.display_id, 700,
+                &target_id, 1, now + 1'000'000'000, now + 2'000'000'000),
+            kSuccess);
+
+  struct CancellationState {
+    fml::AutoResetWaitableEvent latch;
+    size_t callback_count = 0;
+  } cancellation;
+  auto cancellation_callback =
+      [](const FlutterFrameOpportunityCancellationInfo* info) {
+        auto* state = reinterpret_cast<CancellationState*>(info->user_data);
+        EXPECT_EQ(info->opportunity_id, 700u);
+        EXPECT_EQ(info->display_id, 19u);
+        EXPECT_EQ(info->reason, kFlutterVsyncCancellationReasonHostTerminated);
+        state->callback_count++;
+        state->latch.Signal();
+      };
+  ASSERT_EQ(FlutterEngineCancelFrameOpportunity(
+                engine.get(), 700, display.display_id,
+                kFlutterVsyncCancellationReasonHostTerminated,
+                cancellation_callback, &cancellation),
+            kSuccess);
+  ASSERT_FALSE(
+      cancellation.latch.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  EXPECT_EQ(cancellation.callback_count, 1u);
+  EXPECT_EQ(FlutterEngineCancelFrameOpportunity(
+                engine.get(), 700, display.display_id,
+                kFlutterVsyncCancellationReasonHostTerminated,
+                cancellation_callback, &cancellation),
+            kInternalInconsistency);
+}
+
 //------------------------------------------------------------------------------
 /// Test the layer structure and pixels rendered when using a custom software
 /// compositor.

@@ -220,14 +220,35 @@ flutter::LayerTree* Rasterizer::GetLastLayerTree(int64_t view_id) {
 
 void Rasterizer::DrawLastLayerTrees(
     std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder) {
-  if (!surface_) {
-    return;
-  }
-  std::vector<std::unique_ptr<LayerTreeTask>> tasks;
+  std::set<int64_t> view_ids;
   for (auto& [view_id, view_record] : view_records_) {
     if (view_record.last_successful_task) {
-      tasks.push_back(std::move(view_record.last_successful_task));
+      view_ids.insert(view_id);
     }
+  }
+  DrawLastLayerTreesForViews(std::move(frame_timings_recorder), view_ids);
+}
+
+void Rasterizer::DrawLastLayerTreesForViews(
+    std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder,
+    const std::set<int64_t>& view_ids) {
+  if (!surface_) {
+    for (int64_t view_id : view_ids) {
+      CompleteFrameOpportunity(*frame_timings_recorder, view_id,
+                               FrameOpportunityOutcome::kRasterFailed);
+    }
+    return;
+  }
+
+  std::vector<std::unique_ptr<LayerTreeTask>> tasks;
+  for (int64_t view_id : view_ids) {
+    auto record = view_records_.find(view_id);
+    if (record == view_records_.end() || !record->second.last_successful_task) {
+      CompleteFrameOpportunity(*frame_timings_recorder, view_id,
+                               FrameOpportunityOutcome::kNoVisualChange);
+      continue;
+    }
+    tasks.push_back(std::move(record->second.last_successful_task));
   }
   if (tasks.empty()) {
     return;
@@ -236,12 +257,58 @@ void Rasterizer::DrawLastLayerTrees(
   DoDrawResult result =
       DrawToSurfaces(*frame_timings_recorder, std::move(tasks));
 
+  if (result.resubmitted_item) {
+    CompleteBackpressuredFrameItem(*result.resubmitted_item);
+    // These tasks came from the retained cache, not a newly built frame. A
+    // transient retry must not erase the last known-good tree while fresh
+    // demand is rearmed.
+    for (auto& task : result.resubmitted_item->layer_tree_tasks) {
+      EnsureViewRecord(task->view_id).last_successful_task = std::move(task);
+    }
+    result.resubmitted_item.reset();
+  }
+
   // EndFrame should perform cleanups for the external_view_embedder.
   if (external_view_embedder_ && external_view_embedder_->GetUsedThisFrame()) {
     bool should_resubmit_frame = ShouldResubmitFrame(result);
     external_view_embedder_->SetUsedThisFrame(false);
     external_view_embedder_->EndFrame(should_resubmit_frame,
                                       raster_thread_merger_);
+  }
+}
+
+bool Rasterizer::CompleteFrameOpportunity(const FrameTimingsRecorder& recorder,
+                                          int64_t target_id,
+                                          FrameOpportunityOutcome outcome) {
+  const auto frame_opportunity = recorder.GetFrameOpportunity();
+  if (!frame_opportunity.has_value()) {
+    return false;
+  }
+  return delegate_.OnFrameOpportunityOutcome(
+      frame_opportunity->id, frame_opportunity->display_id, target_id, outcome);
+}
+
+std::set<int64_t> Rasterizer::CompleteFrameItemOpportunity(
+    const FrameItem& item,
+    FrameOpportunityOutcome outcome) {
+  std::set<int64_t> completed_target_ids;
+  for (const auto& task : item.layer_tree_tasks) {
+    if (CompleteFrameOpportunity(*item.frame_timings_recorder, task->view_id,
+                                 outcome)) {
+      completed_target_ids.insert(task->view_id);
+    }
+  }
+  return completed_target_ids;
+}
+
+void Rasterizer::CompleteBackpressuredFrameItem(const FrameItem& item) {
+  const auto retry_targets = CompleteFrameItemOpportunity(
+      item, FrameOpportunityOutcome::kBackpressured);
+  const auto frame_opportunity =
+      item.frame_timings_recorder->GetFrameOpportunity();
+  if (frame_opportunity.has_value() && !retry_targets.empty()) {
+    delegate_.OnFrameOpportunityBackpressured(frame_opportunity->display_id,
+                                              retry_targets);
   }
 }
 
@@ -273,11 +340,18 @@ DrawStatus Rasterizer::Draw(const std::shared_ptr<FramePipeline>& pipeline) {
   bool should_resubmit_frame = ShouldResubmitFrame(draw_result);
   if (should_resubmit_frame) {
     FML_CHECK(draw_result.resubmitted_item);
-    auto front_continuation = pipeline->ProduceIfEmpty();
-    PipelineProduceResult pipeline_result =
-        front_continuation.Complete(std::move(draw_result.resubmitted_item));
-    if (pipeline_result.success) {
-      consume_result = PipelineConsumeResult::MoreAvailable;
+    auto front_continuation = pipeline->ProduceIfEmpty(
+        [this](std::unique_ptr<FrameItem> rejected_item) {
+          CompleteBackpressuredFrameItem(*rejected_item);
+        });
+    if (!front_continuation) {
+      CompleteBackpressuredFrameItem(*draw_result.resubmitted_item);
+    } else {
+      PipelineProduceResult pipeline_result =
+          front_continuation.Complete(std::move(draw_result.resubmitted_item));
+      if (pipeline_result.success) {
+        consume_result = PipelineConsumeResult::MoreAvailable;
+      }
     }
   } else if (draw_result.status == DoDrawStatus::kEnqueuePipeline) {
     consume_result = PipelineConsumeResult::MoreAvailable;
@@ -521,6 +595,10 @@ Rasterizer::DoDrawResult Rasterizer::DoDraw(
     return DoDrawResult{DoDrawStatus::kDone};
   }
   if (!surface_) {
+    for (const auto& task : tasks) {
+      CompleteFrameOpportunity(*frame_timings_recorder, task->view_id,
+                               FrameOpportunityOutcome::kRasterFailed);
+    }
     return DoDrawResult{DoDrawStatus::kNotSetUp};
   }
 
@@ -634,6 +712,11 @@ Rasterizer::DoDrawResult Rasterizer::DrawToSurfaces(
               result.status = DoDrawStatus::kGpuUnavailable;
               frame_timings_recorder.RecordRasterStart(fml::TimePoint::Now());
               frame_timings_recorder.RecordRasterEnd();
+              for (const auto& task : tasks) {
+                CompleteFrameOpportunity(
+                    frame_timings_recorder, task->view_id,
+                    FrameOpportunityOutcome::kRasterFailed);
+              }
             })
             .SetIfFalse([&] {
               result.resubmitted_item = DrawToSurfacesUnsafe(
@@ -658,6 +741,8 @@ std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
     if (delegate_.ShouldDiscardLayerTree(task.view_id, *task.layer_tree)) {
       EnsureViewRecord(task.view_id).last_draw_status =
           DrawSurfaceStatus::kDiscarded;
+      CompleteFrameOpportunity(frame_timings_recorder, task.view_id,
+                               FrameOpportunityOutcome::kRasterFailed);
       task_iter = tasks.erase(task_iter);
     } else {
       ++task_iter;
@@ -674,6 +759,8 @@ std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
     external_view_embedder_->SetUsedThisFrame(true);
     external_view_embedder_->BeginFrame(surface_->GetContext(),
                                         raster_thread_merger_);
+    external_view_embedder_->SetFrameOpportunity(
+        frame_timings_recorder.GetFrameOpportunity());
   }
 
   std::optional<fml::TimePoint> presentation_time = std::nullopt;
@@ -703,12 +790,20 @@ std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
 
     auto& view_record = EnsureViewRecord(task->view_id);
     view_record.last_draw_status = status;
-    if (status == DrawSurfaceStatus::kSuccess) {
+    if (status == DrawSurfaceStatus::kSuccess ||
+        status == DrawSurfaceStatus::kNoVisualChange) {
       view_record.last_successful_task = std::make_unique<LayerTreeTask>(
           view_id, std::move(layer_tree), device_pixel_ratio);
+      if (status == DrawSurfaceStatus::kNoVisualChange) {
+        CompleteFrameOpportunity(frame_timings_recorder, view_id,
+                                 FrameOpportunityOutcome::kNoVisualChange);
+      }
     } else if (status == DrawSurfaceStatus::kRetry) {
       resubmitted_tasks.push_back(std::make_unique<LayerTreeTask>(
           view_id, std::move(layer_tree), device_pixel_ratio));
+    } else if (status == DrawSurfaceStatus::kFailed) {
+      CompleteFrameOpportunity(frame_timings_recorder, view_id,
+                               FrameOpportunityOutcome::kRasterFailed);
     }
   }
   // TODO(dkwingsmt): Pass in raster cache(s) for all views.
@@ -817,7 +912,7 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
             if (frame_dmg.has_value() && frame_dmg->isEmpty() &&
                 metadata_damage.GetBufferDamage().has_value()) {
               NOT_SLIMPELLER(compositor_context_->raster_cache().EndFrame());
-              return DrawSurfaceStatus::kSuccess;
+              return DrawSurfaceStatus::kNoVisualChange;
             }
             eve_frame_damage = std::move(frame_dmg);
           }
@@ -859,7 +954,7 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
     if (frame_dmg.has_value() && frame_dmg->isEmpty() &&
         damage->GetBufferDamage().has_value()) {
       NOT_SLIMPELLER(compositor_context_->raster_cache().EndFrame());
-      return DrawSurfaceStatus::kSuccess;
+      return DrawSurfaceStatus::kNoVisualChange;
     }
 
     SurfaceFrame::SubmitInfo submit_info;

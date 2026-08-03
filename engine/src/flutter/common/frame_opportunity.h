@@ -19,6 +19,10 @@ using FrameOpportunityId = uint64_t;
 struct FrameOpportunityContext {
   FrameOpportunityId id;
   int64_t display_id;
+  // Complete target set admitted by the embedder for this opportunity. The
+  // animator may narrow it to requested active views, but every admitted
+  // target must still reach one terminal outcome.
+  std::set<int64_t> target_ids;
 };
 
 // Terminal engine-side outcomes for one target admitted under one compositor

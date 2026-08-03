@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <format>
+#include <set>
 #include <thread>
 
 #include "flutter/flow/frame_timings.h"
@@ -168,13 +169,15 @@ TEST(FrameTimingsRecorderTest, ClonedHasSameFrameNumber) {
 
 TEST(FrameTimingsRecorderTest, ClonePreservesFrameOpportunity) {
   auto recorder = std::make_unique<FrameTimingsRecorder>();
-  recorder->SetFrameOpportunity(73, 11);
+  recorder->SetFrameOpportunity(73, 11, {101, 202});
 
   auto cloned =
       recorder->CloneUntil(FrameTimingsRecorder::State::kUninitialized);
   ASSERT_TRUE(cloned->GetFrameOpportunity().has_value());
   EXPECT_EQ(cloned->GetFrameOpportunity()->id, 73u);
   EXPECT_EQ(cloned->GetFrameOpportunity()->display_id, 11);
+  EXPECT_EQ(cloned->GetFrameOpportunity()->target_ids,
+            std::set<int64_t>({101, 202}));
 }
 
 TEST(FrameTimingsRecorderTest, ClonedHasSameVsyncStartAndTarget) {

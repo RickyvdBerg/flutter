@@ -70,6 +70,33 @@ void ResolveDisplayFrameViewIds(Animator::DisplayFrameState& state) {
   state.pending_frame_view_ids.clear();
 }
 
+struct ReconciledFrameTargets {
+  std::set<int64_t> render;
+  std::set<int64_t> no_visual_change;
+  std::set<int64_t> removed;
+};
+
+ReconciledFrameTargets ReconcileFrameTargets(
+    const std::set<int64_t>& admitted,
+    const std::set<int64_t>& requested,
+    const std::set<int64_t>& active,
+    const std::set<int64_t>& removed_since_request) {
+  ReconciledFrameTargets result;
+  for (int64_t target_id : admitted) {
+    const bool was_removed =
+        removed_since_request.find(target_id) != removed_since_request.end();
+    const bool is_active = active.find(target_id) != active.end();
+    if (was_removed || !is_active) {
+      result.removed.insert(target_id);
+    } else if (requested.find(target_id) != requested.end()) {
+      result.render.insert(target_id);
+    } else {
+      result.no_visual_change.insert(target_id);
+    }
+  }
+  return result;
+}
+
 }  // namespace
 
 Animator::Animator(Delegate& delegate,
@@ -788,34 +815,58 @@ void Animator::OnDisplayVsync(int64_t display_id,
   state->last_delivered_opportunity_id = state->current_opportunity_id;
 
   if (state->retired) {
-    CompleteFrameOpportunity(*state, state->removed_target_ids,
+    const std::set<int64_t>& retired_targets =
+        frame_opportunity.has_value() ? frame_opportunity->target_ids
+                                      : state->removed_target_ids;
+    CompleteFrameOpportunity(*state, retired_targets,
                              FrameOpportunityOutcome::kTargetRemoved);
-    if (!state->removed_target_ids.empty()) {
-      delegate_.OnAnimatorEmptyFrameForDisplay(display_id,
-                                               state->removed_target_ids);
+    if (!retired_targets.empty()) {
+      delegate_.OnAnimatorEmptyFrameForDisplay(display_id, retired_targets);
     }
     display_states_.erase(display_id);
     return;
   }
 
-  if (!state->removed_target_ids.empty()) {
-    CompleteFrameOpportunity(*state, state->removed_target_ids,
-                             FrameOpportunityOutcome::kTargetRemoved);
-    delegate_.OnAnimatorEmptyFrameForDisplay(display_id,
-                                             state->removed_target_ids);
-    state->removed_target_ids.clear();
-  }
   state->frame_regenerate_layer_trees = state->pending_regenerate_layer_trees;
   state->pending_regenerate_layer_trees = false;
-  // Capture the requested set before resolution consumes it. When none of the
-  // requested views remain, each exact target still needs a terminal result.
   std::set<int64_t> requested_view_ids = state->pending_frame_all_views
                                              ? state->view_ids
                                              : state->pending_frame_view_ids;
-  ResolveDisplayFrameViewIds(*state);
+
+  if (frame_opportunity.has_value()) {
+    FML_DCHECK(!frame_opportunity->target_ids.empty());
+    const ReconciledFrameTargets targets =
+        ReconcileFrameTargets(frame_opportunity->target_ids, requested_view_ids,
+                              state->view_ids, state->removed_target_ids);
+    state->current_frame_view_ids = targets.render;
+    state->pending_frame_all_views = false;
+    state->pending_frame_view_ids.clear();
+    state->removed_target_ids.clear();
+
+    CompleteFrameOpportunity(*state, targets.removed,
+                             FrameOpportunityOutcome::kTargetRemoved);
+    CompleteFrameOpportunity(*state, targets.no_visual_change,
+                             FrameOpportunityOutcome::kNoVisualChange);
+
+    std::set<int64_t> terminal_only_targets = targets.removed;
+    terminal_only_targets.insert(targets.no_visual_change.begin(),
+                                 targets.no_visual_change.end());
+    if (!terminal_only_targets.empty()) {
+      delegate_.OnAnimatorEmptyFrameForDisplay(display_id,
+                                               terminal_only_targets);
+    }
+  } else {
+    if (!state->removed_target_ids.empty()) {
+      delegate_.OnAnimatorEmptyFrameForDisplay(display_id,
+                                               state->removed_target_ids);
+      state->removed_target_ids.clear();
+    }
+    ResolveDisplayFrameViewIds(*state);
+  }
+
   if (state->current_frame_view_ids.empty()) {
     state->frame_regenerate_layer_trees = true;
-    if (!requested_view_ids.empty()) {
+    if (!frame_opportunity.has_value() && !requested_view_ids.empty()) {
       CompleteFrameOpportunity(*state, requested_view_ids,
                                FrameOpportunityOutcome::kTargetRemoved);
       delegate_.OnAnimatorEmptyFrameForDisplay(state->display_id,

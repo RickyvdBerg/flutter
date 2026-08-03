@@ -4,12 +4,13 @@
 
 #include "flutter/shell/platform/embedder/embedder_engine.h"
 
+#include <set>
+
 #include "flutter/fml/make_copyable.h"
 #include "flutter/shell/platform/embedder/vsync_waiter_embedder.h"
 
 #ifdef __linux__
 #include <unistd.h>
-#include <set>
 
 #include "flutter/fml/file.h"
 #endif
@@ -378,7 +379,8 @@ bool EmbedderEngine::OnVsyncEventForDisplayWithOpportunity(
 
   auto waiter = shell_->GetVsyncWaiter().lock();
   if (waiter && waiter->ReturnVsync(display_id, baton, frame_start_time,
-                                    frame_target_time, frame_opportunity_id)) {
+                                    frame_target_time, frame_opportunity_id,
+                                    {target_ids.begin(), target_ids.end()})) {
     return true;
   }
   frame_opportunity_registry_->Abandon(frame_opportunity_id, display_id);

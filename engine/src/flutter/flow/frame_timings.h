@@ -128,11 +128,14 @@ class FrameTimingsRecorder {
   // on the recorder at vsync return. The recorder is the existing object that
   // crosses UI -> raster custody, so carrying the opaque identity here avoids
   // a parallel frame registry. Zero is never a valid opportunity id.
-  void SetFrameOpportunity(uint64_t opportunity_id, int64_t display_id) {
+  void SetFrameOpportunity(uint64_t opportunity_id,
+                           int64_t display_id,
+                           std::set<int64_t> target_ids = {}) {
     FML_DCHECK(opportunity_id != 0);
     frame_opportunity_ = FrameOpportunityContext{
         .id = opportunity_id,
         .display_id = display_id,
+        .target_ids = std::move(target_ids),
     };
   }
   std::optional<FrameOpportunityContext> GetFrameOpportunity() const {

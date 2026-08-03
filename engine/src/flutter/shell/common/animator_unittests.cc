@@ -58,10 +58,11 @@ class ManualDisplayVsyncWaiter final : public VsyncWaiter {
       : VsyncWaiter(task_runners) {}
 
   void FireDisplay(DisplayId display_id,
-                   std::optional<uint64_t> opportunity_id = std::nullopt) {
+                   std::optional<uint64_t> opportunity_id = std::nullopt,
+                   std::set<int64_t> opportunity_target_ids = {}) {
     const auto now = fml::TimePoint::Now();
     FireCallback(display_id, now, now, /*pause_secondary_tasks=*/true,
-                 opportunity_id);
+                 opportunity_id, std::move(opportunity_target_ids));
   }
 
   size_t request_count() const { return request_count_; }
@@ -388,7 +389,7 @@ TEST_F(ShellTest, RemovedTargetTerminatesExactFrameOpportunity) {
       .WillOnce(::testing::Return(true));
   EXPECT_CALL(delegate, OnAnimatorEmptyFrameForDisplay(7, ::testing::_));
   PostTaskSync(task_runners.GetUITaskRunner(),
-               [waiter] { waiter->FireDisplay(7, 55); });
+               [waiter] { waiter->FireDisplay(7, 55, {101}); });
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
 }
@@ -439,7 +440,86 @@ TEST_F(ShellTest, RemovingUnrequestedTargetDoesNotInventAnOutcome) {
               OnAnimatorFrameOpportunityOutcome(88, 14, 214, ::testing::_))
       .Times(0);
   PostTaskSync(task_runners.GetUITaskRunner(),
-               [waiter] { waiter->FireDisplay(14, 88); });
+               [waiter] { waiter->FireDisplay(14, 88, {114}); });
+  PostTaskSync(task_runners.GetUITaskRunner(), [] {});
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
+}
+
+TEST_F(ShellTest, ExactOpportunityReconcilesEveryAdmittedTarget) {
+  class ExactDisplayDelegate final : public FakeAnimatorDelegate {
+   public:
+    MOCK_METHOD(void,
+                OnAnimatorBeginFrameForDisplay,
+                (fml::TimePoint frame_target_time,
+                 uint64_t frame_number,
+                 int64_t display_id,
+                 const std::set<int64_t>& view_ids),
+                (override));
+    MOCK_METHOD(void,
+                OnAnimatorEmptyFrameForDisplay,
+                (int64_t display_id, const std::set<int64_t>& view_ids),
+                (override));
+    MOCK_METHOD(bool,
+                OnAnimatorFrameOpportunityOutcome,
+                (FrameOpportunityId opportunity_id,
+                 int64_t display_id,
+                 int64_t target_id,
+                 FrameOpportunityOutcome outcome),
+                (override));
+  } delegate;
+
+  TaskRunners task_runners = {"test", CreateNewThread(), CreateNewThread(),
+                              CreateNewThread(), CreateNewThread()};
+  std::shared_ptr<Animator> animator;
+  ManualDisplayVsyncWaiter* waiter = nullptr;
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    auto owned_waiter =
+        std::make_unique<ManualDisplayVsyncWaiter>(task_runners);
+    waiter = owned_waiter.get();
+    animator = std::make_unique<Animator>(delegate, task_runners,
+                                          std::move(owned_waiter));
+    animator->AddDisplay(14, 60.0);
+    animator->SetViewDisplay(114, 14);
+    animator->SetViewDisplay(214, 14);
+    animator->SetViewDisplay(314, 14);
+  });
+
+  EXPECT_CALL(delegate, OnAnimatorBeginFrameForDisplay(
+                            ::testing::_, ::testing::_, 14,
+                            std::set<int64_t>({114, 214, 314})));
+  EXPECT_CALL(delegate, OnAnimatorEmptyFrameForDisplay(
+                            14, std::set<int64_t>({114, 214, 314})));
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [waiter] { waiter->FireDisplay(14); });
+  PostTaskSync(task_runners.GetUITaskRunner(), [] {});
+  ::testing::Mock::VerifyAndClearExpectations(&delegate);
+
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [&] { animator->RequestFrameForDisplayViews(14, {114, 214}); });
+  EXPECT_CALL(delegate,
+              OnAnimatorBeginFrameForDisplay(::testing::_, ::testing::_, 14,
+                                             std::set<int64_t>({114})));
+  EXPECT_CALL(delegate,
+              OnAnimatorFrameOpportunityOutcome(
+                  600, 14, 114, FrameOpportunityOutcome::kNoVisualChange))
+      .WillOnce(::testing::Return(true));
+  EXPECT_CALL(delegate,
+              OnAnimatorFrameOpportunityOutcome(
+                  600, 14, 314, FrameOpportunityOutcome::kNoVisualChange))
+      .WillOnce(::testing::Return(true));
+  EXPECT_CALL(delegate,
+              OnAnimatorFrameOpportunityOutcome(
+                  600, 14, 414, FrameOpportunityOutcome::kTargetRemoved))
+      .WillOnce(::testing::Return(true));
+  EXPECT_CALL(delegate,
+              OnAnimatorFrameOpportunityOutcome(600, 14, 214, ::testing::_))
+      .Times(0);
+  EXPECT_CALL(delegate, OnAnimatorEmptyFrameForDisplay(
+                            14, std::set<int64_t>({314, 414})));
+  EXPECT_CALL(delegate,
+              OnAnimatorEmptyFrameForDisplay(14, std::set<int64_t>({114})));
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [waiter] { waiter->FireDisplay(14, 600, {114, 314, 414}); });
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
 }
@@ -488,7 +568,7 @@ TEST_F(ShellTest, DisplayRemovalTerminatesOnlyPendingTargets) {
               OnAnimatorFrameOpportunityOutcome(99, 15, 215, ::testing::_))
       .Times(0);
   PostTaskSync(task_runners.GetUITaskRunner(),
-               [waiter] { waiter->FireDisplay(15, 99); });
+               [waiter] { waiter->FireDisplay(15, 99, {115}); });
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
 }
@@ -541,7 +621,7 @@ TEST_F(ShellTest, RetainedDisplayFrameReachesRasterAtBuildEnd) {
                                           /*regenerate_layer_trees=*/false);
   });
   PostTaskSync(task_runners.GetUITaskRunner(),
-               [waiter] { waiter->FireDisplay(16, 100); });
+               [waiter] { waiter->FireDisplay(16, 100, {116}); });
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
 
   EXPECT_TRUE(delegate.retained_frame_seen);
@@ -603,7 +683,7 @@ TEST_F(ShellTest, CancelledReturnedOpportunityCannotRunItsFrameTurn) {
                             ::testing::_, ::testing::_, 18, ::testing::_))
       .Times(0);
   PostTaskSync(task_runners.GetUITaskRunner(),
-               [waiter] { waiter->FireDisplay(18, 500); });
+               [waiter] { waiter->FireDisplay(18, 500, {118}); });
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   ::testing::Mock::VerifyAndClearExpectations(&delegate);
 
@@ -612,7 +692,7 @@ TEST_F(ShellTest, CancelledReturnedOpportunityCannotRunItsFrameTurn) {
   PostTaskSync(task_runners.GetUITaskRunner(),
                [&] { animator->RequestFrameForDisplayViews(18, {118}); });
   PostTaskSync(task_runners.GetUITaskRunner(),
-               [waiter] { waiter->FireDisplay(18, 501); });
+               [waiter] { waiter->FireDisplay(18, 501, {118}); });
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
 }
@@ -662,7 +742,7 @@ TEST_F(ShellTest, EmptyTargetTerminatesAsNoVisualChange) {
       .WillOnce(::testing::Return(true));
   EXPECT_CALL(delegate, OnAnimatorEmptyFrameForDisplay(9, ::testing::_));
   PostTaskSync(task_runners.GetUITaskRunner(),
-               [waiter] { waiter->FireDisplay(9, 77); });
+               [waiter] { waiter->FireDisplay(9, 77, {109}); });
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
 }
@@ -728,7 +808,7 @@ TEST_F(ShellTest, PipelineBackpressureTerminatesThenRearmsDemand) {
                    [&] { animator->RequestFrameForDisplayViews(12, {112}); });
     }
     PostTaskSync(task_runners.GetUITaskRunner(), [waiter, opportunity_id] {
-      waiter->FireDisplay(12, opportunity_id);
+      waiter->FireDisplay(12, opportunity_id, {112});
     });
     PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   }

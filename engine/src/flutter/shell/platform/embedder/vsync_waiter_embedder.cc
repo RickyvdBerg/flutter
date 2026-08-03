@@ -124,7 +124,8 @@ bool VsyncWaiterEmbedder::ReturnVsync(
     intptr_t baton,
     fml::TimePoint frame_start_time,
     fml::TimePoint frame_target_time,
-    std::optional<uint64_t> frame_opportunity_id) {
+    std::optional<uint64_t> frame_opportunity_id,
+    std::set<int64_t> frame_opportunity_target_ids) {
   const bool exact_opportunity = frame_opportunity_id.has_value();
   if (exact_opportunity ? !TakeBatonForOpportunity(display_id, baton,
                                                    frame_opportunity_id.value())
@@ -139,8 +140,9 @@ bool VsyncWaiterEmbedder::ReturnVsync(
   // current.
   task_runners_.GetUITaskRunner()->PostTaskForTime(
       [frame_start_time, frame_target_time,
-       weak_waiter = std::move(weak_waiter), display_id,
-       frame_opportunity_id]() {
+       weak_waiter = std::move(weak_waiter), display_id, frame_opportunity_id,
+       frame_opportunity_target_ids =
+           std::move(frame_opportunity_target_ids)]() mutable {
         auto vsync_waiter = weak_waiter.lock();
         auto embedder_waiter =
             std::static_pointer_cast<VsyncWaiterEmbedder>(vsync_waiter);
@@ -150,7 +152,8 @@ bool VsyncWaiterEmbedder::ReturnVsync(
                  display_id, frame_opportunity_id.value()))) {
           vsync_waiter->FireCallback(
               display_id, frame_start_time, frame_target_time,
-              /*pause_secondary_tasks=*/true, frame_opportunity_id);
+              /*pause_secondary_tasks=*/true, frame_opportunity_id,
+              std::move(frame_opportunity_target_ids));
         }
       },
       frame_start_time);

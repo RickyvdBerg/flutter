@@ -69,6 +69,13 @@ need "exact returned-opportunity cancellation ABI" \
   'FlutterEngineCancelFrameOpportunity'
 need "scheduled return names exact targets" \
   $F/shell/platform/embedder/embedder.h 'const FlutterViewId\* target_ids'
+need "admitted targets travel with frame opportunity custody" \
+  $F/common/frame_opportunity.h 'std::set<int64_t> target_ids'
+need "Animator reconciles admitted targets at the UI boundary" \
+  $F/shell/common/animator.cc 'ReconcileFrameTargets'
+need "admitted-target reconciliation regression test" \
+  $F/shell/common/animator_unittests.cc \
+  'ExactOpportunityReconcilesEveryAdmittedTarget'
 need "typed per-target terminal outcomes" \
   $F/shell/platform/embedder/embedder.h \
   'kFlutterFrameOpportunityOutcomeBackpressured'

@@ -36,11 +36,13 @@ class VsyncWaiterEmbedder final : public VsyncWaiter {
   ~VsyncWaiterEmbedder() override;
 
   // |VsyncWaiter|
-  bool ReturnVsync(DisplayId display_id,
-                   intptr_t baton,
-                   fml::TimePoint frame_start_time,
-                   fml::TimePoint frame_target_time,
-                   std::optional<uint64_t> frame_opportunity_id) override;
+  bool ReturnVsync(
+      DisplayId display_id,
+      intptr_t baton,
+      fml::TimePoint frame_start_time,
+      fml::TimePoint frame_target_time,
+      std::optional<uint64_t> frame_opportunity_id,
+      std::set<int64_t> frame_opportunity_target_ids = {}) override;
 
   // |VsyncWaiter|
   bool CancelVsync(DisplayId display_id,

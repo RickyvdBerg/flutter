@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <unordered_map>
 
 #include "flutter/common/task_runners.h"
@@ -74,11 +75,13 @@ class VsyncWaiter : public std::enable_shared_from_this<VsyncWaiter> {
   // Embedder-driven waiters override these to consume their own pending
   // platform token. Keeping the operation on the waiter instance makes token
   // custody engine-local; generic platform waiters reject the operation.
-  virtual bool ReturnVsync(DisplayId display_id,
-                           intptr_t baton,
-                           fml::TimePoint frame_start_time,
-                           fml::TimePoint frame_target_time,
-                           std::optional<uint64_t> frame_opportunity_id) {
+  virtual bool ReturnVsync(
+      DisplayId display_id,
+      intptr_t baton,
+      fml::TimePoint frame_start_time,
+      fml::TimePoint frame_target_time,
+      std::optional<uint64_t> frame_opportunity_id,
+      std::set<int64_t> frame_opportunity_target_ids = {}) {
     return false;
   }
 
@@ -142,22 +145,22 @@ class VsyncWaiter : public std::enable_shared_from_this<VsyncWaiter> {
 
   // Schedules the callback on the UI task runner. Needs to be invoked as close
   // to the `frame_start_time` as possible.
-  void FireCallback(
-      fml::TimePoint frame_start_time,
-      fml::TimePoint frame_target_time,
-      bool pause_secondary_tasks = true,
-      std::optional<uint64_t> frame_opportunity_id = std::nullopt);
+  void FireCallback(fml::TimePoint frame_start_time,
+                    fml::TimePoint frame_target_time,
+                    bool pause_secondary_tasks = true,
+                    std::optional<uint64_t> frame_opportunity_id = std::nullopt,
+                    std::set<int64_t> frame_opportunity_target_ids = {});
 
   // Per-display variant: fires the pending callback for a specific display.
   // Only the callback for the given `display_id` is invoked; callbacks for
   // other displays remain pending. If no callback is pending for this
   // display, the call is a no-op.
-  void FireCallback(
-      DisplayId display_id,
-      fml::TimePoint frame_start_time,
-      fml::TimePoint frame_target_time,
-      bool pause_secondary_tasks = true,
-      std::optional<uint64_t> frame_opportunity_id = std::nullopt);
+  void FireCallback(DisplayId display_id,
+                    fml::TimePoint frame_start_time,
+                    fml::TimePoint frame_target_time,
+                    bool pause_secondary_tasks = true,
+                    std::optional<uint64_t> frame_opportunity_id = std::nullopt,
+                    std::set<int64_t> frame_opportunity_target_ids = {});
 
   bool CancelCallback(DisplayId display_id,
                       CancellationReason reason,

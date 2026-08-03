@@ -69,16 +69,20 @@ TEST(VsyncWaiterEmbedderTest, BatonsAreOwnedByOneEngineInstance) {
   ASSERT_TRUE(second_baton.has_value());
   EXPECT_EQ(first_baton, second_baton);
   const auto now = fml::TimePoint::Now();
-  EXPECT_TRUE(first->ReturnVsync(7, first_baton.value(), now, now, 101));
-  EXPECT_TRUE(second->ReturnVsync(7, second_baton.value(), now, now, 202));
+  EXPECT_TRUE(
+      first->ReturnVsync(7, first_baton.value(), now, now, 101, {1001}));
+  EXPECT_TRUE(
+      second->ReturnVsync(7, second_baton.value(), now, now, 202, {2002}));
   DrainCurrentMessageLoop();
 
   ASSERT_TRUE(first_opportunity.has_value());
   EXPECT_EQ(first_opportunity->id, 101u);
   EXPECT_EQ(first_opportunity->display_id, 7);
+  EXPECT_EQ(first_opportunity->target_ids, std::set<int64_t>({1001}));
   ASSERT_TRUE(second_opportunity.has_value());
   EXPECT_EQ(second_opportunity->id, 202u);
   EXPECT_EQ(second_opportunity->display_id, 7);
+  EXPECT_EQ(second_opportunity->target_ids, std::set<int64_t>({2002}));
 }
 
 TEST(VsyncWaiterEmbedderTest, WrongIdentityDoesNotConsumeBaton) {

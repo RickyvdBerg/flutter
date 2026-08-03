@@ -121,6 +121,14 @@ semantic feature request requires per-display vsync, root-target mode, explicit
 render completion, and the terminal-outcome callback as one indivisible
 contract.
 
+The admitted target set travels with the opportunity through the timing
+recorder into the Animator. At the UI boundary it is partitioned exactly once:
+only requested, active, admitted targets may render; admitted active targets
+without work terminalize as `NoVisualChange`; admitted targets removed before
+the callback terminalize as `TargetRemoved`; requested targets absent from the
+grant cannot render. This reconciliation is what closes the conservation
+ledger for clean and concurrently removed views without a watchdog.
+
 ### Patch 25: two-pixel UberSDF antialiasing
 
 The wider antialiasing ramp expands geometry coverage by

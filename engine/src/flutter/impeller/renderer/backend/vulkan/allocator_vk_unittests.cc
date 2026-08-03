@@ -101,8 +101,8 @@ TEST(AllocatorVKTest, RetriesUncompressedOnCompressionExhausted) {
   // PowerVR driver does when its fixed-rate-compression resources are depleted.
   auto const context =
       MockVulkanContextBuilder()
-          .SetDeviceExtensions(
-              {"VK_KHR_swapchain", "VK_EXT_image_compression_control"})
+          .SetDeviceExtensions({"VK_KHR_swapchain", "VK_KHR_timeline_semaphore",
+                                "VK_EXT_image_compression_control"})
           .SetCompressionExhaustedCreateImageFailures(1)
           .Build();
   ASSERT_TRUE(context);

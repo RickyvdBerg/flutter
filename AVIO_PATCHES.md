@@ -2,12 +2,35 @@
 
 This fork of flutter/flutter carries Avio's engine + framework patches as a
 curated, rebased stack (the flutter-tizen model). Canonical branch naming:
-`avio/<upstream-ref>` (e.g. `avio/main-2026-06`). Every commit subject starts
-with `[avio]` (`[avio][framework]` for packages/flutter changes); the two
-cherry-pick/fix commits keep their original subjects.
+`avio/<upstream-ref>` (e.g. `avio/main-2026-08`); the published fork uses
+`main`. Every commit subject starts with `[avio]` (`[avio][framework]` for
+packages/flutter changes), except commits which deliberately retain an
+upstreamable `fix`/`feat` subject or preserve an original cherry-pick subject.
 
 Contract for what these patches may and may not do:
 `avio/docs/engine-contract.md` in the Avio repo.
+
+## Current upstream baseline
+
+The 2026-08 refresh was performed at the Flutter 3.44.8 stable cutoff:
+
+| Identity | Pin |
+|----------|-----|
+| Official stable release | Flutter 3.44.8, `058e0af2c2b57e369d905a03ac9748b0ebf543c6` (2026-07-23) |
+| Avio rebase target | `upstream/main` at `5a2a94a5a971471ad940709c75463b0798df7e5c` (2026-08-03) |
+| Previous upstream base | `b79192e735bb13bfcb20f982689e9792d5c485cf` |
+| Pre-refresh rollback tag | `avio-pre-flutter-3.44.8-2026-08-03` |
+
+This fork follows upstream `main` at stable cutoffs; it does not merge the
+release branch into main. Flutter stable is a release branch with selected
+cherry-picks, not a newer linear ancestor: the previous Avio main base was
+already 915 main commits ahead of the stable branch point while stable carried
+78 branch-only commits. Rebasing onto the stable release commit would therefore
+discard newer mainline Engine work. The stable-only delta must instead be
+audited for fixes not already represented on main. For this refresh, the
+relevant Impeller fixes for AHB swapchain teardown (`145475453cbe`), GLES
+texture cleanup (`d742b87b7836`), and text-shadow masks (`308ba65eaeadd`) were
+already ancestors of the selected main target under their original commits.
 
 ## Patch inventory
 
@@ -37,6 +60,30 @@ Contract for what these patches may and may not do:
 | 22 | [framework] Preserve scoped frame authority while ordering residual view work before input | permanent framework correctness fix | none while the shared build tree remains global |
 | 23 | Explicit root-target compositor mode and semantic extension negotiation | permanent ABI extension | none |
 | 24 | Engine-local vsync leases and exact per-target frame-opportunity terminality | permanent ABI/lifecycle extension | none |
+| 25 | Soften UberSDF antialiasing with high precision and thin-stroke coverage | visual correctness fork | partial overlap with #188821/#189224; retain until equivalent thin-stroke goldens pass upstream behavior |
+| 26 | Share the raster pipeline reservation across displays | permanent while display-scoped scheduling drains through one raster pipeline | none |
+| 27 | Transfer external Vulkan image queue-family ownership | permanent explicit-sync/ownership extension | none |
+| 28 | Keep normalized degrees below a full circle | upstreamable Impeller correctness fix | submit upstream |
+
+Patch #5 also owns the later exact empty-frame and global-request corrections:
+global requests may not be consumed by a display-scoped frame; sibling-render,
+PipelineFull, unhomed-view, unresolved-view, and cached-tree-reuse exits must
+terminalize the affected scoped request exactly once. The intermediate
+revert/reapply commits preserve review history but do not define separate
+runtime contracts.
+
+### Patch 11: Vulkan completion and upstream buffer recycling
+
+Avio replaces per-submit fences with one persistent timeline semaphore. A
+queue-local binary semaphore orders the render batch before the timeline marker
+batch, so CPU retirement cannot race render execution. The completion callback
+is the sole successful retirement edge for tracked render objects, imported and
+exported semaphores, and the upstream `GpuSubmissionTracker` submission ID.
+Preserving that tracker is mandatory: current upstream uses its monotonic GPU
+completion watermark to decide when HostBuffer storage can be reused. A failed
+queue submission retires its never-executed ID immediately; failure to register
+the timeline callback waits for the exact submitted value and otherwise leaves
+the ID pending rather than asserting unsafe GPU completion.
 
 ### Patch 22: scoped-frame authority and input ordering
 
@@ -129,7 +176,9 @@ contract.
 1. `git fetch upstream main` (remote `upstream` = flutter/flutter; refspec
    `+refs/heads/main:refs/remotes/upstream/main` is configured).
 2. Tag the current state: `git tag pre-upgrade-<date>`.
-3. Pin the target SHA; create `avio/<new-ref>` from the current branch.
+3. Record the stable release SHA, audit its branch-only delta, pin the selected
+   `upstream/main` SHA, and create or rename the local maintenance branch to
+   `avio/<new-ref>`. Do not merge the stable release branch into main.
 4. `git rebase --onto <target> <old-merge-base> avio/<new-ref>`.
    Conflict hot zones: `shell/platform/embedder/embedder_external_view*`
    (preserve upstream generic mode and port rendering fixes into the explicit

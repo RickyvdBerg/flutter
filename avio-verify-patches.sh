@@ -159,8 +159,56 @@ absent_in "cross-view frameRenderViews widening (forbidden, patch #22)" \
 echo "--- Vulkan lifecycle ---"
 need "timeline-semaphore completion" \
   $F/impeller/renderer/backend/vulkan 'timeline_completion'
+need "render batch precedes the timeline marker batch" \
+  $F/impeller/renderer/backend/vulkan/command_queue_vk.cc \
+  'ImpellerSubmitCompletionDependency'
+need "timeline completion preserves upstream GPU submission tracking" \
+  $F/impeller/renderer/backend/vulkan/command_queue_vk.cc \
+  'GetMutableSubmissionTracker'
+need "timeline callback retires the exact upstream submission id" \
+  $F/impeller/renderer/backend/vulkan/command_queue_vk.cc \
+  'RecordCompletion\(submission_id\)'
 need "transients pool budget" \
   $F/impeller/renderer/backend/vulkan 'IMPELLER_VK_TRANSIENTS_BUDGET_MIB'
+
+echo "--- Cross-display pipeline conservation ---"
+need "display frames reserve the shared raster pipeline" \
+  $F/shell/common/animator.cc \
+  'producer_continuation_ = state\.pipeline->Produce\(\)'
+absent_in "per-display raster pipeline reservation" \
+  $F/shell/common/animator.h \
+  'ProducerContinuation producer_continuation;'
+
+echo "--- External Vulkan image ownership ---"
+need "typed external queue-family ownership" \
+  $F/impeller/renderer/backend/vulkan/texture_source_vk.h \
+  'struct ExternalImageOwnershipVK'
+need "render-pass external image acquire" \
+  $F/impeller/renderer/backend/vulkan/render_pass_vk.cc \
+  'EncodeExternalImageAcquire'
+need "render-pass external image release" \
+  $F/impeller/renderer/backend/vulkan/render_pass_vk.cc \
+  'EncodeExternalImageRelease'
+need "embedder ownership ABI field" \
+  $F/shell/platform/embedder/embedder.h \
+  'has_external_queue_family_ownership'
+
+echo "--- Impeller visual correctness fixes ---"
+need "UberSDF high-precision fragment arithmetic" \
+  $F/impeller/entity/shaders/uber_sdf.frag \
+  '^precision highp float;'
+need "UberSDF thin-stroke coverage" \
+  $F/impeller/entity/shaders/uber_sdf.frag \
+  'strokeAlphaCoverage'
+absent_in "DrawCircle UberSDF fast path with widened AA ramp" \
+  $F/impeller/display_list/canvas.cc \
+  'UberSDFParameters::MakeCircle'
+need "degree normalization half-open range guard" \
+  $F/impeller/geometry/scalar.h \
+  'if \(deg >= 360\.0f\)'
+need "tiny negative degree regression test" \
+  $F/impeller/geometry/arc_unittests.cc \
+  'TinyNegativeStartNormalizesBelowFullCircle'
 
 echo "--- Removed paths must stay removed ---"
 absent "RenderViewImmediate (forbidden, contract §8)" 'RenderViewImmediate'

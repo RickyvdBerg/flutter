@@ -155,8 +155,12 @@ explicit `array_layer_count` for `kTexture2DArray`.
   unused-path debt; the damage behavior Avio does rely on is gated by
   integration telemetry (`flutter_full_damage_fallback_total`). Investigate
   only if a GL deployment ever becomes relevant.
-- `flow_unittests`: `PerformanceOverlayLayerDefault.Gold` fails locally
-  (golden-image fixture, environmental).
+- `flow_unittests`: the three performance-overlay golden variants
+  (`PerformanceOverlayLayerDefault.Gold`,
+  `PerformanceOverlayLayer90fps.Gold`, and
+  `PerformanceOverlayLayer120fps.Gold`) abort locally when the test-font
+  fixture is unavailable. The remaining 317 tests pass; do not broaden this
+  fixture exception to other flow tests.
 - ~~Frame-path high-water probes and the signal-driven raster watchdog~~
   REMOVED by patch #24. Exact opportunity identities and terminal outcomes are
   the causal evidence now; production starts no polling thread, owns no
@@ -210,14 +214,31 @@ explicit `array_layer_count` for `kTexture2DArray`.
 7. `gclient sync -D` then **regenerate GN args** for every out config:
    `./flutter/tools/gn --unoptimized` / `--runtime-mode=profile` /
    `--runtime-mode=release` (stale `dart_version` stamps cause gen_snapshot
-   `ApiError` failures).
+   `ApiError` failures). Existing output directories can also retain an old
+   copied Dart SDK and `flutter_tester` because checkout timestamps do not
+   invalidate those outputs. Explicitly build `flutter/build/dart:dart_sdk`
+   and `flutter_tester`, then verify both report the Dart version in
+   `flutter/third_party/dart/tools/VERSION` before running framework tests.
 8. Build per config: `ninja -C engine/src/out/<config> libflutter_engine.so
    libflutter_linux_gtk.so gen_snapshot flutter_patched_sdk
-   flutter/build/dart:copy_dart_sdk embedder_unittests shell_unittests
-   impeller_unittests flow_unittests`.
-9. Run the four test suites. Only the GL present-info damage-family exclusion
-   remains for `embedder_unittests`; generic compositor and platform-view tests
-   must run.
+   flutter/build/dart:dart_sdk flutter_tester embedder_unittests
+   shell_unittests impeller_unittests flow_unittests`.
+9. Run the test suites with explicit, narrow platform boundaries:
+   - `shell_unittests` and `embedder_proctable_unittests` run unfiltered.
+   - `embedder_unittests` excludes only
+     `EmbedderTest.PresentInfo*:EmbedderTest.PopulateExistingDamage*`; generic
+     compositor and platform-view tests must run.
+   - On Linux, run `impeller_unittests` with the generated SwiftShader ICD,
+     validation-layer path, and `VK_LAYER_KHRONOS_validation`, excluding only
+     the interactive `Play`, `Compute`, and `FrameBufferObject` playground
+     families. Upstream's interactive Impeller runner is macOS-only; the
+     non-playground Linux result is the supported automation boundary.
+   - Run `flow_unittests` in full and account for only the three named missing
+     font-fixture goldens above.
+   - Run
+     `packages/flutter/test/widgets/view_scoped_frame_scheduling_test.dart`
+     with both `--local-engine` and `--local-engine-host` naming the rebuilt
+     host output.
 10. Rebuild Avio (`cargo build --profile profile`) — bindgen recompiles
     against the fork header and fails loudly on ABI drift — then run the
     validation matrix (Avio `docs/engine-contract.md` §11).
@@ -226,7 +247,10 @@ Notes:
 - This clone is shallow + blob:none. `bin/internal/content_aware_hash.sh`
   skips merge-base logic on shallow clones, so the flutter tool bootstrap
   would 404; Avio's build pins `FLUTTER_PREBUILT_ENGINE_VERSION` to the
-  merge-base content hash automatically (build_support/flutter_sdk.rs).
+  merge-base content hash automatically
+  (`build_support/shell_builder/src/flutter_sdk.rs`). The same value for a
+  manual framework test comes from
+  `cargo run -p avio_shell_builder -- tool-engine-version <avio-root>`.
 - Watch list: PR flutter/flutter#183382 (Impeller Vulkan desktop backend —
   engine-managed VkSurfaceKHR, architecturally opposite to our
   embedder-managed model), `material_ui`/`cupertino_ui` first real releases

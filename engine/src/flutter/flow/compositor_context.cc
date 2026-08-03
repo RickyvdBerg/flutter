@@ -41,9 +41,8 @@ std::vector<DlIRect> FrameDamage::ComputeClipRects(
     layer_tree.root_layer()->Diff(&context, prev_root_layer);
   }
 
-  damage_ = context.ComputeDamage(additional_damage_,
-                                   horizontal_clip_alignment_,
-                                   vertical_clip_alignment_);
+  damage_ = context.ComputeDamage(
+      additional_damage_, horizontal_clip_alignment_, vertical_clip_alignment_);
   auto rects = damage_->buffer_damage.getRects(/*deband=*/true);
   return CoalesceDamageRects(std::move(rects));
 }
@@ -129,6 +128,16 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
         layer_tree, !ignore_raster_cache, !gr_context_,
         context_.texture_registry().get());
 
+    // Exact no-change is a terminal result, not a request for a full repaint.
+    // Test it before the partial-repaint cost heuristic: an empty clip has no
+    // area to optimize, but resetting its damage would erase that distinction.
+    const auto frame_damage_region = frame_damage->GetFrameDamage();
+    const auto buffer_damage_region = frame_damage->GetBufferDamage();
+    if (frame_damage_region.has_value() && buffer_damage_region.has_value() &&
+        frame_damage_region->isEmpty() && buffer_damage_region->isEmpty()) {
+      return RasterStatus::kSuccess;
+    }
+
     if (!clip_rects.empty()) {
       DlRegion rgn(clip_rects);
       clip_bounds = rgn.bounds();
@@ -140,16 +149,6 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
       clip_bounds = DlIRect::MakeLTRB(0, 0, 0, 0);
       frame_damage->Reset();
     }
-  }
-
-  // Zero-damage skip: if frame_damage is empty, frame is identical
-  // to previous. Skip rendering entirely.
-  // Guard: only skip if buffer_damage also has a value (i.e., Reset()
-  // was not called to force a full repaint).
-  if (frame_damage && frame_damage->GetFrameDamage().has_value() &&
-      frame_damage->GetFrameDamage()->isEmpty() &&
-      frame_damage->GetBufferDamage().has_value()) {
-    return RasterStatus::kSuccess;
   }
 
   // Compute bounding rect for Preroll cull rect.
@@ -242,9 +241,8 @@ void CompositorContext::ScopedFrame::PaintLayerTreeImpeller(
 ///        repaints which shave off trivial numbers of pixels.
 constexpr float kImpellerRepaintRatio = 0.7f;
 
-bool CompositorContext::ShouldPerformPartialRepaint(
-    DlIRect bounds,
-    DlISize layer_tree_size) {
+bool CompositorContext::ShouldPerformPartialRepaint(DlIRect bounds,
+                                                    DlISize layer_tree_size) {
   if (bounds.IsEmpty()) {
     return false;
   }

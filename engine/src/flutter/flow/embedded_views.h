@@ -492,6 +492,17 @@ class ExternalViewEmbedder {
   virtual void PrepareFlutterView(DlISize frame_size,
                                   double device_pixel_ratio) = 0;
 
+  // Select the exact embedder-owned root target before damage is finalized.
+  // Generic embedders return nullopt and retain their stock late-allocation
+  // behavior. Root-target embedders return the retained-content snapshot of
+  // the target they will later submit for this same view.
+  virtual std::optional<SurfaceFrame::FramebufferInfo> AcquireRootRenderTarget(
+      int64_t flutter_view_id,
+      GrDirectContext* context,
+      const std::shared_ptr<impeller::AiksContext>& aiks_context) {
+    return std::nullopt;
+  }
+
   // Whether metadata-only frame-damage diffing is safe for the current frame.
   // Embedders that introduce synthetic platform-view boundaries can opt out of
   // this path while still using the normal full-repaint external-view flow.

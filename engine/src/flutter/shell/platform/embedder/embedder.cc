@@ -184,7 +184,8 @@ static constexpr FlutterAvioExtensionFeatures kAvioSupportedFeatures =
     kFlutterAvioExtensionFeatureRootRenderTarget |
     kFlutterAvioExtensionFeatureExplicitRenderCompletion |
     kFlutterAvioExtensionFeatureExactVsyncCancellation |
-    kFlutterAvioExtensionFeatureFrameOpportunityOutcomes;
+    kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+    kFlutterAvioExtensionFeatureSelectedTargetDamage;
 
 static const char* ValidateAvioExtensionRequest(
     const FlutterAvioExtensionRequest* request) {
@@ -216,6 +217,15 @@ static const char* ValidateAvioExtensionRequest(
         kFlutterAvioExtensionFeatureExplicitRenderCompletion) == 0)) {
     return "Exact frame outcomes require root targets, explicit render "
            "completion, and exact Vsync cancellation.";
+  }
+  if ((request->required_features &
+       kFlutterAvioExtensionFeatureSelectedTargetDamage) != 0 &&
+      ((request->required_features &
+        kFlutterAvioExtensionFeatureRootRenderTarget) == 0 ||
+       (request->required_features &
+        kFlutterAvioExtensionFeatureExplicitRenderCompletion) == 0)) {
+    return "Selected-target damage requires root targets and explicit render "
+           "completion.";
   }
   return nullptr;
 }
@@ -1501,6 +1511,17 @@ std::shared_ptr<impeller::SwapchainTransientsVK> GetCachedSwapchainTransientsVK(
   return pool->Acquire(desc, enable_msaa);
 }
 
+bool HasPreservedSelectedTargetContents(
+    const FlutterBackingStore& backing_store) {
+  const FlutterBackingStore* backing_store_pointer = &backing_store;
+  const FlutterBackingStoreContentState* content_state =
+      SAFE_ACCESS(backing_store_pointer, content_state, nullptr);
+  return content_state != nullptr &&
+         STRUCT_HAS_MEMBER(content_state, existing_damage) &&
+         content_state->preserved_contents &&
+         content_state->existing_damage != nullptr;
+}
+
 }  // namespace
 #endif  // SHELL_ENABLE_VULKAN && IMPELLER_SUPPORTS_RENDERING
 
@@ -1510,7 +1531,8 @@ MakeRenderTargetFromBackingStoreImpeller(
     const fml::closure& on_release,
     const std::shared_ptr<impeller::AiksContext>& aiks_context,
     const FlutterBackingStoreConfig& config,
-    const FlutterVulkanBackingStore* vulkan) {
+    const FlutterVulkanBackingStore* vulkan,
+    bool selected_target_damage) {
 #if defined(SHELL_ENABLE_VULKAN) && defined(IMPELLER_SUPPORTS_RENDERING)
   if (!vulkan->image) {
     FML_LOG(ERROR) << "Embedder supplied null Vulkan image.";
@@ -1568,8 +1590,14 @@ MakeRenderTargetFromBackingStoreImpeller(
       vk_image, vk_image_view, desc, external_ownership);
 
   auto impeller_context = aiks_context->GetContext();
-  auto transients = GetCachedSwapchainTransientsVK(impeller_context, desc,
-                                                   /*enable_msaa=*/true);
+  // A preserved single-sample target can load its exact previous contents.
+  // Full repaint keeps the normal MSAA clear-and-resolve path.
+  const bool enable_partial_repaint =
+      selected_target_damage &&
+      HasPreservedSelectedTargetContents(backing_store);
+  const bool enable_msaa = !enable_partial_repaint;
+  auto transients =
+      GetCachedSwapchainTransientsVK(impeller_context, desc, enable_msaa);
 
   auto surface = impeller::SurfaceVK::WrapSwapchainImage(
       transients, wrapped_source, []() -> bool { return true; });
@@ -1579,6 +1607,12 @@ MakeRenderTargetFromBackingStoreImpeller(
   }
 
   auto render_target = surface->GetRenderTarget();
+  if (enable_partial_repaint) {
+    auto color = render_target.GetColorAttachment(0u);
+    color.load_action = impeller::LoadAction::kLoad;
+    color.store_action = impeller::StoreAction::kStore;
+    render_target.SetColorAttachment(color, 0u);
+  }
 
   fml::closure framebuffer_destruct = [callback = vulkan->destruction_callback,
                                        user_data = vulkan->user_data] {
@@ -1680,7 +1714,8 @@ CreateEmbedderRenderTarget(
     const FlutterBackingStoreConfig& config,
     GrDirectContext* context,
     const std::shared_ptr<impeller::AiksContext>& aiks_context,
-    bool enable_impeller) {
+    bool enable_impeller,
+    bool selected_target_damage) {
   FlutterBackingStore backing_store = {};
   backing_store.struct_size = sizeof(backing_store);
 
@@ -1706,11 +1741,12 @@ CreateEmbedderRenderTarget(
   // embedder has still given us ownership of its baton which we must return
   // back to it. If this method is successful, the closure is released when the
   // render target is eventually released.
-  fml::ScopedCleanupClosure collect_callback(
-      [c_collect_callback, backing_store, user_data = compositor->user_data]() {
-        TRACE_EVENT0("flutter", "FlutterCompositorCollectBackingStore");
-        c_collect_callback(&backing_store, user_data);
-      });
+  fml::closure collect_closure = [c_collect_callback, backing_store,
+                                  user_data = compositor->user_data]() {
+    TRACE_EVENT0("flutter", "FlutterCompositorCollectBackingStore");
+    c_collect_callback(&backing_store, user_data);
+  };
+  fml::ScopedCleanupClosure collect_callback(collect_closure);
 
   // No safe access checks on the renderer are necessary since we allocated
   // the struct.
@@ -1724,22 +1760,20 @@ CreateEmbedderRenderTarget(
           auto skia_surface = MakeSkSurfaceFromBackingStore(
               context, config, &backing_store.open_gl.texture);
           render_target = MakeRenderTargetFromSkSurface(
-              backing_store, std::move(skia_surface),
-              collect_callback.Release());
+              backing_store, std::move(skia_surface), collect_closure);
           break;
         }
         case kFlutterOpenGLTargetTypeFramebuffer: {
           if (enable_impeller) {
             render_target = MakeRenderTargetFromBackingStoreImpeller(
-                backing_store, collect_callback.Release(), aiks_context, config,
+                backing_store, collect_closure, aiks_context, config,
                 &backing_store.open_gl.framebuffer);
             break;
           } else {
             auto skia_surface = MakeSkSurfaceFromBackingStore(
                 context, config, &backing_store.open_gl.framebuffer);
             render_target = MakeRenderTargetFromSkSurface(
-                backing_store, std::move(skia_surface),
-                collect_callback.Release());
+                backing_store, std::move(skia_surface), collect_closure);
             break;
           }
         }
@@ -1773,8 +1807,8 @@ CreateEmbedderRenderTarget(
                 context, config, &backing_store.open_gl.surface);
 
             render_target = MakeRenderTargetFromSkSurface(
-                backing_store, std::move(skia_surface),
-                collect_callback.Release(), on_make_current, on_clear_current);
+                backing_store, std::move(skia_surface), collect_closure,
+                on_make_current, on_clear_current);
             break;
           }
         }
@@ -1786,45 +1820,47 @@ CreateEmbedderRenderTarget(
       auto skia_surface = MakeSkSurfaceFromBackingStore(
           context, config, &backing_store.software);
       render_target = MakeRenderTargetFromSkSurface(
-          backing_store, std::move(skia_surface), collect_callback.Release());
+          backing_store, std::move(skia_surface), collect_closure);
       break;
     }
     case kFlutterBackingStoreTypeSoftware2: {
       auto skia_surface = MakeSkSurfaceFromBackingStore(
           context, config, &backing_store.software2);
       render_target = MakeRenderTargetFromSkSurface(
-          backing_store, std::move(skia_surface), collect_callback.Release());
+          backing_store, std::move(skia_surface), collect_closure);
       break;
     }
     case kFlutterBackingStoreTypeMetal: {
       if (enable_impeller) {
         render_target = MakeRenderTargetFromBackingStoreImpeller(
-            backing_store, collect_callback.Release(), aiks_context, config,
+            backing_store, collect_closure, aiks_context, config,
             &backing_store.metal);
       } else {
         auto skia_surface = MakeSkSurfaceFromBackingStore(context, config,
                                                           &backing_store.metal);
         render_target = MakeRenderTargetFromSkSurface(
-            backing_store, std::move(skia_surface), collect_callback.Release());
+            backing_store, std::move(skia_surface), collect_closure);
       }
       break;
     }
     case kFlutterBackingStoreTypeVulkan: {
       if (enable_impeller) {
         render_target = MakeRenderTargetFromBackingStoreImpeller(
-            backing_store, collect_callback.Release(), aiks_context, config,
-            &backing_store.vulkan);
+            backing_store, collect_closure, aiks_context, config,
+            &backing_store.vulkan, selected_target_damage);
       } else {
         auto skia_surface = MakeSkSurfaceFromBackingStore(
             context, config, &backing_store.vulkan);
         render_target = MakeRenderTargetFromSkSurface(
-            backing_store, std::move(skia_surface), collect_callback.Release());
+            backing_store, std::move(skia_surface), collect_closure);
       }
       break;
     }
   };
 
-  if (!render_target) {
+  if (render_target) {
+    collect_callback.Release();
+  } else {
     FML_LOG(ERROR) << "Could not create a surface from an embedder provided "
                       "render target.";
   }
@@ -1838,6 +1874,7 @@ static fml::StatusOr<std::unique_ptr<flutter::EmbedderExternalViewEmbedder>>
 InferExternalViewEmbedderFromArgs(
     const FlutterCompositor* compositor,
     bool enable_impeller,
+    FlutterRendererType renderer_type,
     FlutterAvioExtensionFeatures negotiated_avio_features,
     const std::shared_ptr<flutter::FrameOpportunityRegistry>&
         frame_opportunity_registry) {
@@ -1859,6 +1896,16 @@ InferExternalViewEmbedderFromArgs(
       SAFE_ACCESS(compositor, compositor_mode, kFlutterCompositorModeGeneric);
   bool avoid_backing_store_cache =
       SAFE_ACCESS(compositor, avoid_backing_store_cache, false);
+  const bool selected_target_damage =
+      (negotiated_avio_features &
+       kFlutterAvioExtensionFeatureSelectedTargetDamage) != 0;
+
+  if (selected_target_damage &&
+      (!enable_impeller || renderer_type != kVulkan)) {
+    return fml::Status(
+        fml::StatusCode::kInvalidArgument,
+        "Selected-target damage requires the Vulkan Impeller renderer.");
+  }
 
   // Make sure the required callbacks are present
   if (!c_create_callback || !c_collect_callback) {
@@ -1914,13 +1961,13 @@ InferExternalViewEmbedderFromArgs(
 
   flutter::EmbedderExternalViewEmbedder::CreateRenderTargetCallback
       create_render_target_callback =
-          [captured_compositor, enable_impeller](
+          [captured_compositor, enable_impeller, selected_target_damage](
               GrDirectContext* context,
               const std::shared_ptr<impeller::AiksContext>& aiks_context,
               const auto& config) {
-            return CreateEmbedderRenderTarget(&captured_compositor, config,
-                                              context, aiks_context,
-                                              enable_impeller);
+            return CreateEmbedderRenderTarget(
+                &captured_compositor, config, context, aiks_context,
+                enable_impeller, selected_target_damage);
           };
 
   flutter::EmbedderExternalViewEmbedder::PresentCallback present_callback;
@@ -1994,8 +2041,9 @@ InferExternalViewEmbedderFromArgs(
   }
 
   return std::make_unique<flutter::EmbedderExternalViewEmbedder>(
-      compositor_mode, avoid_backing_store_cache, create_render_target_callback,
-      present_callback, present_render_target_callback);
+      compositor_mode, selected_target_damage, avoid_backing_store_cache,
+      create_render_target_callback, present_callback,
+      present_render_target_callback);
 }
 
 // Translates embedder metrics to engine metrics, or returns a string on error.
@@ -2744,8 +2792,8 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
   }
 
   auto external_view_embedder_result = InferExternalViewEmbedderFromArgs(
-      compositor_ptr, settings.enable_impeller, negotiated_avio_features,
-      frame_opportunity_registry);
+      compositor_ptr, settings.enable_impeller, config->type,
+      negotiated_avio_features, frame_opportunity_registry);
   if (!external_view_embedder_result.ok()) {
     FML_LOG(ERROR) << external_view_embedder_result.status().message();
     return LOG_EMBEDDER_ERROR(kInvalidArguments,

@@ -67,6 +67,7 @@ already ancestors of the selected main target under their original commits.
 | 29 | [framework] Maintain typed O(1) element-to-view ownership | permanent framework correctness/performance fix | none while Avio carries view-scoped frame admission |
 | 30 | [framework] Route texture frames to their exact render consumers | upstream-aligned framework/engine fix adapted for compositor pacing | open: flutter/flutter#179874 |
 | 31 | [framework] Give each View an independently admitted BuildScope | permanent framework correctness fix; deletes #22's deferred-input compensation | none while Avio carries view-scoped frame admission |
+| 32 | Acquire the exact embedder target before damage and raster only its required pixels | permanent ABI/rendering extension | none |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -198,6 +199,26 @@ frame-driving Flutter test binding calls the same protected build operation as
 production so conformance cannot drift behind a cloned global-build step. A
 binding-level regression test admits one of two dirty views and pins that the
 unprocessed scope requests the next frame before its demand can be forgotten.
+
+### Patch 32: selected-target partial raster
+
+Root-target embedders select the exact backing target before Flutter finalizes
+damage. `FlutterBackingStoreContentState` names that target and content epoch,
+and supplies either exact catch-up damage for preserved pixels or unknown
+history for a mandatory full repaint. The engine keeps logical frame damage
+separate from selected-buffer damage in `FlutterBackingStorePresentInfo`.
+
+Preserved Vulkan targets render directly with a single-sample `Load` first
+pass, so Impeller's existing external-image queue-family barriers and exact
+render-complete semaphore remain the only GPU ownership path. There is no
+scratch image, copy pass, or second fence source. A full-repaint fallback
+restores `Clear`, unknown or malformed target history fails safely to full, and
+an empty exact buffer update terminates as `NoVisualChange` without raster.
+
+Every target selected by the embedder is returned exactly once even when target
+construction fails. Pixel tests rotate three real targets, exercise sparse
+catch-up, transparent blur removal, and compare both partial and heuristic-full
+fallbacks byte-for-byte against a forced full repaint.
 
 ## Known baseline debt
 

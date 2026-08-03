@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <unordered_map>
 
 #include "flutter/flow/embedded_views.h"
@@ -65,6 +66,7 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
   ///
   EmbedderExternalViewEmbedder(
       FlutterCompositorMode compositor_mode,
+      bool selected_target_damage,
       bool avoid_backing_store_cache,
       const CreateRenderTargetCallback& create_render_target_callback,
       const PresentCallback& present_callback,
@@ -105,6 +107,12 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
   // |ExternalViewEmbedder|
   void PrepareFlutterView(DlISize frame_size,
                           double device_pixel_ratio) override;
+
+  // |ExternalViewEmbedder|
+  std::optional<SurfaceFrame::FramebufferInfo> AcquireRootRenderTarget(
+      int64_t flutter_view_id,
+      GrDirectContext* context,
+      const std::shared_ptr<impeller::AiksContext>& aiks_context) override;
 
   // |ExternalViewEmbedder|
   bool SupportsMetadataFrameDamageForCurrentFrame() const override;
@@ -148,6 +156,7 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
           nullptr) const;
 
   const FlutterCompositorMode compositor_mode_;
+  const bool selected_target_damage_;
   const bool avoid_backing_store_cache_;
   const CreateRenderTargetCallback create_render_target_callback_;
   const PresentCallback present_callback_;
@@ -159,10 +168,21 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
   EmbedderExternalView::PendingViews pending_views_;
   std::vector<EmbedderExternalView::ViewIdentifier> composition_order_;
   std::optional<FrameOpportunityContext> pending_frame_opportunity_;
+  std::optional<int64_t> pending_root_view_id_;
+  std::optional<EmbedderExternalView::RenderTargetDescriptor>
+      pending_root_descriptor_;
+  std::unique_ptr<EmbedderRenderTarget> pending_root_render_target_;
+  std::set<std::unique_ptr<EmbedderRenderTarget>>
+      pending_root_deferred_cleanup_render_targets_;
   // The render target caches for views. Each key is a view ID.
   std::unordered_map<int64_t, EmbedderRenderTargetCache> render_target_caches_;
+  // Full logical paint coverage for each root view. Partial EVE recordings
+  // replace only their buffer-damage region in this retained coverage.
+  std::unordered_map<int64_t, DlRegion> root_paint_regions_;
 
   void Reset();
+
+  void ResetPendingRootRenderTarget();
 
   DlMatrix GetSurfaceTransformation() const;
 

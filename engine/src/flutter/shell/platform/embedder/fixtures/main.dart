@@ -1573,6 +1573,47 @@ void render_gradient_retained() {
 
 @pragma('vm:entry-point')
 // ignore: non_constant_identifier_names
+void render_partial_repaint_clear_and_blur() {
+  OffsetEngineLayer? staticLayer;
+  OffsetEngineLayer? effectLayer;
+  int frame = 0;
+  PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
+    final builder = SceneBuilder();
+
+    staticLayer = builder.pushOffset(0.0, 0.0, oldLayer: staticLayer);
+    final staticRecorder = PictureRecorder();
+    final staticCanvas = Canvas(staticRecorder);
+    staticCanvas.drawRect(
+      const Rect.fromLTRB(20.0, 20.0, 120.0, 100.0),
+      Paint()
+        ..color = frame == 0
+            ? const Color.fromARGB(255, 30, 180, 90)
+            : const Color.fromARGB(255, 220, 120, 35),
+    );
+    builder.addPicture(Offset.zero, staticRecorder.endRecording());
+    builder.pop();
+
+    if (frame == 0) {
+      effectLayer = builder.pushOffset(0.0, 0.0, oldLayer: effectLayer);
+      final effectRecorder = PictureRecorder();
+      final effectCanvas = Canvas(effectRecorder);
+      effectCanvas.drawRect(
+        const Rect.fromLTRB(280.0, 180.0, 500.0, 360.0),
+        Paint()
+          ..color = const Color.fromARGB(220, 60, 100, 240)
+          ..imageFilter = ImageFilter.blur(sigmaX: 16.0, sigmaY: 16.0),
+      );
+      builder.addPicture(Offset.zero, effectRecorder.endRecording());
+      builder.pop();
+    }
+
+    frame++;
+    PlatformDispatcher.instance.views.first.render(builder.build());
+  };
+}
+
+@pragma('vm:entry-point')
+// ignore: non_constant_identifier_names
 void render_impeller_test() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
     final builder = SceneBuilder();

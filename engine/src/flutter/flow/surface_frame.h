@@ -41,6 +41,13 @@ class SurfaceFrame {
     // this means that the surface will provide valid existing damage.
     bool supports_partial_repaint = false;
 
+    // Stable identity and content epoch of an explicitly selected backing
+    // target. These are present only when the embedder negotiated exact
+    // selected-target damage and supplied preserved content history.
+    std::optional<uint64_t> target_identifier = std::nullopt;
+    std::optional<uint64_t> content_epoch = std::nullopt;
+    bool preserved_contents = false;
+
     // For some targets it may be beneficial or even required to snap clip
     // rect to tile grid. I.e. repainting part of a tile may cause performance
     // degradation if the tile needs to be decompressed first.

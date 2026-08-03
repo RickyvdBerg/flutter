@@ -1121,6 +1121,31 @@ TEST_F(EmbedderTest, ExactVsyncCancellationRequiresPerDisplayVsync) {
   EXPECT_FALSE(engine.is_valid());
 }
 
+TEST_F(EmbedderTest, SelectedTargetDamageRequiresExplicitRenderCompletion) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      false, kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureSelectedTargetDamage);
+
+  auto engine = builder.LaunchEngine();
+  EXPECT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, SelectedTargetDamageRequiresVulkanImpeller) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      false, kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+                 kFlutterAvioExtensionFeatureSelectedTargetDamage);
+
+  auto engine = builder.LaunchEngine();
+  EXPECT_FALSE(engine.is_valid());
+}
+
 TEST_F(EmbedderTest, ExactFrameOutcomesRequireTerminalCallback) {
   auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
   EmbedderConfigBuilder builder(context);

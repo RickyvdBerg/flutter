@@ -133,6 +133,31 @@ need "multi-rect damage coalescing" \
   $F/flow 'CoalesceDamageRects'
 need "dmabuf per-commit damage rects ABI" \
   $F/shell/platform/embedder/embedder.h 'num_damage_rects'
+need "selected-target damage feature negotiation" \
+  $F/shell/platform/embedder/embedder.h \
+  'kFlutterAvioExtensionFeatureSelectedTargetDamage'
+need "selected backing target carries exact content history" \
+  $F/shell/platform/embedder/embedder.h \
+  'FlutterBackingStoreContentState'
+need "selected buffer damage is distinct from frame damage" \
+  $F/shell/platform/embedder/embedder.h 'FlutterRegion\* buffer_damage'
+need "root target is acquired before damage finalization" \
+  $F/shell/common/rasterizer.cc 'AcquireRootRenderTarget'
+need "Impeller first pass honors a preserved target load" \
+  $F/impeller/entity/inline_pass_context.cc \
+  'The first pass honors the render target'
+absent_in "partial-raster scratch/copy compensation" \
+  $F/shell/platform/embedder/embedder_external_view.cc \
+  'Embedder Partial Repaint Copy|GetImpellerPartialRepaintTarget'
+need "three-target selected-damage pixel regression" \
+  $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
+  'SelectedTargetDamageReacquiresAndRepaintsExactRetainedTarget'
+need "transparent blur removal pixel regression" \
+  $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
+  'SelectedTargetDamageClearsRemovedBlurWithFullRepaintParity'
+need "full fallback clears preserved selected target" \
+  $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
+  'SelectedTargetDamageFullFallbackClearsPreservedTarget'
 
 echo "--- Typed backing stores / chrome ---"
 need "FlutterBackingStoreRequestType enum" \

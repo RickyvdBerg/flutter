@@ -24,7 +24,9 @@ namespace testing {
 sk_sp<SkSurface> CreateRenderSurface(const FlutterLayer& layer,
                                      GrDirectContext* context);
 
-bool RasterImagesAreSame(const sk_sp<SkImage>& a, const sk_sp<SkImage>& b);
+bool RasterImagesAreSame(const sk_sp<SkImage>& a,
+                         const sk_sp<SkImage>& b,
+                         int allowable_different_pixels);
 
 /// @brief      Prepends a prefix to the name which is unique to the test
 ///             context type. This is useful for tests that use

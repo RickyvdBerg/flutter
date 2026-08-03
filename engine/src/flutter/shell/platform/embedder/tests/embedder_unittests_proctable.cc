@@ -78,7 +78,8 @@ TEST(EmbedderProcTable, ReportsAvioSemanticCapabilities) {
                 kFlutterAvioExtensionFeatureRootRenderTarget |
                 kFlutterAvioExtensionFeatureExplicitRenderCompletion |
                 kFlutterAvioExtensionFeatureExactVsyncCancellation |
-                kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+                kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+                kFlutterAvioExtensionFeatureSelectedTargetDamage);
 }
 
 TEST(EmbedderProcTable, RejectsTruncatedAvioCapabilities) {

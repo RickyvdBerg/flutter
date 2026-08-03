@@ -9,9 +9,9 @@
 #include "flutter/display_list/dl_builder.h"
 #include "flutter/fml/trace_event.h"
 #include "flutter/shell/common/dl_op_spy.h"
+#include "impeller/display_list/dl_dispatcher.h"  // nogncheck
 #include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "third_party/skia/include/gpu/ganesh/GrRecordingContext.h"
-#include "impeller/display_list/dl_dispatcher.h"  // nogncheck
 
 namespace flutter {
 
@@ -128,6 +128,7 @@ static void InvalidateApiState(SkSurface& skia_surface) {
 
 bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
                                   const DlRect& render_target_bounds,
+                                  const std::optional<DlRegion>& buffer_damage,
                                   bool clear_surface) {
   TRACE_EVENT0("flutter", "EmbedderExternalView::Render");
   TryEndRecording();
@@ -145,21 +146,55 @@ bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
   if (impeller_target) {
     auto aiks_context = render_target.GetAiksContext();
 
+    impeller::RenderTarget target = *impeller_target;
+    auto color = target.GetColorAttachment(0u);
+    color.clear_color = impeller::Color::BlackTransparent();
+    if (!buffer_damage.has_value()) {
+      color.load_action = impeller::LoadAction::kClear;
+    }
+    target.SetColorAttachment(color, 0u);
+
     auto dl_builder = DisplayListBuilder();
+    std::vector<SkIRect> damage_rects;
+    if (buffer_damage.has_value()) {
+      const DlRect target_bounds =
+          DlRect::MakeSize(target.GetRenderTargetSize());
+      const DlPaint clear_paint =
+          DlPaint(DlColor::kTransparent()).setBlendMode(DlBlendMode::kSrc);
+      for (const DlIRect& rect : buffer_damage->getRects(/*deband=*/true)) {
+        const DlRect target_rect = DlRect::Make(rect)
+                                       .TransformAndClipBounds(render_transform)
+                                       .IntersectionOrEmpty(target_bounds);
+        if (target_rect.IsEmpty()) {
+          continue;
+        }
+        const DlIRect rounded = DlIRect::RoundOut(target_rect);
+        damage_rects.push_back(
+            SkIRect::MakeLTRB(rounded.GetLeft(), rounded.GetTop(),
+                              rounded.GetRight(), rounded.GetBottom()));
+        if (clear_surface) {
+          dl_builder.DrawRect(DlRect::Make(rounded), clear_paint);
+        }
+      }
+      if (damage_rects.empty()) {
+        return true;
+      }
+    }
     dl_builder.SetTransform(render_transform);
     slice_->render_into(&dl_builder);
     auto display_list = dl_builder.Build();
 
-    auto cull_rect =
-        impeller::Rect::MakeSize(impeller_target->GetRenderTargetSize());
-
-    return impeller::RenderToTarget(aiks_context->GetContentContext(),  //
-                                    *impeller_target,                   //
-                                    display_list,                       //
-                                    cull_rect,                          //
-                                    /*reset_host_buffer=*/true,         //
-                                    /*is_onscreen=*/false               //
-    );
+    if (buffer_damage.has_value()) {
+      return impeller::RenderToTarget(aiks_context->GetContentContext(), target,
+                                      display_list, damage_rects,
+                                      /*reset_host_buffer=*/true,
+                                      /*is_onscreen=*/false);
+    }
+    return impeller::RenderToTarget(
+        aiks_context->GetContentContext(), target, display_list,
+        impeller::Rect::MakeSize(target.GetRenderTargetSize()),
+        /*reset_host_buffer=*/true,
+        /*is_onscreen=*/false);
   }
 #endif  // IMPELLER_SUPPORTS_RENDERING
 
@@ -194,10 +229,10 @@ bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
     }
   });
 
-  FML_DCHECK(render_target.GetRenderTargetSize() ==
-             DlISize(
-                 static_cast<int>(std::ceil(render_target_bounds.GetWidth())),
-                 static_cast<int>(std::ceil(render_target_bounds.GetHeight()))));
+  FML_DCHECK(
+      render_target.GetRenderTargetSize() ==
+      DlISize(static_cast<int>(std::ceil(render_target_bounds.GetWidth())),
+              static_cast<int>(std::ceil(render_target_bounds.GetHeight()))));
 
   auto canvas = skia_surface->getCanvas();
   if (!canvas) {

@@ -107,10 +107,11 @@ const std::shared_ptr<RenderPass>& InlinePassContext::GetRenderPass() {
   ColorAttachment color0 = pass_target_.GetRenderTarget().GetColorAttachment(0);
   bool is_msaa = color0.resolve_texture != nullptr;
 
+  // The first pass honors the render target's declared load action. Later
+  // passes load a single-sample attachment, but must clear a fresh MSAA
+  // attachment before resolving it.
   if (pass_count_ > 0) {
     color0.load_action = is_msaa ? LoadAction::kClear : LoadAction::kLoad;
-  } else {
-    color0.load_action = LoadAction::kClear;
   }
 
   color0.store_action =

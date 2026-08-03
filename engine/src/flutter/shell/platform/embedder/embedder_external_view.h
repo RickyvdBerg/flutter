@@ -62,10 +62,9 @@ class EmbedderExternalView {
     struct Hash {
       constexpr std::size_t operator()(
           const RenderTargetDescriptor& desc) const {
-        return fml::HashCombine(desc.surface_size.width,
-                                desc.surface_size.height,
-                                static_cast<int>(desc.request_type),
-                                desc.shell_visual_identifier);
+        return fml::HashCombine(
+            desc.surface_size.width, desc.surface_size.height,
+            static_cast<int>(desc.request_type), desc.shell_visual_identifier);
       }
     };
 
@@ -118,6 +117,7 @@ class EmbedderExternalView {
 
   bool Render(const EmbedderRenderTarget& render_target,
               const DlRect& render_target_bounds,
+              const std::optional<DlRegion>& buffer_damage = std::nullopt,
               bool clear_surface = true);
 
   const DlRegion& GetDlRegion() const;

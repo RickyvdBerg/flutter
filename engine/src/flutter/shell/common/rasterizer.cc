@@ -854,6 +854,15 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
     return DrawSurfaceStatus::kFailed;
   }
 
+  std::optional<SurfaceFrame::FramebufferInfo> selected_target_info;
+  if (external_view_embedder_) {
+    selected_target_info = external_view_embedder_->AcquireRootRenderTarget(
+        view_id, surface_->GetContext(), surface_->GetAiksContext());
+  }
+  const SurfaceFrame::FramebufferInfo& framebuffer_info =
+      selected_target_info.has_value() ? selected_target_info.value()
+                                       : frame->framebuffer_info();
+
   // If the external view embedder has specified an optional root surface, the
   // root surface transformation is set by the embedder instead of
   // having to apply it here.
@@ -863,15 +872,14 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
   auto root_surface_canvas =
       embedder_root_canvas ? embedder_root_canvas : frame->Canvas();
   auto compositor_frame = compositor_context_->AcquireFrame(
-      surface_->GetContext(),         // skia GrContext
-      root_surface_canvas,            // root surface canvas
-      external_view_embedder_.get(),  // external view embedder
-      root_surface_transformation,    // root surface transformation
-      true,                           // instrumentation enabled
-      frame->framebuffer_info()
-          .supports_readback,           // surface supports pixel reads
-      raster_thread_merger_,            // thread merger
-      surface_->GetAiksContext().get()  // aiks context
+      surface_->GetContext(),              // skia GrContext
+      root_surface_canvas,                 // root surface canvas
+      external_view_embedder_.get(),       // external view embedder
+      root_surface_transformation,         // root surface transformation
+      true,                                // instrumentation enabled
+      framebuffer_info.supports_readback,  // surface supports pixel reads
+      raster_thread_merger_,               // thread merger
+      surface_->GetAiksContext().get()     // aiks context
   );
   if (compositor_frame) {
     NOT_SLIMPELLER(compositor_context_->raster_cache().BeginFrame());
@@ -880,28 +888,37 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
     std::optional<DlRegion> eve_frame_damage = std::nullopt;
     // when leaf layer tracing is enabled we wish to repaint the whole frame
     // for accurate performance metrics.
-    if (frame->framebuffer_info().supports_partial_repaint) {
+    if (framebuffer_info.supports_partial_repaint) {
       bool has_external_view_embedder =
           external_view_embedder_ &&
           (!raster_thread_merger_ || raster_thread_merger_->IsMerged());
 
       if (has_external_view_embedder) {
-        // External view embedder path: SubmitFlutterView unconditionally
-        // clears the backing store, so partial repaint would cause visual
-        // corruption. We can still calculate damage metadata with a temporary
-        // FrameDamage and leave `damage` null so Raster() performs a full
-        // repaint. The embedder can opt out for frames where metadata diffing
-        // is not safe.
-        if (external_view_embedder_
-                ->SupportsMetadataFrameDamageForCurrentFrame()) {
-          auto existing_damage = frame->framebuffer_info().existing_damage;
+        if (selected_target_info.has_value()) {
+          // Root-target mode selected this exact backing store before damage
+          // setup. Its preserved-content history is therefore safe to use for
+          // both layer diffing and actual partial raster.
+          damage = std::make_unique<FrameDamage>();
+          auto existing_damage = framebuffer_info.existing_damage;
+          if (existing_damage.has_value()) {
+            damage->SetPreviousLayerTree(GetLastLayerTree(view_id));
+            damage->AddAdditionalDamage(existing_damage.value());
+            damage->SetClipAlignment(framebuffer_info.horizontal_clip_alignment,
+                                     framebuffer_info.vertical_clip_alignment);
+          }
+        } else if (external_view_embedder_
+                       ->SupportsMetadataFrameDamageForCurrentFrame()) {
+          // Generic external-view embedders select their backing stores later.
+          // They may report frame-to-frame metadata, but cannot use it to skip
+          // raster against an as-yet unknown target.
+          auto existing_damage = framebuffer_info.existing_damage;
           if (existing_damage.has_value()) {
             FrameDamage metadata_damage;
             metadata_damage.SetPreviousLayerTree(GetLastLayerTree(view_id));
             metadata_damage.AddAdditionalDamage(existing_damage.value());
             metadata_damage.SetClipAlignment(
-                frame->framebuffer_info().horizontal_clip_alignment,
-                frame->framebuffer_info().vertical_clip_alignment);
+                framebuffer_info.horizontal_clip_alignment,
+                framebuffer_info.vertical_clip_alignment);
 
             auto* gr_context = surface_->GetContext();
             metadata_damage.ComputeClipRects(
@@ -920,13 +937,12 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
       } else {
         // Standard partial repaint path for non-EVE surfaces.
         damage = std::make_unique<FrameDamage>();
-        auto existing_damage = frame->framebuffer_info().existing_damage;
+        auto existing_damage = framebuffer_info.existing_damage;
         if (existing_damage.has_value()) {
           damage->SetPreviousLayerTree(GetLastLayerTree(view_id));
           damage->AddAdditionalDamage(existing_damage.value());
-          damage->SetClipAlignment(
-              frame->framebuffer_info().horizontal_clip_alignment,
-              frame->framebuffer_info().vertical_clip_alignment);
+          damage->SetClipAlignment(framebuffer_info.horizontal_clip_alignment,
+                                   framebuffer_info.vertical_clip_alignment);
         }
       }
     }
@@ -952,7 +968,8 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
     // was not called to force a full repaint).
     auto frame_dmg = damage ? damage->GetFrameDamage() : std::nullopt;
     if (frame_dmg.has_value() && frame_dmg->isEmpty() &&
-        damage->GetBufferDamage().has_value()) {
+        damage->GetBufferDamage().has_value() &&
+        !selected_target_info.has_value()) {
       NOT_SLIMPELLER(compositor_context_->raster_cache().EndFrame());
       return DrawSurfaceStatus::kNoVisualChange;
     }

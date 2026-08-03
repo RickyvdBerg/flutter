@@ -2237,6 +2237,42 @@ typedef enum {
   kFlutterBackingStoreTypeSoftware2,
 } FlutterBackingStoreType;
 
+/// A region represented by a collection of non-overlapping rectangles.
+typedef struct {
+  /// The size of this struct. Must be sizeof(FlutterRegion).
+  size_t struct_size;
+  /// Number of rectangles in the region.
+  size_t rects_count;
+  /// The rectangles that make up the region.
+  FlutterRect* rects;
+} FlutterRegion;
+
+// Optional Avio content-history metadata attached to an embedder-owned backing
+// store. Generic compositor mode ignores the pointer unless the
+// selected-target extension was negotiated.
+
+/// Retained-content state for the exact backing target selected by the
+/// embedder. The pointed-to metadata follows the backing store baton and must
+/// remain valid until `collect_backing_store_callback` returns it.
+typedef struct {
+  /// The size of this struct. Must be
+  /// sizeof(FlutterBackingStoreContentState).
+  size_t struct_size;
+
+  /// Stable identity of this target within `FlutterBackingStoreConfig.view_id`.
+  uint64_t target_identifier;
+
+  /// Epoch of the complete pixels currently retained by this target.
+  uint64_t content_epoch;
+
+  /// Whether pixels outside `existing_damage` are preserved and may be loaded.
+  bool preserved_contents;
+
+  /// Exact area that differs from the engine's current retained scene. NULL
+  /// means unknown and forces a full repaint. An empty region means current.
+  const FlutterRegion* existing_damage;
+} FlutterBackingStoreContentState;
+
 typedef struct {
   /// The size of this struct. Must be sizeof(FlutterBackingStore).
   size_t struct_size;
@@ -2261,6 +2297,13 @@ typedef struct {
     // The description of the Vulkan backing store.
     FlutterVulkanBackingStore vulkan;
   };
+
+  /// Exact retained-content state for this selected backing target.
+  ///
+  /// This field is used only when
+  /// `kFlutterAvioExtensionFeatureSelectedTargetDamage` was negotiated. NULL
+  /// means the target has unknown contents and must be fully repainted.
+  const FlutterBackingStoreContentState* content_state;
 } FlutterBackingStore;
 
 /// The logical request class for a backing store allocation.
@@ -2315,16 +2358,6 @@ typedef enum {
   kFlutterShellLayerRoleEmbeddedContent,
 } FlutterShellLayerRole;
 
-/// A region represented by a collection of non-overlapping rectangles.
-typedef struct {
-  /// The size of this struct. Must be sizeof(FlutterRegion).
-  size_t struct_size;
-  /// Number of rectangles in the region.
-  size_t rects_count;
-  /// The rectangles that make up the region.
-  FlutterRect* rects;
-} FlutterRegion;
-
 /// Contains additional information about the backing store provided
 /// during presentation to the embedder.
 typedef struct {
@@ -2348,6 +2381,11 @@ typedef struct {
   /// A sync_file fd that signals when rendering into this backing store has
   /// completed. Set to -1 when unavailable.
   int render_complete_sync_fd;
+
+  /// The area actually repainted in the selected backing target. This includes
+  /// both frame-to-frame damage and retained-target catch-up damage. NULL means
+  /// unknown/full. Coordinates are in physical pixels.
+  FlutterRegion* buffer_damage;
 } FlutterBackingStorePresentInfo;
 
 typedef struct {
@@ -2480,8 +2518,12 @@ typedef struct {
   /// The |FlutterCompositor.user_data|.
   void* user_data;
 
-  /// The terminal result of this root-target submission. `backing_store` and
-  /// `backing_store_present_info` are non-null only for `Presented`.
+  /// The terminal result of this root-target submission.
+  ///
+  /// `backing_store_present_info` is non-null only for `Presented`. When
+  /// selected-target damage is negotiated, `backing_store` also accompanies
+  /// non-presented results reached after exact target acquisition so the host
+  /// can settle that target's content history before collection.
   FlutterPresentRenderTargetStatus status;
 
   /// Exact cadence opportunity which produced this target. Zero means the
@@ -2574,6 +2616,10 @@ typedef struct {
   /// If you wish to change this behavior and destroy backing stores after
   /// they've been used once, and create new backing stores for every frame,
   /// you can set this bool to true.
+  ///
+  /// Selected-target damage always bypasses this cache. Its create callback is
+  /// a per-frame target-selection boundary, and every selected target is
+  /// returned through the collect callback after its terminal result.
   bool avoid_backing_store_cache;
 
   /// Callback invoked by the engine to composite generic layer contents onto

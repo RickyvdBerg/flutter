@@ -2684,6 +2684,35 @@ abstract class BuildContext {
   DiagnosticsNode describeOwnershipChain(String name);
 }
 
+/// The view authority attached to an [Element] for frame scheduling.
+///
+/// This identity is maintained as part of the element lifecycle. It is not
+/// discovered by walking ancestors when an element becomes dirty. Elements
+/// outside a [View] boundary carry [AllBuildViews], which deliberately widens
+/// the next frame instead of guessing a target.
+sealed class BuildViewIdentity {
+  const BuildViewIdentity();
+
+  /// Creates an identity which may affect every view.
+  const factory BuildViewIdentity.all() = AllBuildViews;
+
+  /// Creates an identity bound to one Flutter view.
+  const factory BuildViewIdentity.view(int viewId) = SingleBuildView;
+}
+
+/// A build mutation whose affected view cannot be narrowed safely.
+final class AllBuildViews extends BuildViewIdentity {
+  const AllBuildViews();
+}
+
+/// A build mutation owned by exactly one Flutter view.
+final class SingleBuildView extends BuildViewIdentity {
+  const SingleBuildView(this.viewId);
+
+  /// The owning `FlutterView.viewId`.
+  final int viewId;
+}
+
 /// A class that determines the scope of a [BuildOwner.buildScope] operation.
 ///
 /// The [BuildOwner.buildScope] method rebuilds all dirty [Element]s who share
@@ -2723,21 +2752,6 @@ final class BuildScope {
   /// rebuilding the widget tree.
   bool? _dirtyElementsNeedsResorting;
   final List<Element> _dirtyElements = <Element>[];
-
-  /// A read-only view of the elements currently scheduled for rebuild in
-  /// this scope.  Exposed for view-scoped frame scheduling, which walks
-  /// this list at `scheduleFrame` time to find the owning [View] of each
-  /// dirty element so the engine frame can be narrowed to those views.
-  ///
-  /// Iteration is O(N) in the dirty count and only happens when scoped
-  /// scheduling is active; the list itself is the same one that
-  /// [BuildOwner.buildScope] processes, so no copying is involved.
-  Iterable<Element> get dirtyElements => _dirtyElements;
-
-  /// Whether this scope currently has any dirty elements.  Cheap
-  /// `isNotEmpty` check used by [WidgetsBinding.scheduleFrame] before
-  /// deciding whether to attempt view-scoped scheduling.
-  bool get hasDirtyElements => _dirtyElements.isNotEmpty;
 
   @pragma('dart2js:tryInline')
   @pragma('vm:prefer-inline')
@@ -2943,16 +2957,15 @@ class BuildOwner {
   VoidCallback? onBuildScheduled;
 
   /// Called from [scheduleBuildFor] each time an element is added to the
-  /// dirty list.  Used by [WidgetsBinding] to track which views' Element
-  /// trees are dirty so [PlatformDispatcher.scheduleFrameForDisplayViews]
-  /// can be used to scope the engine's next frame to those views only.
+  /// dirty list. Used by [WidgetsBinding] to track which views' Element trees
+  /// are dirty so [PlatformDispatcher.scheduleFrameForDisplayViews] can scope
+  /// the engine's next frame to those views only.
   ///
-  /// The callback runs synchronously inside [scheduleBuildFor] and is
-  /// hot — implementations should be O(treeDepth) at worst (e.g. a
-  /// `findAncestorRenderObjectOfType<RenderView>()` walk).  The element
-  /// is guaranteed to be mounted but may be in [Element.deactivate] for
-  /// brief windows.
-  void Function(Element element)? onElementDirtied;
+  /// The callback runs synchronously inside [scheduleBuildFor] and is hot.
+  /// [Element.buildViewIdentity] is maintained during mount and reparent, so
+  /// attribution is O(1) here. An [AllBuildViews] value is an explicit
+  /// fail-safe result, not a missing lookup.
+  void Function(BuildViewIdentity identity)? onElementDirtied;
 
   final _InactiveElements _inactiveElements = _InactiveElements();
 
@@ -3024,10 +3037,8 @@ class BuildOwner {
       return true;
     }());
     buildScope._scheduleBuildFor(element);
-    // View-scoped scheduling hook: notify the binding that this element
-    // is now dirty so it can attribute the dirty mark to the element's
-    // owning [View].  The callback walks ancestors and updates a
-    // dirty-view registry consulted by [SchedulerBinding.scheduleFrame].
+    // View-scoped scheduling hook: notify the binding with the identity that
+    // this element inherited from its owning View boundary.
     //
     // Order matters: this MUST fire before [onBuildScheduled] so that the
     // scheduleFrame call onBuildScheduled triggers can already see this
@@ -3038,7 +3049,7 @@ class BuildOwner {
     // `pending_frame_all_views = true` in the engine animator and
     // makes every subsequent scoped scheduleFrameForDisplayViews call
     // a no-op for the rest of the frame.
-    onElementDirtied?.call(element);
+    onElementDirtied?.call(element.buildViewIdentity);
     if (!_scheduledFlushDirtyElements && onBuildScheduled != null) {
       _scheduledFlushDirtyElements = true;
       onBuildScheduled!();
@@ -3778,6 +3789,22 @@ abstract class Element extends DiagnosticableTree implements BuildContext {
   // when this Element mounts or reparents.
   BuildScope? _parentBuildScope;
 
+  /// The view authority used when this element schedules a build.
+  ///
+  /// Most elements inherit this value from their parent. A real [View]
+  /// boundary overrides it for itself and its descendants. Roots and elements
+  /// outside a view return [AllBuildViews], which preserves correctness when a
+  /// mutation cannot be narrowed to one render tree.
+  BuildViewIdentity get buildViewIdentity => _parentBuildViewIdentity;
+
+  /// The identity inherited by children mounted below this element.
+  ///
+  /// View-boundary elements override this together with [buildViewIdentity].
+  @protected
+  BuildViewIdentity get buildViewIdentityForChildren => buildViewIdentity;
+
+  BuildViewIdentity _parentBuildViewIdentity = const BuildViewIdentity.all();
+
   /// {@template flutter.widgets.Element.reassemble}
   /// Called whenever the application is reassembled during debugging, for
   /// example during hot reload.
@@ -4405,6 +4432,7 @@ abstract class Element extends DiagnosticableTree implements BuildContext {
       // See RootRenderObjectElement.assignOwner().
       _owner = parent.owner;
       _parentBuildScope = parent.buildScope;
+      _parentBuildViewIdentity = parent.buildViewIdentityForChildren;
     }
     assert(owner != null);
     final Key? key = widget.key;
@@ -4500,6 +4528,18 @@ abstract class Element extends DiagnosticableTree implements BuildContext {
     _parentBuildScope = _parent?.buildScope;
     visitChildren((Element child) {
       child._updateBuildScopeRecursively();
+    });
+  }
+
+  void _updateBuildViewIdentityRecursively() {
+    final BuildViewIdentity previousChildIdentity = buildViewIdentityForChildren;
+    _parentBuildViewIdentity =
+        _parent?.buildViewIdentityForChildren ?? const BuildViewIdentity.all();
+    if (identical(previousChildIdentity, buildViewIdentityForChildren)) {
+      return;
+    }
+    visitChildren((Element child) {
+      child._updateBuildViewIdentityRecursively();
     });
   }
 
@@ -4782,6 +4822,7 @@ abstract class Element extends DiagnosticableTree implements BuildContext {
     }());
     _updateDepth(_parent!.depth);
     _updateBuildScopeRecursively();
+    _updateBuildViewIdentityRecursively();
     _activateRecursively(this);
     attachRenderObject(newSlot);
     assert(_lifecycleState == _ElementLifecycle.active);

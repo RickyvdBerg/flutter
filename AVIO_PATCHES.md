@@ -64,6 +64,7 @@ already ancestors of the selected main target under their original commits.
 | 26 | Share the raster pipeline reservation across displays | permanent while display-scoped scheduling drains through one raster pipeline | none |
 | 27 | Transfer external Vulkan image queue-family ownership | permanent explicit-sync/ownership extension | none |
 | 28 | Keep normalized degrees below a full circle | upstreamable Impeller correctness fix | submit upstream |
+| 29 | [framework] Maintain typed O(1) element-to-view ownership | permanent framework correctness/performance fix | none while Avio carries view-scoped frame admission |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -145,6 +146,17 @@ Impeller render pass. The acquire and release barriers cover the complete
 `TextureDescriptor`, including its array-layer count; passing only the texture
 type is both incompatible with current upstream and would lose the descriptor's
 explicit `array_layer_count` for `kTexture2DArray`.
+
+### Patch 29: O(1) element view ownership
+
+Every mounted `Element` carries a typed `BuildViewIdentity`. Real `View`
+boundaries seal one `SingleBuildView` token for themselves and descendants;
+roots and cross-view widget ownership carry `AllBuildViews`. Mount inherits the
+parent token and GlobalKey reparenting updates the affected subtree until the
+next View boundary, so `BuildOwner.scheduleBuildFor` never walks ancestors or
+guesses a render root on the hot dirty-mark path. A stale view token widens to
+the explicit all-views scheduler path. Focused tests pin initial attachment,
+cross-view reparenting, and unowned-root behavior.
 
 ## Known baseline debt
 

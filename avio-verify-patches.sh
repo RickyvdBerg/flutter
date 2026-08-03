@@ -148,6 +148,18 @@ need "post-frame mouse updates remain view-scoped" \
   $W/lib/src/rendering/mouse_tracker.dart 'updateDevicesForViews'
 need "widgets scheduler marks scoped requests before dispatch" \
   $W/lib/src/widgets/binding.dart 'markViewsAwaitingScopedFrame\(scoped.viewIds\)'
+need "elements carry typed view ownership" \
+  $W/lib/src/widgets/framework.dart 'sealed class BuildViewIdentity'
+need "View boundaries seal one child identity" \
+  $W/lib/src/widgets/view.dart 'BuildViewIdentity\.view'
+need "dirty marks consume cached O(1) ownership" \
+  $W/lib/src/widgets/framework.dart \
+  'onElementDirtied\?\.call\(element\.buildViewIdentity\)'
+need "view ownership follows GlobalKey reparenting" \
+  $W/lib/src/widgets/framework.dart '_updateBuildViewIdentityRecursively'
+absent_in "dirty-mark RenderView ancestor walk" \
+  $W/lib/src/widgets/binding.dart \
+  'findAncestorRenderObjectOfType<RenderView>'
 need "scoped-frame authority regression test" \
   $W/test/widgets/view_scoped_frame_scheduling_test.dart \
   'scoped frame defers dirty non-active view and its input'

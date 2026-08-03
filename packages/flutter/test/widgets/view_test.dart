@@ -144,6 +144,79 @@ void main() {
     expect(() => const ViewCollection(views: <Widget>[]), returnsNormally);
   });
 
+  testWidgets('build view identity follows view attachment and reparenting', (
+    WidgetTester tester,
+  ) async {
+    final firstView = FakeView(tester.view, viewId: 101);
+    final secondView = FakeView(tester.view, viewId: 202);
+    final probeKey = GlobalKey<_DirtyProbeState>();
+    final identities = <BuildViewIdentity>[];
+    final BuildOwner owner = tester.binding.buildOwner!;
+    final previousCallback = owner.onElementDirtied;
+    owner.onElementDirtied = (BuildViewIdentity identity) {
+      identities.add(identity);
+      previousCallback?.call(identity);
+    };
+    addTearDown(() => owner.onElementDirtied = previousCallback);
+
+    Widget tree({required bool inFirstView}) {
+      return ViewCollection(
+        views: <Widget>[
+          View(
+            view: firstView,
+            child: inFirstView
+                ? _DirtyProbe(key: probeKey, child: const SizedBox())
+                : const SizedBox(),
+          ),
+          View(
+            view: secondView,
+            child: inFirstView
+                ? const SizedBox()
+                : _DirtyProbe(key: probeKey, child: const SizedBox()),
+          ),
+        ],
+      );
+    }
+
+    await tester.pumpWidget(wrapWithView: false, tree(inFirstView: true));
+    identities.clear();
+    probeKey.currentState!.markDirty();
+    expect(identities.single, isA<SingleBuildView>());
+    expect((identities.single as SingleBuildView).viewId, firstView.viewId);
+    await tester.pump();
+
+    await tester.pumpWidget(wrapWithView: false, tree(inFirstView: false));
+    identities.clear();
+    probeKey.currentState!.markDirty();
+    expect(identities.single, isA<SingleBuildView>());
+    expect((identities.single as SingleBuildView).viewId, secondView.viewId);
+  });
+
+  testWidgets('elements outside a view carry explicit all-views authority', (
+    WidgetTester tester,
+  ) async {
+    final probeKey = GlobalKey<_DirtyProbeState>();
+    final identities = <BuildViewIdentity>[];
+    final BuildOwner owner = tester.binding.buildOwner!;
+    final previousCallback = owner.onElementDirtied;
+    owner.onElementDirtied = (BuildViewIdentity identity) {
+      identities.add(identity);
+      previousCallback?.call(identity);
+    };
+    addTearDown(() => owner.onElementDirtied = previousCallback);
+
+    await tester.pumpWidget(
+      wrapWithView: false,
+      _DirtyProbe(
+        key: probeKey,
+        child: const ViewCollection(views: <Widget>[]),
+      ),
+    );
+    identities.clear();
+    probeKey.currentState!.markDirty();
+    expect(identities.single, isA<AllBuildViews>());
+  });
+
   testWidgets('ViewAnchor.child does not see surrounding view', (WidgetTester tester) async {
     FlutterView? inside;
     FlutterView? outside;
@@ -785,6 +858,24 @@ void main() {
       tester.binding.platformDispatcher.resetFocusedViewTestValues();
     },
   );
+}
+
+class _DirtyProbe extends StatefulWidget {
+  const _DirtyProbe({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<_DirtyProbe> createState() => _DirtyProbeState();
+}
+
+class _DirtyProbeState extends State<_DirtyProbe> {
+  void markDirty() {
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class SpyRenderWidget extends SizedBox {

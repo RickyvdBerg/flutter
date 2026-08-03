@@ -1441,8 +1441,8 @@ mixin WidgetsBinding
   // which the engine widens to all views on the display. Instead we
   //
   //   1. Eagerly track which views' Element trees have a dirty rebuild
-  //      pending, via [BuildOwner.onElementDirtied] which fires on every
-  //      [BuildOwner.scheduleBuildFor] call.
+  //      pending, using the owner-maintained [BuildViewIdentity] supplied by
+  //      [BuildOwner.onElementDirtied].
   //   2. Lazily inspect each [RenderView]'s [PipelineOwner.hasDirtyForFrame]
   //      at scheduleFrame time to capture animation/paint dirties.
   //   3. If the union of dirty views resolves to a strict subset of views
@@ -1466,17 +1466,11 @@ mixin WidgetsBinding
   /// since the registry was last cleared. Forces the global frame path.
   bool _hasUnattributableDirtyBuild = false;
 
-  void _trackDirtyElementForViewScopedScheduling(Element element) {
-    // Walk to the nearest RenderView ancestor.  Cheap if View is a
-    // close ancestor (the common case for chrome ornaments / output
-    // overlays / per-window Flutter views).  Bounded by tree depth.
-    final RenderView? renderView = element.findAncestorRenderObjectOfType<RenderView>();
-    if (renderView == null) {
-      // Element has no RenderView ancestor — pre-mount or detached (e.g. a
-      // chrome ornament migrating between output view trees). Force the
-      // next frame request onto the global path; a scoped request resolved
-      // from the *other* dirty views would silently exclude this element's
-      // eventual view and starve its first composite.
+  void _trackDirtyElementForViewScopedScheduling(BuildViewIdentity identity) {
+    if (identity is AllBuildViews) {
+      // The element lives outside a single View boundary. Force the next frame
+      // request onto the global path; narrowing from other dirty views would
+      // silently exclude a cross-root mutation.
       _hasUnattributableDirtyBuild = true;
       if (hasScheduledFrame) {
         // Widen any in-flight scoped request: the legacy global path sets
@@ -1486,7 +1480,17 @@ mixin WidgetsBinding
       }
       return;
     }
-    final int viewId = renderView.flutterView.viewId;
+    final int viewId = (identity as SingleBuildView).viewId;
+    final RenderView? renderView = renderViewForId(viewId);
+    if (renderView == null) {
+      // A stale or not-yet-attached view identity cannot authorize a scoped
+      // frame. Preserve correctness through the explicit all-views case.
+      _hasUnattributableDirtyBuild = true;
+      if (hasScheduledFrame) {
+        platformDispatcher.scheduleFrame();
+      }
+      return;
+    }
     final bool wasNew = _dirtyBuildViewIds.add(viewId);
     if (wasNew && hasScheduledFrame) {
       // A frame is already in flight (the first dirty mark of this

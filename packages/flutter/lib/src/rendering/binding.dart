@@ -433,6 +433,15 @@ mixin RendererBinding
   /// A [RenderView] is added by [addRenderView] and removed by [removeRenderView].
   Iterable<RenderView> get renderViews => _viewIdToRenderView.values;
   final Map<Object, RenderView> _viewIdToRenderView = <Object, RenderView>{};
+
+  /// Returns the registered render root for [viewId], if it is live.
+  ///
+  /// View-scoped scheduling already owns the integer Flutter view identity;
+  /// this lookup avoids rediscovering the same owner by walking widget or
+  /// render ancestors on the hot dirty-mark path.
+  @protected
+  RenderView? renderViewForId(int viewId) => _viewIdToRenderView[viewId];
+
   final Map<int, _DeferredPointerEventQueue> _deferredPointerEventsByView =
       <int, _DeferredPointerEventQueue>{};
   final Set<int> _viewsAwaitingScopedFrame = <int>{};

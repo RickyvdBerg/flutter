@@ -456,6 +456,16 @@ class _RawViewInternal extends RenderObjectWidget {
 class _RawViewElement extends RenderTreeRootElement {
   _RawViewElement(super.widget);
 
+  late final BuildViewIdentity _buildViewIdentity = BuildViewIdentity.view(
+    (widget as _RawViewInternal).view.viewId,
+  );
+
+  @override
+  BuildViewIdentity get buildViewIdentity => _buildViewIdentity;
+
+  @override
+  BuildViewIdentity get buildViewIdentityForChildren => _buildViewIdentity;
+
   late final PipelineOwner _pipelineOwner = PipelineOwner(
     onSemanticsOwnerCreated: _handleSemanticsOwnerCreated,
     onSemanticsUpdate: _handleSemanticsUpdate,

@@ -663,6 +663,11 @@ class Engine final : public RuntimeDelegate, PointerDataDispatcher::Delegate {
   void ReportTimings(std::vector<int64_t> timings);
 
   //----------------------------------------------------------------------------
+  /// @brief      Notifies the framework that a registered texture has new
+  ///             content available.
+  void NotifyTextureFrameAvailable(int64_t texture_id);
+
+  //----------------------------------------------------------------------------
   /// @brief      Gets the main port of the root isolate. Since the isolate is
   ///             created immediately in the constructor of the engine, it is
   ///             possible to get its main port immediately (even before a call

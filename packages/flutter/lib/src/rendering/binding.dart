@@ -161,7 +161,8 @@ mixin RendererBinding
     platformDispatcher
       ..onMetricsChanged = handleMetricsChanged
       ..onTextScaleFactorChanged = handleTextScaleFactorChanged
-      ..onPlatformBrightnessChanged = handlePlatformBrightnessChanged;
+      ..onPlatformBrightnessChanged = handlePlatformBrightnessChanged
+      ..onTextureFrameAvailable = handleTextureFrameAvailable;
     addPersistentFrameCallback(_handlePersistentFrameCallback);
     initMouseTracker();
     if (kIsWeb) {
@@ -441,6 +442,42 @@ mixin RendererBinding
   /// render ancestors on the hot dirty-mark path.
   @protected
   RenderView? renderViewForId(int viewId) => _viewIdToRenderView[viewId];
+
+  final Map<int, Set<VoidCallback>> _textureFrameCallbacks = <int, Set<VoidCallback>>{};
+
+  /// Registers [callback] for notifications about [textureId].
+  ///
+  /// The texture ID is the lookup key so a frame notification touches only
+  /// render objects that consume that texture. Multiple consumers of one
+  /// texture are retained as an explicit fan-out set.
+  void registerTextureFrameAvailableCallback(int textureId, VoidCallback callback) {
+    (_textureFrameCallbacks[textureId] ??= <VoidCallback>{}).add(callback);
+  }
+
+  /// Removes a callback previously registered for [textureId].
+  void unregisterTextureFrameAvailableCallback(int textureId, VoidCallback callback) {
+    final Set<VoidCallback>? callbacks = _textureFrameCallbacks[textureId];
+    if (callbacks == null) {
+      return;
+    }
+    callbacks.remove(callback);
+    if (callbacks.isEmpty) {
+      _textureFrameCallbacks.remove(textureId);
+    }
+  }
+
+  /// Marks consumers of [textureId] dirty without scanning unrelated views.
+  @protected
+  void handleTextureFrameAvailable(int textureId) {
+    final Set<VoidCallback>? callbacks = _textureFrameCallbacks[textureId];
+    if (callbacks == null) {
+      return;
+    }
+    // A callback may detach or retarget itself while handling the signal.
+    for (final VoidCallback callback in List<VoidCallback>.of(callbacks)) {
+      callback();
+    }
+  }
 
   final Map<int, _DeferredPointerEventQueue> _deferredPointerEventsByView =
       <int, _DeferredPointerEventQueue>{};

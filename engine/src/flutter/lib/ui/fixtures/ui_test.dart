@@ -561,6 +561,16 @@ void messageCallback(dynamic data) {}
 @pragma('vm:external-name', 'ValidateConfiguration')
 external void validateConfiguration();
 
+@pragma('vm:entry-point')
+void textureFrameAvailableTest() {
+  PlatformDispatcher.instance.onTextureFrameAvailable = nativeTextureFrameAvailable;
+  validateConfiguration();
+}
+
+@pragma('vm:entry-point')
+@pragma('vm:external-name', 'TextureFrameAvailable')
+external void nativeTextureFrameAvailable(int textureId);
+
 // Draw a circle on a Canvas that has a PictureRecorder. Take the image from
 // the PictureRecorder, and encode it as png. Check that the png data is
 // backed by an external Uint8List.

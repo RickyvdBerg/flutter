@@ -1363,12 +1363,14 @@ void Shell::OnPlatformViewMarkTextureFrameAvailable(int64_t texture_id) {
       });
 
   // Schedule a new frame without having to rebuild the layer tree.
-  fml::TaskRunner::RunNowOrPostTask(task_runners_.GetUITaskRunner(),
-                                    [engine = engine_->GetWeakPtr()]() {
-                                      if (engine) {
-                                        engine->ScheduleFrame(false);
-                                      }
-                                    });
+  fml::TaskRunner::RunNowOrPostTask(
+      task_runners_.GetUITaskRunner(),
+      [engine = engine_->GetWeakPtr(), texture_id]() {
+        if (engine) {
+          engine->NotifyTextureFrameAvailable(texture_id);
+          engine->ScheduleFrame(false);
+        }
+      });
 }
 
 // |PlatformView::Delegate|

@@ -65,6 +65,54 @@ TEST_F(PlatformConfigurationTest, Initialization) {
   DestroyShell(std::move(shell), task_runners);
 }
 
+TEST_F(PlatformConfigurationTest, TextureFrameAvailableReachesDart) {
+  auto configuration_latch = std::make_shared<fml::AutoResetWaitableEvent>();
+  auto texture_latch = std::make_shared<fml::AutoResetWaitableEvent>();
+  PlatformConfiguration* platform = nullptr;
+  int64_t notified_texture_id = -1;
+
+  auto capture_configuration =
+      [&platform, configuration_latch](Dart_NativeArguments args) {
+        platform = UIDartState::Current()->platform_configuration();
+        configuration_latch->Signal();
+      };
+  AddNativeCallback("ValidateConfiguration",
+                    CREATE_NATIVE_ENTRY(capture_configuration));
+
+  auto capture_texture_id = [&notified_texture_id,
+                             texture_latch](Dart_NativeArguments args) {
+    Dart_IntegerToInt64(Dart_GetNativeArgument(args, 0), &notified_texture_id);
+    texture_latch->Signal();
+  };
+  AddNativeCallback("TextureFrameAvailable",
+                    CREATE_NATIVE_ENTRY(capture_texture_id));
+
+  Settings settings = CreateSettingsForFixture();
+  TaskRunners task_runners("test",                  // label
+                           GetCurrentTaskRunner(),  // platform
+                           CreateNewThread(),       // raster
+                           CreateNewThread(),       // ui
+                           CreateNewThread()        // io
+  );
+  std::unique_ptr<Shell> shell = CreateShell(settings, task_runners);
+  ASSERT_TRUE(shell->IsSetup());
+
+  auto run_configuration = RunConfiguration::InferFromSettings(settings);
+  run_configuration.SetEntrypoint("textureFrameAvailableTest");
+  shell->RunEngine(std::move(run_configuration), [&](auto result) {
+    ASSERT_EQ(result, Engine::RunStatus::Success);
+  });
+
+  configuration_latch->Wait();
+  fml::TaskRunner::RunNowOrPostTask(
+      shell->GetTaskRunners().GetUITaskRunner(),
+      [platform]() { platform->NotifyTextureFrameAvailable(42); });
+  texture_latch->Wait();
+
+  EXPECT_EQ(notified_texture_id, 42);
+  DestroyShell(std::move(shell), task_runners);
+}
+
 TEST_F(PlatformConfigurationTest, WindowMetricsUpdate) {
   auto message_latch = std::make_shared<fml::AutoResetWaitableEvent>();
 

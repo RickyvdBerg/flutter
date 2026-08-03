@@ -31,6 +31,11 @@ typedef FrameCallback = void Function(Duration duration);
 /// {@endtemplate}
 typedef TimingsCallback = void Function(List<FrameTiming> timings);
 
+/// Signature for [PlatformDispatcher.onTextureFrameAvailable].
+///
+/// The callback receives the ID of the texture with new content.
+typedef TextureFrameAvailableCallback = void Function(int textureId);
+
 /// Signature for [PlatformDispatcher.onPointerDataPacket].
 typedef PointerDataPacketCallback = void Function(PointerDataPacket packet);
 
@@ -696,6 +701,25 @@ class PlatformDispatcher {
   @Native<Void Function(Bool)>(symbol: 'PlatformConfigurationNativeApi::SetNeedsReportTimings')
   external static void __nativeSetNeedsReportTimings(bool value);
 
+  /// A callback invoked when a registered texture has new content.
+  ///
+  /// The framework uses this signal to invalidate only render objects bound
+  /// to [textureId]. Scheduling remains the responsibility of the framework's
+  /// render pipeline and, for compositor-driven embedders, the admitted frame
+  /// opportunity.
+  TextureFrameAvailableCallback? get onTextureFrameAvailable => _onTextureFrameAvailable;
+  TextureFrameAvailableCallback? _onTextureFrameAvailable;
+  Zone _onTextureFrameAvailableZone = Zone.root;
+  set onTextureFrameAvailable(TextureFrameAvailableCallback? callback) {
+    _onTextureFrameAvailable = callback;
+    _onTextureFrameAvailableZone = Zone.current;
+  }
+
+  // Called from the engine, via hooks.dart.
+  void _notifyTextureFrameAvailable(int textureId) {
+    _invoke1<int>(onTextureFrameAvailable, _onTextureFrameAvailableZone, textureId);
+  }
+
   // Called from the engine, via hooks.dart
   void _reportTimings(List<int> timings) {
     assert(timings.length % FrameTiming._dataLength == 0);
@@ -971,10 +995,7 @@ class PlatformDispatcher {
   @Native<Void Function(Int64, Handle)>(
     symbol: 'PlatformConfigurationNativeApi::ScheduleFrameForDisplayViews',
   )
-  external static void _scheduleFrameForDisplayViews(
-    int displayId,
-    List<int> viewIds,
-  );
+  external static void _scheduleFrameForDisplayViews(int displayId, List<int> viewIds);
 
   /// Schedule a frame to run as soon as possible, rather than waiting for the
   /// engine to request a frame in response to a system "Vsync" signal.

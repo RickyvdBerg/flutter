@@ -89,6 +89,7 @@ class _RenderTree {
     flutterView = _FakeFlutterView(viewId);
     renderView = RenderView(view: flutterView);
     owner.rootNode = renderView;
+    binding.rootPipelineOwner.adoptChild(owner);
     binding.addRenderView(renderView);
     renderView.prepareInitialFrame();
     owner.flushLayout();
@@ -105,6 +106,7 @@ class _RenderTree {
 
   void dispose() {
     binding.removeRenderView(renderView);
+    binding.rootPipelineOwner.dropChild(owner);
     owner.rootNode = null;
     owner.dispose();
   }
@@ -180,6 +182,30 @@ void main() {
     expect(binding.dispatchedEvents, hasLength(1));
     expect(binding.dispatchedEvents.single.position, const Offset(20, 20));
     expect(binding.hitTestViewIds, contains(dirtyInactive.flutterView.viewId));
+  });
+
+  test('a texture frame schedules and renders only its owning view', () {
+    final textured = _RenderTree(binding, 350);
+    final cleanSibling = _RenderTree(binding, 351);
+    addTearDown(textured.dispose);
+    addTearDown(cleanSibling.dispose);
+
+    textured.renderView.child = TextureBox(textureId: 9001);
+    binding.runScopedFrame(<int>{textured.flutterView.viewId});
+    textured.flutterView.renderedScenes.clear();
+    cleanSibling.flutterView.renderedScenes.clear();
+    binding.scheduledFrames = 0;
+
+    binding.handleTextureFrameAvailable(9001);
+
+    expect(textured.owner.hasDirtyForFrame, isTrue);
+    expect(cleanSibling.owner.hasDirtyForFrame, isFalse);
+    expect(binding.scheduledFrames, 1);
+
+    binding.runScopedFrame(<int>{textured.flutterView.viewId});
+
+    expect(textured.flutterView.renderedScenes, hasLength(1));
+    expect(cleanSibling.flutterView.renderedScenes, isEmpty);
   });
 
   test('deferred hover events coalesce without losing accumulated delta', () {

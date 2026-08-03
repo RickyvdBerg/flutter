@@ -4,6 +4,7 @@
 
 import 'package:flutter/foundation.dart';
 
+import 'binding.dart';
 import 'box.dart';
 import 'layer.dart';
 import 'object.dart';
@@ -22,9 +23,9 @@ import 'object.dart';
 /// of the registry. The use of texture IDs currently unknown to the registry
 /// will silently result in a blank rectangle.
 ///
-/// Texture boxes are repainted autonomously as dictated by the backend (e.g. on
-/// arrival of a video frame). Such repainting generally does not involve
-/// executing Dart code.
+/// Texture boxes are invalidated as dictated by the backend (e.g. on arrival
+/// of a video frame). The engine routes that texture ID through the rendering
+/// binding; application callbacks are not involved.
 ///
 /// The size of the rectangle is determined by the parent, and the texture is
 /// automatically scaled to fit.
@@ -51,7 +52,45 @@ class TextureBox extends RenderBox {
   int _textureId;
   set textureId(int value) {
     if (value != _textureId) {
+      if (attached) {
+        RendererBinding.instance.unregisterTextureFrameAvailableCallback(
+          _textureId,
+          _textureFrameAvailableCallback,
+        );
+      }
       _textureId = value;
+      if (attached) {
+        RendererBinding.instance.registerTextureFrameAvailableCallback(
+          _textureId,
+          _textureFrameAvailableCallback,
+        );
+      }
+      markNeedsPaint();
+    }
+  }
+
+  late final VoidCallback _textureFrameAvailableCallback = _handleTextureFrameAvailable;
+
+  @override
+  void attach(PipelineOwner owner) {
+    super.attach(owner);
+    RendererBinding.instance.registerTextureFrameAvailableCallback(
+      _textureId,
+      _textureFrameAvailableCallback,
+    );
+  }
+
+  @override
+  void detach() {
+    RendererBinding.instance.unregisterTextureFrameAvailableCallback(
+      _textureId,
+      _textureFrameAvailableCallback,
+    );
+    super.detach();
+  }
+
+  void _handleTextureFrameAvailable() {
+    if (!_freeze) {
       markNeedsPaint();
     }
   }

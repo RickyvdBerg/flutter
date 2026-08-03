@@ -386,6 +386,11 @@ class RuntimeController : public PlatformConfigurationClient,
   bool ReportTimings(std::vector<int64_t> timings);
 
   //----------------------------------------------------------------------------
+  /// @brief      Notifies the framework that a registered texture has new
+  ///             content available.
+  bool NotifyTextureFrameAvailable(int64_t texture_id);
+
+  //----------------------------------------------------------------------------
   /// @brief      Notify the Dart VM that no frame workloads are expected on the
   ///             UI task runner till the specified deadline. The VM uses this
   ///             opportunity to perform garbage collection operations is a

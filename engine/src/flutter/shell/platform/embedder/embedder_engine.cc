@@ -663,6 +663,22 @@ bool EmbedderEngine::PublishDmabufTexture(
   } else {
     raster_runner->PostTask(std::move(mark_texture));
   }
+
+  // The DMA-BUF path is paced by compositor-issued frame opportunities. Tell
+  // Dart exactly which texture changed so its owning view becomes dirty, but
+  // do not widen this into a global engine frame. The framework's dirty-view
+  // scheduler will request work and the compositor remains cadence authority.
+  auto ui_runner = shell_->GetTaskRunners().GetUITaskRunner();
+  auto notify_framework = [engine = shell_->GetEngine(), texture_id]() {
+    if (engine) {
+      engine->NotifyTextureFrameAvailable(texture_id);
+    }
+  };
+  if (ui_runner->RunsTasksOnCurrentThread()) {
+    notify_framework();
+  } else {
+    ui_runner->PostTask(std::move(notify_framework));
+  }
   return true;
 }
 

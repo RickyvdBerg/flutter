@@ -95,6 +95,9 @@ void PlatformConfiguration::DidCreateIsolate() {
       Dart_GetField(library, tonic::ToDart("_drawFrameForDisplay")));
   report_timings_.Set(tonic::DartState::Current(),
                       Dart_GetField(library, tonic::ToDart("_reportTimings")));
+  notify_texture_frame_available_.Set(
+      tonic::DartState::Current(),
+      Dart_GetField(library, tonic::ToDart("_notifyTextureFrameAvailable")));
 }
 
 bool PlatformConfiguration::AddView(int64_t view_id,
@@ -594,6 +597,18 @@ void PlatformConfiguration::ReportTimings(std::vector<int64_t> timings) {
       tonic::DartInvoke(report_timings_.Get(), {
                                                    data_handle,
                                                }));
+}
+
+void PlatformConfiguration::NotifyTextureFrameAvailable(int64_t texture_id) {
+  std::shared_ptr<tonic::DartState> dart_state =
+      notify_texture_frame_available_.dart_state().lock();
+  if (!dart_state) {
+    return;
+  }
+  tonic::DartState::Scope scope(dart_state);
+
+  tonic::CheckAndHandleError(tonic::DartInvoke(
+      notify_texture_frame_available_.Get(), {tonic::ToDart(texture_id)}));
 }
 
 const ViewportMetrics* PlatformConfiguration::GetMetrics(int view_id) {

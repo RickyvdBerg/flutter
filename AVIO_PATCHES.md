@@ -65,6 +65,7 @@ already ancestors of the selected main target under their original commits.
 | 27 | Transfer external Vulkan image queue-family ownership | permanent explicit-sync/ownership extension | none |
 | 28 | Keep normalized degrees below a full circle | upstreamable Impeller correctness fix | submit upstream |
 | 29 | [framework] Maintain typed O(1) element-to-view ownership | permanent framework correctness/performance fix | none while Avio carries view-scoped frame admission |
+| 30 | [framework] Route texture frames to their exact render consumers | upstream-aligned framework/engine fix adapted for compositor pacing | open: flutter/flutter#179874 |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -157,6 +158,22 @@ next View boundary, so `BuildOwner.scheduleBuildFor` never walks ancestors or
 guesses a render root on the hot dirty-mark path. A stale view token widens to
 the explicit all-views scheduler path. Focused tests pin initial attachment,
 cross-view reparenting, and unowned-root behavior.
+
+### Patch 30: exact texture invalidation
+
+Native texture-frame notifications reach Dart with the texture ID that changed.
+`RendererBinding` owns an ID-keyed callback map, so lookup is O(1) in the
+number of registered texture IDs while a shared texture explicitly fans out to
+all of its consumers. `TextureBox` registration follows attach, detach, and ID
+retargeting; frozen consumers remain clean.
+
+The stock platform texture API still schedules its compatibility frame after
+the exact invalidation. Avio's DMA-BUF publication path deliberately does not:
+it only marks the raster texture and notifies Dart, allowing the dirty owner to
+request work while the compositor-issued frame opportunity remains the sole
+cadence authority. Never add `Engine::ScheduleFrame` to
+`EmbedderEngine::PublishDmabufTexture`; that would widen one producer update
+back into a global frame.
 
 ## Known baseline debt
 

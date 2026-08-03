@@ -409,6 +409,11 @@ void _reportTimings(List<int> timings) {
 }
 
 @pragma('vm:entry-point')
+void _notifyTextureFrameAvailable(int textureId) {
+  PlatformDispatcher.instance._notifyTextureFrameAvailable(textureId);
+}
+
+@pragma('vm:entry-point')
 void _drawFrame() {
   PlatformDispatcher.instance._drawFrame();
 }

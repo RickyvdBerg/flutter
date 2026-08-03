@@ -579,6 +579,11 @@ class PlatformConfiguration final {
   void ReportTimings(std::vector<int64_t> timings);
 
   //----------------------------------------------------------------------------
+  /// @brief      Notifies Dart that the texture identified by `texture_id`
+  ///             has new content available.
+  void NotifyTextureFrameAvailable(int64_t texture_id);
+
+  //----------------------------------------------------------------------------
   /// @brief      Retrieves the viewport metrics with the given ID managed by
   ///             the `PlatformConfiguration`.
   ///
@@ -636,6 +641,7 @@ class PlatformConfiguration final {
   tonic::DartPersistentValue draw_frame_;
   tonic::DartPersistentValue draw_frame_for_display_;
   tonic::DartPersistentValue report_timings_;
+  tonic::DartPersistentValue notify_texture_frame_available_;
 
   uint64_t last_frame_number_ = 0;
   int64_t last_microseconds_ = 0;

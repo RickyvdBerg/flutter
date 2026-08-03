@@ -106,6 +106,25 @@ need "DmabufTextureSourceVK" \
   $F/impeller/renderer/backend/vulkan 'DmabufTextureSourceVK'
 need "dmabuf acquire fence import (GPU-side wait)" \
   $F/impeller/renderer/backend/vulkan 'acquire_fence'
+need "native texture notifications reach Dart" \
+  $F/lib/ui/window/platform_configuration.cc 'NotifyTextureFrameAvailable'
+need "framework texture invalidation is keyed by texture ID" \
+  $W/lib/src/rendering/binding.dart \
+  'Map<int, Set<VoidCallback>> _textureFrameCallbacks'
+need "texture ownership follows attach and detach" \
+  $W/lib/src/rendering/texture.dart \
+  'registerTextureFrameAvailableCallback'
+need "DMA-BUF texture publication notifies exact framework consumers" \
+  $F/shell/platform/embedder/embedder_engine.cc \
+  'engine->NotifyTextureFrameAvailable\(texture_id\)'
+if sed -n '/bool EmbedderEngine::PublishDmabufTexture/,/^}/p' \
+    "$F/shell/platform/embedder/embedder_engine.cc" | \
+    grep -q 'engine->ScheduleFrame'; then
+  echo "LEAK DMA-BUF texture publication schedules a global frame"
+  fail=1
+else
+  echo "OK   DMA-BUF texture publication preserves compositor cadence"
+fi
 
 echo "--- Damage tracking ---"
 need "frame_damage in FlutterBackingStorePresentInfo" \

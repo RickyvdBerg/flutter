@@ -130,10 +130,19 @@ class Animator final {
   ///
   /// Each registered display maintains its own independent frame lifecycle:
   /// request -> vsync -> begin frame -> render views -> end frame -> rasterize.
+  enum class ViewVisibility {
+    kVisible,
+    kObscured,
+    kSuspended,
+  };
+
   struct DisplayFrameState {
     int64_t display_id = VsyncWaiter::kDefaultDisplayId;
     double refresh_rate = 60.0;
+    // All registered views remain active targets for exact opportunity
+    // reconciliation. Only renderable views may create new frame demand.
     std::set<int64_t> view_ids;
+    std::set<int64_t> renderable_view_ids;
     // Views requested for the next display frame. Full-display requests take
     // precedence over subset requests so global callers keep legacy behavior.
     std::set<int64_t> pending_frame_view_ids;
@@ -181,6 +190,11 @@ class Animator final {
 
   /// Assigns a view to a display for per-display vsync rendering.
   void SetViewDisplay(int64_t view_id, int64_t display_id);
+
+  /// Changes whether a registered view may create future raster demand.
+  /// Returns true only when this update transitions the engine from at least
+  /// one renderable view to none, allowing the embedder to trim idle caches.
+  bool SetViewVisibility(int64_t view_id, ViewVisibility visibility);
 
   /// Removes a view from all per-display tracking state.
   void RemoveView(int64_t view_id);
@@ -303,6 +317,8 @@ class Animator final {
 
   /// Returns the display ID for the given view.
   int64_t GetDisplayForView(int64_t view_id) const;
+
+  bool HasRenderableViews() const;
 
   Delegate& delegate_;
   TaskRunners task_runners_;

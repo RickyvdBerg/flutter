@@ -71,6 +71,7 @@ already ancestors of the selected main target under their original commits.
 | 33 | Bound pipeline-cache files before mapping or allocation | permanent defensive I/O contract | upstreamable in principle |
 | 34 | Enforce hard transient budgets and trim only idle resources | permanent resource-lifecycle contract | none |
 | 35 | Negotiate exact resource profiles and principal-scoped pipeline-cache access | permanent ABI/lifecycle extension | none |
+| 36 | Suppress raster demand with exact per-view visibility | permanent ABI/lifecycle extension | none |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -274,6 +275,22 @@ Impeller pipeline ABI in addition to the Vulkan device, driver, pointer ABI,
 and driver UUID. Incompatible or corrupt data still falls back to an empty
 Vulkan cache. Stock embedders that do not negotiate the feature retain their
 existing ContextVK defaults.
+
+### Patch 36: exact per-view render visibility
+
+Avio supplies each hosted view's render relevance explicitly as visible,
+obscured, or suspended. This is neither Dart application lifecycle nor input
+focus: every view remains registered, while only visible views may create new
+raster demand. A visibility change never rewrites an opportunity that the
+embedder already admitted. At the UI boundary that target instead terminates
+exactly once as no-visual-change; subsequent demand stays suppressed until an
+explicit visible update schedules one fresh view-scoped frame.
+
+The feature requires the exact frame-opportunity contract. When the last
+renderable view becomes hidden, the raster thread trims only already-idle
+Impeller resources. Dart timers and application policy remain controlled by
+Avio's separate typed shell lifecycle channel, so the engine never infers
+authority, lock state, or suspension from missing vsync.
 
 ## Known baseline debt
 

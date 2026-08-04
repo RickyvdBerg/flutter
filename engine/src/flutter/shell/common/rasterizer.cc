@@ -171,15 +171,7 @@ void Rasterizer::DisableThreadMergerIfNeeded() {
 }
 
 void Rasterizer::NotifyLowMemoryWarning() const {
-  if (surface_) {
-    auto aiks_context = surface_->GetAiksContext();
-    if (aiks_context) {
-      auto context = aiks_context->GetContext();
-      if (context) {
-        context->TrimIdleResourceCaches();
-      }
-    }
-  }
+  TrimIdleResourceCaches();
 #if !SLIMPELLER
   if (!surface_) {
     FML_DLOG(INFO)
@@ -198,6 +190,18 @@ void Rasterizer::NotifyLowMemoryWarning() const {
   }
   context->performDeferredCleanup(std::chrono::milliseconds(0));
 #endif  //  !SLIMPELLER
+}
+
+void Rasterizer::TrimIdleResourceCaches() const {
+  if (surface_) {
+    auto aiks_context = surface_->GetAiksContext();
+    if (aiks_context) {
+      auto context = aiks_context->GetContext();
+      if (context) {
+        context->TrimIdleResourceCaches();
+      }
+    }
+  }
 }
 
 void Rasterizer::CollectView(int64_t view_id) {

@@ -113,6 +113,10 @@ class EmbedderEngine {
   /// Assigns a view to a display in the Animator's per-display tracking.
   bool SetViewDisplay(int64_t view_id, int64_t display_id);
 
+  /// Updates per-view render relevance when the negotiated Avio contract is
+  /// active. Obscured and suspended views remain registered.
+  bool SetViewVisibility(int64_t view_id, Animator::ViewVisibility visibility);
+
   bool ReloadSystemFonts();
 
   bool PostRenderThreadTask(const fml::closure& task);

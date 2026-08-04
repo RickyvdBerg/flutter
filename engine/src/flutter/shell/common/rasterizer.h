@@ -270,6 +270,10 @@ class Rasterizer final : public SnapshotDelegate,
   ///
   void NotifyLowMemoryWarning() const;
 
+  /// Trims resources that are already idle without notifying Dart or purging
+  /// live scene state. Safe to call when every hosted view is non-visible.
+  void TrimIdleResourceCaches() const;
+
   //----------------------------------------------------------------------------
   /// @brief      Gets a weak pointer to the rasterizer. The rasterizer may only
   ///             be accessed on the raster task runner.

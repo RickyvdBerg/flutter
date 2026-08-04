@@ -264,6 +264,15 @@ need "explicit transient profiles bypass environment policy" \
 need "resource lifecycle feature is negotiated" \
   $F/shell/platform/embedder/embedder.h \
   'kFlutterAvioExtensionFeatureResourceLifecycleConfig'
+need "per-view visibility is negotiated" \
+  $F/shell/platform/embedder/embedder.h \
+  'kFlutterAvioExtensionFeatureViewVisibility'
+need "hidden admitted targets terminalize without removal" \
+  $F/shell/common/animator.cc \
+  'renderable_view_ids'
+need "visibility never masquerades as global memory pressure" \
+  $F/shell/platform/embedder/embedder_engine.cc \
+  'rasterizer->TrimIdleResourceCaches\(\)'
 need "resource lifecycle config is paired with negotiation" \
   $F/shell/platform/embedder/embedder.cc \
   'A resource lifecycle configuration was supplied without'

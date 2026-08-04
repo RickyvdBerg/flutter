@@ -80,12 +80,14 @@ TEST(EmbedderProcTable, ReportsAvioSemanticCapabilities) {
       kFlutterAvioExtensionFeatureExplicitRenderCompletion |
       kFlutterAvioExtensionFeatureExactVsyncCancellation |
       kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
-      kFlutterAvioExtensionFeatureSelectedTargetDamage;
+      kFlutterAvioExtensionFeatureSelectedTargetDamage |
+      kFlutterAvioExtensionFeatureViewVisibility;
 #if FML_OS_LINUX && defined(SHELL_ENABLE_VULKAN) && \
     defined(IMPELLER_SUPPORTS_RENDERING)
   expected_features |= kFlutterAvioExtensionFeatureResourceLifecycleConfig;
 #endif
   EXPECT_EQ(capabilities.supported_features, expected_features);
+  EXPECT_NE(procs.SetAvioViewVisibility, nullptr);
 }
 
 TEST(EmbedderProcTable, RejectsTruncatedAvioCapabilities) {

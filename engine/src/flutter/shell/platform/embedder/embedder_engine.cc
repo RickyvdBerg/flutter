@@ -458,6 +458,30 @@ bool EmbedderEngine::SetViewDisplay(int64_t view_id, int64_t display_id) {
   return true;
 }
 
+bool EmbedderEngine::SetViewVisibility(int64_t view_id,
+                                       Animator::ViewVisibility visibility) {
+  if (!IsValid() || (avio_extension_features_ &
+                     kFlutterAvioExtensionFeatureViewVisibility) == 0) {
+    return false;
+  }
+
+  const auto rasterizer = shell_->GetRasterizer();
+  const auto raster_task_runner = task_runners_.GetRasterTaskRunner();
+  shell_->GetTaskRunners().GetUITaskRunner()->PostTask(
+      [engine = shell_->GetEngine(), rasterizer, raster_task_runner, view_id,
+       visibility]() {
+        if (!engine || !engine->SetViewVisibility(view_id, visibility)) {
+          return;
+        }
+        raster_task_runner->PostTask([rasterizer]() {
+          if (rasterizer) {
+            rasterizer->TrimIdleResourceCaches();
+          }
+        });
+      });
+  return true;
+}
+
 bool EmbedderEngine::ReloadSystemFonts() {
   if (!IsValid()) {
     return false;

@@ -394,6 +394,84 @@ TEST_F(ShellTest, RemovedTargetTerminatesExactFrameOpportunity) {
   PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
 }
 
+TEST_F(ShellTest, HiddenViewSettlesAdmittedWorkAndRearmsOnlyOnResume) {
+  class VisibilityDelegate final : public FakeAnimatorDelegate {
+   public:
+    MOCK_METHOD(void,
+                OnAnimatorBeginFrameForDisplay,
+                (fml::TimePoint frame_target_time,
+                 uint64_t frame_number,
+                 int64_t display_id,
+                 const std::set<int64_t>& view_ids),
+                (override));
+    MOCK_METHOD(void,
+                OnAnimatorEmptyFrameForDisplay,
+                (int64_t display_id, const std::set<int64_t>& view_ids),
+                (override));
+    MOCK_METHOD(bool,
+                OnAnimatorFrameOpportunityOutcome,
+                (FrameOpportunityId opportunity_id,
+                 int64_t display_id,
+                 int64_t target_id,
+                 FrameOpportunityOutcome outcome),
+                (override));
+  } delegate;
+
+  TaskRunners task_runners = {"test", CreateNewThread(), CreateNewThread(),
+                              CreateNewThread(), CreateNewThread()};
+  std::shared_ptr<Animator> animator;
+  ManualDisplayVsyncWaiter* waiter = nullptr;
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    auto owned_waiter =
+        std::make_unique<ManualDisplayVsyncWaiter>(task_runners);
+    waiter = owned_waiter.get();
+    animator = std::make_unique<Animator>(delegate, task_runners,
+                                          std::move(owned_waiter));
+    animator->AddDisplay(21, 60.0);
+    animator->SetViewDisplay(121, 21);
+    EXPECT_TRUE(
+        animator->SetViewVisibility(121, Animator::ViewVisibility::kObscured));
+    EXPECT_FALSE(
+        animator->SetViewVisibility(121, Animator::ViewVisibility::kSuspended));
+  });
+  ASSERT_EQ(waiter->request_count(), 1u);
+
+  EXPECT_CALL(delegate, OnAnimatorBeginFrameForDisplay).Times(0);
+  EXPECT_CALL(delegate,
+              OnAnimatorFrameOpportunityOutcome(
+                  901, 21, 121, FrameOpportunityOutcome::kNoVisualChange))
+      .WillOnce(::testing::Return(true));
+  EXPECT_CALL(delegate,
+              OnAnimatorEmptyFrameForDisplay(21, std::set<int64_t>({121})));
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [waiter] { waiter->FireDisplay(21, 901, {121}); });
+  PostTaskSync(task_runners.GetUITaskRunner(), [] {});
+  ::testing::Mock::VerifyAndClearExpectations(&delegate);
+
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [&] { animator->RequestFrameForDisplayViews(21, {121}); });
+  EXPECT_EQ(waiter->request_count(), 1u);
+
+  EXPECT_CALL(delegate,
+              OnAnimatorBeginFrameForDisplay(::testing::_, ::testing::_, 21,
+                                             std::set<int64_t>({121})));
+  EXPECT_CALL(delegate,
+              OnAnimatorFrameOpportunityOutcome(
+                  902, 21, 121, FrameOpportunityOutcome::kNoVisualChange))
+      .WillOnce(::testing::Return(true));
+  EXPECT_CALL(delegate,
+              OnAnimatorEmptyFrameForDisplay(21, std::set<int64_t>({121})));
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    EXPECT_FALSE(
+        animator->SetViewVisibility(121, Animator::ViewVisibility::kVisible));
+  });
+  EXPECT_EQ(waiter->request_count(), 2u);
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [waiter] { waiter->FireDisplay(21, 902, {121}); });
+  PostTaskSync(task_runners.GetUITaskRunner(), [] {});
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
+}
+
 TEST_F(ShellTest, RemovingUnrequestedTargetDoesNotInventAnOutcome) {
   class ExactDisplayDelegate final : public FakeAnimatorDelegate {
    public:

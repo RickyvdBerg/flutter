@@ -821,6 +821,10 @@ class Engine final : public RuntimeDelegate, PointerDataDispatcher::Delegate {
   ///
   void SetViewDisplay(int64_t view_id, int64_t display_id);
 
+  /// Updates per-view render relevance. Returns true only when this update
+  /// transitions the engine to having no renderable views.
+  bool SetViewVisibility(int64_t view_id, Animator::ViewVisibility visibility);
+
   //----------------------------------------------------------------------------
   /// @brief      Requests a frame for a specific display in per-display mode.
   ///

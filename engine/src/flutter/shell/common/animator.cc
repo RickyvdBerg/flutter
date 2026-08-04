@@ -5,6 +5,7 @@
 #include "flutter/shell/common/animator.h"
 
 #include <algorithm>
+#include <iterator>
 
 #include "flutter/common/constants.h"
 #include "flutter/flow/frame_timings.h"
@@ -26,7 +27,7 @@ bool LatchDisplayFrameRequest(Animator::DisplayFrameState& state,
                               const std::set<int64_t>* view_ids,
                               bool regenerate_layer_trees) {
   if (view_ids == nullptr) {
-    if (state.view_ids.empty()) {
+    if (state.renderable_view_ids.empty()) {
       return false;
     }
     state.pending_frame_all_views = true;
@@ -39,7 +40,8 @@ bool LatchDisplayFrameRequest(Animator::DisplayFrameState& state,
   bool inserted = false;
   if (!state.pending_frame_all_views) {
     for (int64_t view_id : *view_ids) {
-      if (state.view_ids.find(view_id) != state.view_ids.end()) {
+      if (state.renderable_view_ids.find(view_id) !=
+          state.renderable_view_ids.end()) {
         inserted =
             state.pending_frame_view_ids.insert(view_id).second || inserted;
       }
@@ -58,10 +60,11 @@ bool LatchDisplayFrameRequest(Animator::DisplayFrameState& state,
 void ResolveDisplayFrameViewIds(Animator::DisplayFrameState& state) {
   state.current_frame_view_ids.clear();
   if (state.pending_frame_all_views) {
-    state.current_frame_view_ids = state.view_ids;
+    state.current_frame_view_ids = state.renderable_view_ids;
   } else {
     for (int64_t view_id : state.pending_frame_view_ids) {
-      if (state.view_ids.find(view_id) != state.view_ids.end()) {
+      if (state.renderable_view_ids.find(view_id) !=
+          state.renderable_view_ids.end()) {
         state.current_frame_view_ids.insert(view_id);
       }
     }
@@ -490,6 +493,9 @@ void Animator::AddDisplay(int64_t display_id, double refresh_rate) {
     auto mapping = view_to_display_.find(*it);
     if (mapping != view_to_display_.end() && mapping->second == display_id) {
       state.view_ids.insert(*it);
+      if (default_state_.renderable_view_ids.erase(*it) > 0) {
+        state.renderable_view_ids.insert(*it);
+      }
       it = default_state_.view_ids.erase(it);
     } else {
       ++it;
@@ -527,8 +533,12 @@ void Animator::RemoveDisplay(int64_t display_id) {
   for (int64_t view_id : state.view_ids) {
     view_to_display_.erase(view_id);
     default_state_.view_ids.insert(view_id);
+    if (state.renderable_view_ids.count(view_id) > 0) {
+      default_state_.renderable_view_ids.insert(view_id);
+    }
   }
   state.view_ids.clear();
+  state.renderable_view_ids.clear();
   state.pending_frame_view_ids.clear();
   state.current_frame_view_ids.clear();
 
@@ -552,6 +562,14 @@ void Animator::RemoveStaleDisplays(const std::set<int64_t>& active_ids) {
 void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
   TRACE_EVENT2_INT("flutter", "Animator::SetViewDisplay", "view_id", view_id,
                    "display_id", display_id);
+  // Preserve render relevance while moving the view between displays. A new
+  // view is visible by default until the embedder supplies an explicit state.
+  bool is_renderable = true;
+  bool was_registered = default_state_.view_ids.count(view_id) > 0;
+  if (was_registered) {
+    is_renderable = default_state_.renderable_view_ids.count(view_id) > 0;
+  }
+
   // Remove from previous display if mapped.
   auto prev_it = view_to_display_.find(view_id);
   if (prev_it != view_to_display_.end()) {
@@ -559,6 +577,10 @@ void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
     auto state_it = display_states_.find(prev_display);
     if (state_it != display_states_.end()) {
       DisplayFrameState& prev_state = state_it->second;
+      was_registered = prev_state.view_ids.count(view_id) > 0;
+      if (was_registered) {
+        is_renderable = prev_state.renderable_view_ids.count(view_id) > 0;
+      }
       if (prev_state.frame_in_progress &&
           prev_state.current_frame_view_ids.count(view_id) > 0) {
         CompleteFrameOpportunity(prev_state, {view_id},
@@ -571,6 +593,7 @@ void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
         prev_state.removed_target_ids.insert(view_id);
       }
       prev_state.view_ids.erase(view_id);
+      prev_state.renderable_view_ids.erase(view_id);
       prev_state.pending_frame_view_ids.erase(view_id);
       prev_state.current_frame_view_ids.erase(view_id);
       prev_state.rendered_views_this_frame.erase(view_id);
@@ -582,23 +605,66 @@ void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
     }
   }
   default_state_.view_ids.erase(view_id);
+  default_state_.renderable_view_ids.erase(view_id);
 
   // Add to new display.
   auto state_it = display_states_.find(display_id);
   if (state_it != display_states_.end()) {
     state_it->second.view_ids.insert(view_id);
+    if (!was_registered || is_renderable) {
+      state_it->second.renderable_view_ids.insert(view_id);
+    }
     view_to_display_[view_id] = display_id;
 
     // Kick off the frame loop for the new display. If the display had no
     // views before, its loop will have stopped. This ensures the moved
     // view starts rendering immediately at the new display's refresh rate.
-    RequestFrameForDisplay(display_id);
+    if (!was_registered || is_renderable) {
+      RequestFrameForDisplay(display_id);
+    }
   } else {
     // Display not registered yet; record the intended display so that
     // AddDisplay can move this view when the display arrives.
     view_to_display_[view_id] = display_id;
     default_state_.view_ids.insert(view_id);
+    if (!was_registered || is_renderable) {
+      default_state_.renderable_view_ids.insert(view_id);
+    }
   }
+}
+
+bool Animator::SetViewVisibility(int64_t view_id, ViewVisibility visibility) {
+  DisplayFrameState* state = &default_state_;
+  auto mapping_it = view_to_display_.find(view_id);
+  if (mapping_it != view_to_display_.end()) {
+    auto state_it = display_states_.find(mapping_it->second);
+    if (state_it != display_states_.end()) {
+      state = &state_it->second;
+    }
+  }
+  if (state->view_ids.count(view_id) == 0) {
+    return false;
+  }
+
+  const bool had_renderable_views = HasRenderableViews();
+  const bool should_render = visibility == ViewVisibility::kVisible;
+  const bool was_renderable = state->renderable_view_ids.count(view_id) > 0;
+  if (should_render == was_renderable) {
+    return false;
+  }
+
+  if (should_render) {
+    state->renderable_view_ids.insert(view_id);
+    if (state != &default_state_) {
+      RequestFrameForDisplayViews(state->display_id, {view_id});
+    }
+  } else {
+    // Keep existing pending/current target sets intact. If the platform has
+    // already admitted an exact opportunity, OnDisplayVsync reconciles this
+    // still-active but no-longer-requested target as NoVisualChange.
+    state->renderable_view_ids.erase(view_id);
+  }
+  return had_renderable_views && !HasRenderableViews();
 }
 
 void Animator::RemoveView(int64_t view_id) {
@@ -606,6 +672,7 @@ void Animator::RemoveView(int64_t view_id) {
   layer_trees_tasks_.erase(view_id);
 
   default_state_.view_ids.erase(view_id);
+  default_state_.renderable_view_ids.erase(view_id);
   default_state_.pending_frame_view_ids.erase(view_id);
   default_state_.current_frame_view_ids.erase(view_id);
   default_state_.rendered_views_this_frame.erase(view_id);
@@ -635,6 +702,7 @@ void Animator::RemoveView(int64_t view_id) {
     state.removed_target_ids.insert(view_id);
   }
   state.view_ids.erase(view_id);
+  state.renderable_view_ids.erase(view_id);
   state.pending_frame_view_ids.erase(view_id);
   state.current_frame_view_ids.erase(view_id);
   state.rendered_views_this_frame.erase(view_id);
@@ -829,9 +897,16 @@ void Animator::OnDisplayVsync(int64_t display_id,
 
   state->frame_regenerate_layer_trees = state->pending_regenerate_layer_trees;
   state->pending_regenerate_layer_trees = false;
-  std::set<int64_t> requested_view_ids = state->pending_frame_all_views
-                                             ? state->view_ids
-                                             : state->pending_frame_view_ids;
+  std::set<int64_t> requested_view_ids;
+  if (state->pending_frame_all_views) {
+    requested_view_ids = state->renderable_view_ids;
+  } else {
+    std::set_intersection(
+        state->pending_frame_view_ids.begin(),
+        state->pending_frame_view_ids.end(), state->renderable_view_ids.begin(),
+        state->renderable_view_ids.end(),
+        std::inserter(requested_view_ids, requested_view_ids.end()));
+  }
 
   if (frame_opportunity.has_value()) {
     FML_DCHECK(!frame_opportunity->target_ids.empty());
@@ -1122,6 +1197,16 @@ int64_t Animator::GetDisplayForView(int64_t view_id) const {
   auto it = view_to_display_.find(view_id);
   return it != view_to_display_.end() ? it->second
                                       : VsyncWaiter::kDefaultDisplayId;
+}
+
+bool Animator::HasRenderableViews() const {
+  if (!default_state_.renderable_view_ids.empty()) {
+    return true;
+  }
+  return std::any_of(display_states_.begin(), display_states_.end(),
+                     [](const auto& entry) {
+                       return !entry.second.renderable_view_ids.empty();
+                     });
 }
 
 void Animator::ScheduleMaybeClearTraceFlowIds() {

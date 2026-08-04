@@ -1121,6 +1121,18 @@ TEST_F(EmbedderTest, ExactVsyncCancellationRequiresPerDisplayVsync) {
   EXPECT_FALSE(engine.is_valid());
 }
 
+TEST_F(EmbedderTest, ViewVisibilityRequiresExactFrameOutcomes) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      false, kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureViewVisibility);
+
+  auto engine = builder.LaunchEngine();
+  EXPECT_FALSE(engine.is_valid());
+}
+
 TEST_F(EmbedderTest, SelectedTargetDamageRequiresExplicitRenderCompletion) {
   auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
   EmbedderConfigBuilder builder(context);
@@ -1216,6 +1228,36 @@ TEST_F(EmbedderTest, ExactFrameOpportunityContractCanBeNegotiated) {
 
   auto engine = builder.LaunchEngine();
   EXPECT_TRUE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, PerViewVisibilityCanBeNegotiated) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      false, kFlutterAvioExtensionFeaturePerDisplayVsync |
+                 kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+                 kFlutterAvioExtensionFeatureExactVsyncCancellation |
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+                 kFlutterAvioExtensionFeatureViewVisibility);
+  builder.GetProjectArgs().vsync_for_display_callback =
+      [](void*, intptr_t, FlutterEngineDisplayId) {};
+  builder.GetCompositor().frame_opportunity_outcome_callback =
+      [](const FlutterFrameOpportunityOutcomeInfo*) {};
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterAvioViewVisibilityEvent event = {};
+  event.struct_size = sizeof(event);
+  event.view_id = kFlutterImplicitViewId;
+  event.visibility = kFlutterAvioViewVisibilityObscured;
+  EXPECT_EQ(FlutterEngineSetAvioViewVisibility(engine.get(), &event), kSuccess);
+
+  event.visibility = static_cast<FlutterAvioViewVisibility>(99);
+  EXPECT_EQ(FlutterEngineSetAvioViewVisibility(engine.get(), &event),
+            kInvalidArguments);
 }
 
 TEST_F(EmbedderTest, ReturnedFrameOpportunityCancelsThroughPublicAbi) {

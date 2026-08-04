@@ -187,7 +187,8 @@ static constexpr FlutterAvioExtensionFeatures kAvioSupportedFeatures =
     kFlutterAvioExtensionFeatureExplicitRenderCompletion |
     kFlutterAvioExtensionFeatureExactVsyncCancellation |
     kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
-    kFlutterAvioExtensionFeatureSelectedTargetDamage
+    kFlutterAvioExtensionFeatureSelectedTargetDamage |
+    kFlutterAvioExtensionFeatureViewVisibility
 #if FML_OS_LINUX && defined(SHELL_ENABLE_VULKAN) && \
     defined(IMPELLER_SUPPORTS_RENDERING)
     | kFlutterAvioExtensionFeatureResourceLifecycleConfig
@@ -233,6 +234,12 @@ static const char* ValidateAvioExtensionRequest(
         kFlutterAvioExtensionFeatureExplicitRenderCompletion) == 0)) {
     return "Selected-target damage requires root targets and explicit render "
            "completion.";
+  }
+  if ((request->required_features &
+       kFlutterAvioExtensionFeatureViewVisibility) != 0 &&
+      (request->required_features &
+       kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) == 0) {
+    return "Per-view visibility requires exact frame opportunity outcomes.";
   }
   return nullptr;
 }
@@ -4216,6 +4223,44 @@ FlutterEngineResult FlutterEngineSetViewDisplay(
   return kSuccess;
 }
 
+FlutterEngineResult FlutterEngineSetAvioViewVisibility(
+    FLUTTER_API_SYMBOL(FlutterEngine) engine,
+    const FlutterAvioViewVisibilityEvent* event) {
+  if (engine == nullptr) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, "Invalid engine handle.");
+  }
+  if (event == nullptr || !STRUCT_HAS_MEMBER(event, visibility)) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                              "Invalid Avio view visibility event.");
+  }
+
+  flutter::Animator::ViewVisibility visibility;
+  switch (event->visibility) {
+    case kFlutterAvioViewVisibilityVisible:
+      visibility = flutter::Animator::ViewVisibility::kVisible;
+      break;
+    case kFlutterAvioViewVisibilityObscured:
+      visibility = flutter::Animator::ViewVisibility::kObscured;
+      break;
+    case kFlutterAvioViewVisibilitySuspended:
+      visibility = flutter::Animator::ViewVisibility::kSuspended;
+      break;
+    default:
+      return LOG_EMBEDDER_ERROR(kInvalidArguments,
+                                "Unknown Avio view visibility value.");
+  }
+
+  TRACE_EVENT2_INT("flutter", "FlutterEngineSetAvioViewVisibility", "view_id",
+                   event->view_id, "visibility", event->visibility);
+  if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)->SetViewVisibility(
+          static_cast<int64_t>(event->view_id), visibility)) {
+    return LOG_EMBEDDER_ERROR(
+        kInternalInconsistency,
+        "Could not update view visibility in the running engine instance.");
+  }
+  return kSuccess;
+}
+
 FlutterEngineResult FlutterEngineReloadSystemFonts(
     FLUTTER_API_SYMBOL(FlutterEngine) engine) {
   if (engine == nullptr) {
@@ -4808,6 +4853,7 @@ FlutterEngineResult FlutterEngineGetProcAddresses(
   SET_PROC(OnVsync, FlutterEngineOnVsync);
   SET_PROC(OnVsyncForDisplay, FlutterEngineOnVsyncForDisplay);
   SET_PROC(SetViewDisplay, FlutterEngineSetViewDisplay);
+  SET_PROC(SetAvioViewVisibility, FlutterEngineSetAvioViewVisibility);
   SET_PROC(ReloadSystemFonts, FlutterEngineReloadSystemFonts);
   SET_PROC(TraceEventDurationBegin, FlutterEngineTraceEventDurationBegin);
   SET_PROC(TraceEventDurationEnd, FlutterEngineTraceEventDurationEnd);

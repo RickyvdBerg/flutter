@@ -716,6 +716,11 @@ void Engine::SetViewDisplay(int64_t view_id, int64_t display_id) {
   animator_->SetViewDisplay(view_id, display_id);
 }
 
+bool Engine::SetViewVisibility(int64_t view_id,
+                               Animator::ViewVisibility visibility) {
+  return animator_->SetViewVisibility(view_id, visibility);
+}
+
 void Engine::ScheduleFrameForDisplay(int64_t display_id,
                                      bool regenerate_layer_trees) {
   if (animator_->IsPerDisplayMode()) {

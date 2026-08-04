@@ -30,7 +30,9 @@ EmbedderSurfaceVulkanImpeller::EmbedderSurfaceVulkanImpeller(
     VkQueue queue,
     const VulkanDispatchTable& vulkan_dispatch_table,
     std::shared_ptr<EmbedderExternalViewEmbedder> external_view_embedder,
-    impeller::Flags impeller_flags)
+    impeller::Flags impeller_flags,
+    std::optional<EmbedderVulkanResourceLifecycleConfig>
+        resource_lifecycle_config)
     : vk_(fml::MakeRefCounted<vulkan::VulkanProcTable>(
           vulkan_dispatch_table.get_instance_proc_address)),
       vulkan_dispatch_table_(vulkan_dispatch_table),
@@ -56,6 +58,16 @@ EmbedderSurfaceVulkanImpeller::EmbedderSurfaceVulkanImpeller(
   settings.proc_address_callback =
       vulkan_dispatch_table.get_instance_proc_address;
   settings.flags = impeller_flags;
+  if (resource_lifecycle_config.has_value()) {
+    settings.swapchain_transients_limits =
+        resource_lifecycle_config->transients_pool_limits;
+    settings.pipeline_cache_access =
+        resource_lifecycle_config->pipeline_cache_access;
+    settings.cache_directory =
+        std::move(resource_lifecycle_config->pipeline_cache_directory);
+    settings.pipeline_cache_max_data_bytes =
+        resource_lifecycle_config->pipeline_cache_max_data_bytes;
+  }
 
   impeller::ContextVK::EmbedderData data;
   data.instance = instance;

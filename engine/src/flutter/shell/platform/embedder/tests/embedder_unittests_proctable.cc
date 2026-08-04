@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <set>
 
+#include "flutter/fml/build_config.h"
 #include "flutter/testing/testing.h"
 
 #ifdef _WIN32
@@ -73,13 +74,18 @@ TEST(EmbedderProcTable, ReportsAvioSemanticCapabilities) {
   ASSERT_EQ(procs.GetAvioExtensionCapabilities(&capabilities), kSuccess);
   EXPECT_EQ(capabilities.minimum_version, FLUTTER_AVIO_EXTENSION_VERSION);
   EXPECT_EQ(capabilities.maximum_version, FLUTTER_AVIO_EXTENSION_VERSION);
-  EXPECT_EQ(capabilities.supported_features,
-            kFlutterAvioExtensionFeaturePerDisplayVsync |
-                kFlutterAvioExtensionFeatureRootRenderTarget |
-                kFlutterAvioExtensionFeatureExplicitRenderCompletion |
-                kFlutterAvioExtensionFeatureExactVsyncCancellation |
-                kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
-                kFlutterAvioExtensionFeatureSelectedTargetDamage);
+  FlutterAvioExtensionFeatures expected_features =
+      kFlutterAvioExtensionFeaturePerDisplayVsync |
+      kFlutterAvioExtensionFeatureRootRenderTarget |
+      kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+      kFlutterAvioExtensionFeatureExactVsyncCancellation |
+      kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+      kFlutterAvioExtensionFeatureSelectedTargetDamage;
+#if FML_OS_LINUX && defined(SHELL_ENABLE_VULKAN) && \
+    defined(IMPELLER_SUPPORTS_RENDERING)
+  expected_features |= kFlutterAvioExtensionFeatureResourceLifecycleConfig;
+#endif
+  EXPECT_EQ(capabilities.supported_features, expected_features);
 }
 
 TEST(EmbedderProcTable, RejectsTruncatedAvioCapabilities) {

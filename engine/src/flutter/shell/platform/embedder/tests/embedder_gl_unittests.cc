@@ -185,6 +185,83 @@ TEST_F(EmbedderTest, TruncatedAvioExtensionRequestFailsBeforeLaunch) {
   ASSERT_FALSE(engine.is_valid());
 }
 
+TEST_F(EmbedderTest, ResourceLifecycleConfigRequiresNegotiation) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(1, 1));
+  FlutterAvioResourceLifecycleConfig resources = {
+      .struct_size = sizeof(resources),
+      .transient_max_entries = 1u,
+      .transient_max_bytes = 1u,
+      .pipeline_cache_policy = kFlutterAvioPipelineCacheDisabled,
+      .pipeline_cache_directory_fd = -1,
+      .pipeline_cache_max_bytes = 0u,
+  };
+  builder.GetProjectArgs().avio_resource_lifecycle_config = &resources;
+  auto engine = builder.LaunchEngine();
+  ASSERT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, NegotiatedResourceLifecycleConfigIsRequired) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(1, 1));
+  FlutterAvioExtensionRequest request = {
+      .struct_size = sizeof(request),
+      .version = FLUTTER_AVIO_EXTENSION_VERSION,
+      .required_features = kFlutterAvioExtensionFeatureResourceLifecycleConfig,
+  };
+  builder.GetProjectArgs().avio_extension_request = &request;
+  auto engine = builder.LaunchEngine();
+  ASSERT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, TruncatedResourceLifecycleConfigFailsBeforeLaunch) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(1, 1));
+  FlutterAvioExtensionRequest request = {
+      .struct_size = sizeof(request),
+      .version = FLUTTER_AVIO_EXTENSION_VERSION,
+      .required_features = kFlutterAvioExtensionFeatureResourceLifecycleConfig,
+  };
+  FlutterAvioResourceLifecycleConfig resources = {
+      .struct_size = offsetof(FlutterAvioResourceLifecycleConfig,
+                              pipeline_cache_max_bytes),
+      .transient_max_entries = 1u,
+      .transient_max_bytes = 1u,
+      .pipeline_cache_policy = kFlutterAvioPipelineCacheDisabled,
+      .pipeline_cache_directory_fd = -1,
+  };
+  builder.GetProjectArgs().avio_extension_request = &request;
+  builder.GetProjectArgs().avio_resource_lifecycle_config = &resources;
+  auto engine = builder.LaunchEngine();
+  ASSERT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, DisabledPipelineCacheRejectsDirectoryState) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(1, 1));
+  FlutterAvioExtensionRequest request = {
+      .struct_size = sizeof(request),
+      .version = FLUTTER_AVIO_EXTENSION_VERSION,
+      .required_features = kFlutterAvioExtensionFeatureResourceLifecycleConfig,
+  };
+  FlutterAvioResourceLifecycleConfig resources = {
+      .struct_size = sizeof(resources),
+      .transient_max_entries = 1u,
+      .transient_max_bytes = 1u,
+      .pipeline_cache_policy = kFlutterAvioPipelineCacheDisabled,
+      .pipeline_cache_directory_fd = -1,
+      .pipeline_cache_max_bytes = 1u,
+  };
+  builder.GetProjectArgs().avio_extension_request = &request;
+  builder.GetProjectArgs().avio_resource_lifecycle_config = &resources;
+  auto engine = builder.LaunchEngine();
+  ASSERT_FALSE(engine.is_valid());
+}
+
 TEST_F(EmbedderTest, RootRenderTargetReportsRasterFailure) {
   auto& context = GetEmbedderContext<EmbedderTestContextGL>();
 

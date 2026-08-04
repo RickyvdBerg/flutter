@@ -8,8 +8,10 @@
 #include <atomic>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -185,7 +187,12 @@ static constexpr FlutterAvioExtensionFeatures kAvioSupportedFeatures =
     kFlutterAvioExtensionFeatureExplicitRenderCompletion |
     kFlutterAvioExtensionFeatureExactVsyncCancellation |
     kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
-    kFlutterAvioExtensionFeatureSelectedTargetDamage;
+    kFlutterAvioExtensionFeatureSelectedTargetDamage
+#if FML_OS_LINUX && defined(SHELL_ENABLE_VULKAN) && \
+    defined(IMPELLER_SUPPORTS_RENDERING)
+    | kFlutterAvioExtensionFeatureResourceLifecycleConfig
+#endif
+    ;
 
 static const char* ValidateAvioExtensionRequest(
     const FlutterAvioExtensionRequest* request) {
@@ -227,6 +234,89 @@ static const char* ValidateAvioExtensionRequest(
     return "Selected-target damage requires root targets and explicit render "
            "completion.";
   }
+  return nullptr;
+}
+
+static const char* BuildAvioResourceLifecycleConfig(
+    FlutterAvioExtensionFeatures negotiated_features,
+    const FlutterAvioResourceLifecycleConfig* config,
+    const FlutterRendererConfig* renderer_config,
+    bool enable_impeller,
+    std::optional<flutter::EmbedderVulkanResourceLifecycleConfig>* result) {
+  const bool negotiated =
+      (negotiated_features &
+       kFlutterAvioExtensionFeatureResourceLifecycleConfig) != 0;
+  if (!negotiated) {
+    return config == nullptr
+               ? nullptr
+               : "A resource lifecycle configuration was supplied without "
+                 "negotiating its Avio extension feature.";
+  }
+  if (config == nullptr) {
+    return "The negotiated Avio resource lifecycle configuration was missing.";
+  }
+  if (!STRUCT_HAS_MEMBER(config, pipeline_cache_max_bytes)) {
+    return "The Avio resource lifecycle configuration was truncated.";
+  }
+  constexpr uint64_t kMaxSizeT =
+      static_cast<uint64_t>(std::numeric_limits<size_t>::max());
+  if (config->transient_max_entries == 0u ||
+      config->transient_max_entries > kMaxSizeT ||
+      config->transient_max_bytes == 0u ||
+      config->transient_max_bytes > kMaxSizeT) {
+    return "The Avio transient resource limits were invalid.";
+  }
+
+  impeller::PipelineCacheAccessVK cache_access;
+  fml::UniqueFD cache_directory;
+  size_t cache_max_bytes = 0u;
+  switch (config->pipeline_cache_policy) {
+    case kFlutterAvioPipelineCacheDisabled:
+      if (config->pipeline_cache_directory_fd != -1 ||
+          config->pipeline_cache_max_bytes != 0u) {
+        return "A disabled Avio pipeline cache must not carry a directory or "
+               "byte budget.";
+      }
+      cache_access = impeller::PipelineCacheAccessVK::kDisabled;
+      break;
+    case kFlutterAvioPipelineCacheReadOnly:
+    case kFlutterAvioPipelineCacheReadWrite:
+      if (config->pipeline_cache_directory_fd < 0 ||
+          config->pipeline_cache_max_bytes == 0u ||
+          config->pipeline_cache_max_bytes > kMaxSizeT) {
+        return "The Avio pipeline cache directory or byte budget was invalid.";
+      }
+      cache_directory = fml::Duplicate(config->pipeline_cache_directory_fd);
+      if (!cache_directory.is_valid() || !fml::IsDirectory(cache_directory)) {
+        return "The Avio pipeline cache descriptor was not an open directory.";
+      }
+      cache_max_bytes = static_cast<size_t>(config->pipeline_cache_max_bytes);
+      cache_access =
+          config->pipeline_cache_policy == kFlutterAvioPipelineCacheReadOnly
+              ? impeller::PipelineCacheAccessVK::kReadOnly
+              : impeller::PipelineCacheAccessVK::kReadWrite;
+      break;
+    default:
+      return "The Avio pipeline cache policy was unknown.";
+  }
+
+  if (renderer_config == nullptr || renderer_config->type != kVulkan ||
+      !enable_impeller) {
+    return "The Avio resource lifecycle configuration requires Vulkan "
+           "Impeller.";
+  }
+
+  result->emplace(flutter::EmbedderVulkanResourceLifecycleConfig{
+      .transients_pool_limits =
+          {
+              .max_entries = static_cast<size_t>(config->transient_max_entries),
+              .max_bytes = static_cast<size_t>(config->transient_max_bytes),
+              .allow_environment_override = false,
+          },
+      .pipeline_cache_access = cache_access,
+      .pipeline_cache_directory = std::move(cache_directory),
+      .pipeline_cache_max_data_bytes = cache_max_bytes,
+  });
   return nullptr;
 }
 
@@ -734,7 +824,9 @@ InferVulkanPlatformViewCreationCallback(
     std::unique_ptr<flutter::EmbedderExternalViewEmbedder>
         external_view_embedder,
     bool enable_impeller,
-    impeller::Flags impeller_flags) {
+    impeller::Flags impeller_flags,
+    std::optional<flutter::EmbedderVulkanResourceLifecycleConfig>
+        resource_lifecycle_config) {
   if (config->type != kVulkan) {
     return nullptr;
   }
@@ -797,7 +889,8 @@ InferVulkanPlatformViewCreationCallback(
             static_cast<VkDevice>(config->vulkan.device),
             config->vulkan.queue_family_index,
             static_cast<VkQueue>(config->vulkan.queue), vulkan_dispatch_table,
-            view_embedder, impeller_flags);
+            view_embedder, impeller_flags,
+            std::move(resource_lifecycle_config));
 
     return fml::MakeCopyable(
         [embedder_surface = std::move(embedder_surface),
@@ -934,7 +1027,9 @@ InferPlatformViewCreationCallback(
     std::unique_ptr<flutter::EmbedderExternalViewEmbedder>
         external_view_embedder,
     bool enable_impeller,
-    impeller::Flags impeller_flags) {
+    impeller::Flags impeller_flags,
+    std::optional<flutter::EmbedderVulkanResourceLifecycleConfig>
+        resource_lifecycle_config) {
   if (config == nullptr) {
     return nullptr;
   }
@@ -955,7 +1050,8 @@ InferPlatformViewCreationCallback(
     case kVulkan:
       return InferVulkanPlatformViewCreationCallback(
           config, user_data, platform_dispatch_table,
-          std::move(external_view_embedder), enable_impeller, impeller_flags);
+          std::move(external_view_embedder), enable_impeller, impeller_flags,
+          std::move(resource_lifecycle_config));
     default:
       return nullptr;
   }
@@ -2537,6 +2633,15 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
   flutter::Settings settings = flutter::SettingsFromCommandLine(command_line);
   settings.avio_extension_features = negotiated_avio_features;
 
+  std::optional<flutter::EmbedderVulkanResourceLifecycleConfig>
+      avio_resource_lifecycle_config;
+  if (const char* error = BuildAvioResourceLifecycleConfig(
+          negotiated_avio_features,
+          SAFE_ACCESS(args, avio_resource_lifecycle_config, nullptr), config,
+          settings.enable_impeller, &avio_resource_lifecycle_config)) {
+    return LOG_EMBEDDER_ERROR(kInvalidArguments, error);
+  }
+
   if (SAFE_ACCESS(args, aot_data, nullptr)) {
     if (SAFE_ACCESS(args, vm_snapshot_data, nullptr) ||
         SAFE_ACCESS(args, vm_snapshot_instructions, nullptr) ||
@@ -2834,7 +2939,8 @@ FlutterEngineResult FlutterEngineInitialize(size_t version,
   auto on_create_platform_view = InferPlatformViewCreationCallback(
       config, user_data, platform_dispatch_table,
       std::move(external_view_embedder_result.value()),
-      settings.enable_impeller, impeller_flags);
+      settings.enable_impeller, impeller_flags,
+      std::move(avio_resource_lifecycle_config));
 
   if (!on_create_platform_view) {
     return LOG_EMBEDDER_ERROR(

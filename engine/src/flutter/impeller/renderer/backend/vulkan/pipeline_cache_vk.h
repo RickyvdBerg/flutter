@@ -12,6 +12,12 @@
 
 namespace impeller {
 
+enum class PipelineCacheAccessVK {
+  kDisabled,
+  kReadOnly,
+  kReadWrite,
+};
+
 class PipelineCacheVK {
  public:
   // The [device] is passed in directly so that it can be used in the
@@ -20,7 +26,9 @@ class PipelineCacheVK {
   // initialization.
   explicit PipelineCacheVK(std::shared_ptr<const Capabilities> caps,
                            std::shared_ptr<DeviceHolderVK> device_holder,
-                           fml::UniqueFD cache_directory);
+                           fml::UniqueFD cache_directory,
+                           PipelineCacheAccessVK cache_access,
+                           size_t max_data_bytes);
 
   ~PipelineCacheVK();
 
@@ -38,6 +46,8 @@ class PipelineCacheVK {
   const std::shared_ptr<const Capabilities> caps_;
   std::weak_ptr<DeviceHolderVK> device_holder_;
   const fml::UniqueFD cache_directory_;
+  const PipelineCacheAccessVK cache_access_;
+  const size_t max_data_bytes_;
   vk::UniquePipelineCache cache_;
   bool is_valid_ = false;
   Mutex persist_mutex_;

@@ -64,6 +64,18 @@ TEST(PipelineCacheDataVKTest, CanTestHeaderCompatibility) {
   {
     PipelineCacheHeaderVK a;
     PipelineCacheHeaderVK b;
+    b.schema_version++;
+    EXPECT_FALSE(a.IsCompatibleWith(b));
+  }
+  {
+    PipelineCacheHeaderVK a;
+    PipelineCacheHeaderVK b;
+    b.impeller_abi++;
+    EXPECT_FALSE(a.IsCompatibleWith(b));
+  }
+  {
+    PipelineCacheHeaderVK a;
+    PipelineCacheHeaderVK b;
     b.driver_version = 100;
     EXPECT_FALSE(a.IsCompatibleWith(b));
   }

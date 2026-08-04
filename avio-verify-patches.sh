@@ -261,6 +261,18 @@ need "Slimpeller low-memory path trims idle Impeller caches" \
 need "explicit transient profiles bypass environment policy" \
   $F/impeller/renderer/backend/vulkan/swapchain/transients_pool_vk.h \
   'allow_environment_override'
+need "resource lifecycle feature is negotiated" \
+  $F/shell/platform/embedder/embedder.h \
+  'kFlutterAvioExtensionFeatureResourceLifecycleConfig'
+need "resource lifecycle config is paired with negotiation" \
+  $F/shell/platform/embedder/embedder.cc \
+  'A resource lifecycle configuration was supplied without'
+need "resource cache directory is a duplicated capability" \
+  $F/shell/platform/embedder/embedder.cc \
+  'fml::Duplicate\(config->pipeline_cache_directory_fd\)'
+need "resource profile disables environment override" \
+  $F/shell/platform/embedder/embedder.cc \
+  'allow_environment_override = false'
 need "pipeline cache is bounded before mapping" \
   $F/impeller/renderer/backend/vulkan/pipeline_cache_data_vk.cc \
   'GetRegularFileSize'
@@ -270,6 +282,18 @@ need "pipeline cache payload fits the mapped remainder" \
 need "malformed sparse pipeline cache regression" \
   $F/impeller/renderer/backend/vulkan/pipeline_cache_data_vk_unittests.cc \
   'RejectsOversizedSparseCacheBeforeMapping'
+need "pipeline cache schema is explicit" \
+  $F/impeller/renderer/backend/vulkan/pipeline_cache_data_vk.h \
+  'kPipelineCacheSchemaVersionVK'
+need "Impeller pipeline cache ABI is explicit" \
+  $F/impeller/renderer/backend/vulkan/pipeline_cache_data_vk.h \
+  'kImpellerPipelineCacheABIVersionVK'
+need "read-only pipeline cache never persists" \
+  $F/impeller/renderer/backend/vulkan/pipeline_cache_vk.cc \
+  'cache_access_ != PipelineCacheAccessVK::kReadWrite'
+need "pipeline cache uses profile byte ceiling" \
+  $F/impeller/renderer/backend/vulkan/pipeline_cache_vk.cc \
+  'max_data_bytes_'
 
 echo "--- Cross-display pipeline conservation ---"
 need "display frames reserve the shared raster pipeline" \

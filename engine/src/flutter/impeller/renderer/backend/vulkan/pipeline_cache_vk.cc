@@ -17,19 +17,26 @@ namespace impeller {
 
 PipelineCacheVK::PipelineCacheVK(std::shared_ptr<const Capabilities> caps,
                                  std::shared_ptr<DeviceHolderVK> device_holder,
-                                 fml::UniqueFD cache_directory)
+                                 fml::UniqueFD cache_directory,
+                                 PipelineCacheAccessVK cache_access,
+                                 size_t max_data_bytes)
     : caps_(std::move(caps)),
       device_holder_(device_holder),
-      cache_directory_(std::move(cache_directory)) {
+      cache_directory_(std::move(cache_directory)),
+      cache_access_(cache_access),
+      max_data_bytes_(max_data_bytes) {
   if (!caps_ || !device_holder->GetDevice()) {
     return;
   }
 
   const auto& vk_caps = CapabilitiesVK::Cast(*caps_);
 
-  auto existing_cache_data = PipelineCacheDataRetrieve(
-      cache_directory_, vk_caps.GetPhysicalDeviceProperties(),
-      kDefaultPipelineCacheMaxDataBytes);
+  auto existing_cache_data =
+      cache_access_ == PipelineCacheAccessVK::kDisabled
+          ? nullptr
+          : PipelineCacheDataRetrieve(cache_directory_,
+                                      vk_caps.GetPhysicalDeviceProperties(),
+                                      max_data_bytes_);
 
   vk::PipelineCacheCreateInfo cache_info;
   if (existing_cache_data) {
@@ -113,14 +120,14 @@ void PipelineCacheVK::PersistCacheToDisk() {
   // PipelineCacheDataPersist should be serialized so that multiple worker
   // threads do not concurrently write to the cache file.
   Lock persist_lock(persist_mutex_);
-  if (!is_valid_) {
+  if (!is_valid_ || cache_access_ != PipelineCacheAccessVK::kReadWrite) {
     return;
   }
   const auto& vk_caps = CapabilitiesVK::Cast(*caps_);
   PipelineCacheDataPersist(cache_directory_,                       //
                            vk_caps.GetPhysicalDeviceProperties(),  //
                            cache_,                                 //
-                           kDefaultPipelineCacheMaxDataBytes       //
+                           max_data_bytes_                         //
   );
 }
 

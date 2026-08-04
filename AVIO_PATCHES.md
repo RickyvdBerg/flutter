@@ -68,6 +68,9 @@ already ancestors of the selected main target under their original commits.
 | 30 | [framework] Route texture frames to their exact render consumers | upstream-aligned framework/engine fix adapted for compositor pacing | open: flutter/flutter#179874 |
 | 31 | [framework] Give each View an independently admitted BuildScope | permanent framework correctness fix; deletes #22's deferred-input compensation | none while Avio carries view-scoped frame admission |
 | 32 | Acquire the exact embedder target before damage and raster only its required pixels | permanent ABI/rendering extension | none |
+| 33 | Bound pipeline-cache files before mapping or allocation | permanent defensive I/O contract | upstreamable in principle |
+| 34 | Enforce hard transient budgets and trim only idle resources | permanent resource-lifecycle contract | none |
+| 35 | Negotiate exact resource profiles and principal-scoped pipeline-cache access | permanent ABI/lifecycle extension | none |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -252,6 +255,25 @@ active render targets remain untouched. Per-frame thread-local descriptor and
 command-pool disposal is unchanged. Focused tests pin lease conservation,
 entry and byte rejection, overflow rejection, idle-only trimming, and GPU
 tracked-texture preservation.
+
+### Patch 35: negotiated resource profiles and cache capabilities
+
+Avio's Vulkan Impeller embedder profile supplies one complete resource policy
+before any platform view or GPU resource exists. The versioned extension binds
+hard transient entry/byte limits to an explicit pipeline-cache mode: disabled,
+read-only, or read-write. A cache-capable profile carries an already-open
+directory descriptor that the engine duplicates during initialization, so the
+embedder selects the principal namespace and the engine never interprets a
+cache path. Missing, unnegotiated, truncated, non-directory, or internally
+inconsistent profiles fail initialization rather than reverting to process
+environment policy.
+
+Pipeline-cache persistence now obeys the negotiated access mode and byte cap.
+The compatibility header separately versions its serialized schema and
+Impeller pipeline ABI in addition to the Vulkan device, driver, pointer ABI,
+and driver UUID. Incompatible or corrupt data still falls back to an empty
+Vulkan cache. Stock embedders that do not negotiate the feature retain their
+existing ContextVK defaults.
 
 ## Known baseline debt
 

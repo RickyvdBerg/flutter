@@ -13,6 +13,7 @@
 
 #include "embedder.h"
 #include "embedder_engine.h"
+#include "flutter/fml/file.h"
 #include "flutter/fml/synchronization/count_down_latch.h"
 #include "flutter/shell/platform/embedder/tests/embedder_config_builder.h"
 #include "flutter/shell/platform/embedder/tests/embedder_test.h"
@@ -306,6 +307,36 @@ TEST_F(EmbedderTest, VulkanImpellerCompositorCanLaunchEngine) {
   auto engine = builder.LaunchEngine();
   ASSERT_TRUE(engine.is_valid());
   latch.Wait();
+}
+
+TEST_F(EmbedderTest, VulkanImpellerAcceptsExactResourceLifecycleConfig) {
+  auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
+  fml::ScopedTemporaryDirectory cache_directory;
+
+  EmbedderConfigBuilder builder(context);
+  builder.AddCommandLineArgument("--enable-impeller");
+  builder.SetSurface(DlISize(64, 64));
+  FlutterAvioExtensionRequest request = {
+      .struct_size = sizeof(request),
+      .version = FLUTTER_AVIO_EXTENSION_VERSION,
+      .required_features = kFlutterAvioExtensionFeatureResourceLifecycleConfig,
+  };
+  FlutterAvioResourceLifecycleConfig resources = {
+      .struct_size = sizeof(resources),
+      .transient_max_entries = 3u,
+      .transient_max_bytes = 16u * 1024u * 1024u,
+      .pipeline_cache_policy = kFlutterAvioPipelineCacheReadOnly,
+      .pipeline_cache_directory_fd = cache_directory.fd().get(),
+      .pipeline_cache_max_bytes = 1024u * 1024u,
+  };
+  builder.GetProjectArgs().avio_extension_request = &request;
+  builder.GetProjectArgs().avio_resource_lifecycle_config = &resources;
+
+  auto engine = builder.InitializeEngine();
+  ASSERT_TRUE(engine.is_valid());
+  engine.reset();
+  EXPECT_FALSE(
+      fml::FileExists(cache_directory.fd(), "flutter.impeller.vkcache"));
 }
 
 TEST_F(EmbedderTest, VulkanImpellerCompositorPresentCallbackFires) {

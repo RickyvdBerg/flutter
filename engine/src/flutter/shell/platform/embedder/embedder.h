@@ -112,6 +112,49 @@ typedef struct {
   FlutterAvioExtensionFeatures required_features;
 } FlutterAvioExtensionRequest;
 
+/// Access policy for the Vulkan pipeline cache directory carried by an Avio
+/// resource-lifecycle configuration.
+typedef enum {
+  /// Do not read or write a persistent pipeline cache. The directory
+  /// descriptor must be -1 and the byte budget must be zero.
+  kFlutterAvioPipelineCacheDisabled = 0,
+
+  /// Read a compatible cache at startup but never persist updates.
+  kFlutterAvioPipelineCacheReadOnly = 1,
+
+  /// Read a compatible cache at startup and atomically persist updates.
+  kFlutterAvioPipelineCacheReadWrite = 2,
+} FlutterAvioPipelineCachePolicy;
+
+/// Exact resource policy for one negotiated Vulkan Impeller engine.
+///
+/// The embedder retains ownership of `pipeline_cache_directory_fd`. The engine
+/// duplicates it during FlutterEngineInitialize. Principal isolation is
+/// therefore expressed as a directory capability selected by the embedder,
+/// not as a path interpreted by the engine.
+typedef struct {
+  /// The size of this struct. Must be
+  /// sizeof(FlutterAvioResourceLifecycleConfig).
+  size_t struct_size;
+
+  /// Hard upper bound on context-scoped transient render-target entries.
+  uint64_t transient_max_entries;
+
+  /// Hard upper bound on accounted transient render-target bytes.
+  uint64_t transient_max_bytes;
+
+  /// Persistent Vulkan pipeline-cache access policy.
+  FlutterAvioPipelineCachePolicy pipeline_cache_policy;
+
+  /// Borrowed descriptor for an already-open cache directory, or -1 when the
+  /// policy is disabled.
+  int pipeline_cache_directory_fd;
+
+  /// Maximum accepted or persisted Vulkan driver payload bytes. Must be zero
+  /// when the policy is disabled and positive otherwise.
+  uint64_t pipeline_cache_max_bytes;
+} FlutterAvioResourceLifecycleConfig;
+
 typedef enum {
   kSuccess = 0,
   kInvalidLibraryVersion,
@@ -3209,6 +3252,11 @@ typedef struct {
   /// selected version and every required semantic feature before creating a
   /// platform view or GPU resource. Stock embedders leave this null.
   const FlutterAvioExtensionRequest* avio_extension_request;
+
+  /// Exact resource policy for a negotiated Vulkan Impeller engine. This must
+  /// be present if and only if
+  /// kFlutterAvioExtensionFeatureResourceLifecycleConfig was negotiated.
+  const FlutterAvioResourceLifecycleConfig* avio_resource_lifecycle_config;
 } FlutterProjectArgs;
 
 typedef struct {

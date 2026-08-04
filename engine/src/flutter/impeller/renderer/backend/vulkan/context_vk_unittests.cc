@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "flutter/fml/file.h"
 #include "flutter/fml/synchronization/waitable_event.h"
 
 #include <limits>
@@ -12,6 +13,7 @@
 #include "impeller/renderer/backend/vulkan/command_buffer_vk.h"
 #include "impeller/renderer/backend/vulkan/command_pool_vk.h"
 #include "impeller/renderer/backend/vulkan/context_vk.h"
+#include "impeller/renderer/backend/vulkan/pipeline_library_vk.h"
 #include "impeller/renderer/backend/vulkan/swapchain/transients_pool_vk.h"
 #include "impeller/renderer/backend/vulkan/test/mock_vulkan.h"
 #include "vulkan/vulkan_core.h"
@@ -30,6 +32,30 @@ TEST(ContextVKTest, CommonHardwareConcurrencyConfigurations) {
   EXPECT_EQ(ContextVK::ChooseThreadCountForWorkers(3u), 1u);
   EXPECT_EQ(ContextVK::ChooseThreadCountForWorkers(2u), 1u);
   EXPECT_EQ(ContextVK::ChooseThreadCountForWorkers(1u), 1u);
+}
+
+TEST(ContextVKTest, ReadOnlyPipelineCacheNeverPersists) {
+  fml::ScopedTemporaryDirectory cache_directory;
+  auto context = MockVulkanContextBuilder()
+                     .SetSettingsCallback(
+                         [&cache_directory](ContextVK::Settings& settings) {
+                           settings.cache_directory =
+                               fml::Duplicate(cache_directory.fd().get());
+                           settings.pipeline_cache_access =
+                               PipelineCacheAccessVK::kReadOnly;
+                           settings.pipeline_cache_max_data_bytes = 1024u;
+                         })
+                     .Build();
+  ASSERT_TRUE(context);
+
+  auto pipeline_library = context->GetPipelineLibrary();
+  ASSERT_TRUE(pipeline_library);
+  PipelineLibraryVK::Cast(*pipeline_library)
+      .GetPSOCache()
+      ->PersistCacheToDisk();
+
+  EXPECT_FALSE(
+      fml::FileExists(cache_directory.fd(), "flutter.impeller.vkcache"));
 }
 
 TEST(ContextVKTest, DeletesCommandPools) {

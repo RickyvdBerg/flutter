@@ -85,6 +85,9 @@ std::unique_ptr<fml::Mapping> PipelineCacheDataRetrieve(
   }
   auto cache_file =
       fml::OpenFileReadOnly(cache_directory, kPipelineCacheFileName);
+  if (!cache_file.is_valid()) {
+    return nullptr;
+  }
   const auto file_size = fml::GetRegularFileSize(cache_file);
   if (!file_size.has_value()) {
     VALIDATION_LOG << "Pipeline cache is not a regular file.";
@@ -158,6 +161,8 @@ bool PipelineCacheHeaderVK::IsCompatibleWith(
     const PipelineCacheHeaderVK& o) const {
   // Check for everything but the data size.
   return magic == o.magic &&                    //
+         schema_version == o.schema_version &&  //
+         impeller_abi == o.impeller_abi &&      //
          driver_version == o.driver_version &&  //
          vendor_id == o.vendor_id &&            //
          device_id == o.device_id &&            //

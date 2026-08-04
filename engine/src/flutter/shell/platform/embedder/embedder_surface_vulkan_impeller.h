@@ -5,6 +5,8 @@
 #ifndef FLUTTER_SHELL_PLATFORM_EMBEDDER_EMBEDDER_SURFACE_VULKAN_IMPELLER_H_
 #define FLUTTER_SHELL_PLATFORM_EMBEDDER_EMBEDDER_SURFACE_VULKAN_IMPELLER_H_
 
+#include <optional>
+
 #include "flutter/shell/common/context_options.h"
 #include "flutter/shell/gpu/gpu_surface_vulkan.h"
 #include "flutter/shell/gpu/gpu_surface_vulkan_delegate.h"
@@ -17,6 +19,13 @@
 #include "impeller/base/flags.h"
 
 namespace flutter {
+
+struct EmbedderVulkanResourceLifecycleConfig {
+  impeller::TransientsPoolLimitsVK transients_pool_limits;
+  impeller::PipelineCacheAccessVK pipeline_cache_access;
+  fml::UniqueFD pipeline_cache_directory;
+  size_t pipeline_cache_max_data_bytes;
+};
 
 class EmbedderSurfaceVulkanImpeller final : public EmbedderSurface,
                                             public GPUSurfaceVulkanDelegate {
@@ -42,7 +51,9 @@ class EmbedderSurfaceVulkanImpeller final : public EmbedderSurface,
       VkQueue queue,
       const VulkanDispatchTable& vulkan_dispatch_table,
       std::shared_ptr<EmbedderExternalViewEmbedder> external_view_embedder,
-      impeller::Flags impeller_flags = {});
+      impeller::Flags impeller_flags = {},
+      std::optional<EmbedderVulkanResourceLifecycleConfig>
+          resource_lifecycle_config = std::nullopt);
 
   ~EmbedderSurfaceVulkanImpeller() override;
 

@@ -394,10 +394,12 @@ void ContextVK::Setup(Settings settings) {
   /// Setup the pipeline library.
   ///
   auto pipeline_library = std::shared_ptr<PipelineLibraryVK>(
-      new PipelineLibraryVK(device_holder,                         //
-                            caps,                                  //
-                            std::move(settings.cache_directory),   //
-                            raster_message_loop_->GetTaskRunner()  //
+      new PipelineLibraryVK(device_holder,                           //
+                            caps,                                    //
+                            std::move(settings.cache_directory),     //
+                            settings.pipeline_cache_access,          //
+                            settings.pipeline_cache_max_data_bytes,  //
+                            raster_message_loop_->GetTaskRunner()    //
                             ));
 
   if (!pipeline_library->IsValid()) {

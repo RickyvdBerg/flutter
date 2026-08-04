@@ -21,11 +21,16 @@ PipelineLibraryVK::PipelineLibraryVK(
     const std::shared_ptr<DeviceHolderVK>& device_holder,
     std::shared_ptr<const Capabilities> caps,
     fml::UniqueFD cache_directory,
+    PipelineCacheAccessVK cache_access,
+    size_t pipeline_cache_max_data_bytes,
     std::shared_ptr<fml::ConcurrentTaskRunner> worker_task_runner)
     : device_holder_(device_holder),
-      pso_cache_(std::make_shared<PipelineCacheVK>(std::move(caps),
-                                                   device_holder,
-                                                   std::move(cache_directory))),
+      pso_cache_(
+          std::make_shared<PipelineCacheVK>(std::move(caps),
+                                            device_holder,
+                                            std::move(cache_directory),
+                                            cache_access,
+                                            pipeline_cache_max_data_bytes)),
       worker_task_runner_(std::move(worker_task_runner)),
       compile_queue_(PipelineCompileQueueVulkan::Create(worker_task_runner_)) {
   FML_DCHECK(worker_task_runner_);

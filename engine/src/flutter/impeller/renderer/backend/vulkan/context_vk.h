@@ -18,6 +18,7 @@
 #include "impeller/renderer/backend/vulkan/command_pool_vk.h"
 #include "impeller/renderer/backend/vulkan/device_holder_vk.h"
 #include "impeller/renderer/backend/vulkan/driver_info_vk.h"
+#include "impeller/renderer/backend/vulkan/pipeline_cache_data_vk.h"
 #include "impeller/renderer/backend/vulkan/pipeline_library_vk.h"
 #include "impeller/renderer/backend/vulkan/queue_vk.h"
 #include "impeller/renderer/backend/vulkan/sampler_library_vk.h"
@@ -86,6 +87,9 @@ class ContextVK final : public Context,
     PFN_vkGetInstanceProcAddr proc_address_callback = nullptr;
     std::vector<std::shared_ptr<fml::Mapping>> shader_libraries_data;
     fml::UniqueFD cache_directory;
+    PipelineCacheAccessVK pipeline_cache_access =
+        PipelineCacheAccessVK::kReadWrite;
+    size_t pipeline_cache_max_data_bytes = kDefaultPipelineCacheMaxDataBytes;
     std::optional<TransientsPoolLimitsVK> swapchain_transients_limits;
     bool enable_validation = false;
     bool enable_gpu_tracing = false;

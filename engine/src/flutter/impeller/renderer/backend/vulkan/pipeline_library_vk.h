@@ -55,6 +55,8 @@ class PipelineLibraryVK final
       const std::shared_ptr<DeviceHolderVK>& device_holder,
       std::shared_ptr<const Capabilities> caps,
       fml::UniqueFD cache_directory,
+      PipelineCacheAccessVK cache_access,
+      size_t pipeline_cache_max_data_bytes,
       std::shared_ptr<fml::ConcurrentTaskRunner> worker_task_runner);
 
   // |PipelineLibrary|

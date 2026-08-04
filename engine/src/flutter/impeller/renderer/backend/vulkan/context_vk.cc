@@ -506,9 +506,13 @@ void ContextVK::Setup(Settings settings) {
   // we can ask whether memoryless attachments are supported and pick the
   // depth/stencil format from device defaults.
   swapchain_transients_pool_ = std::make_shared<TransientsPoolVK>(
-      weak_from_this(),
-      device_capabilities_->GetDefaultDepthStencilFormat(),
-      device_capabilities_->SupportsDeviceTransientTextures());
+      weak_from_this(), device_capabilities_->GetDefaultDepthStencilFormat(),
+      device_capabilities_->SupportsDeviceTransientTextures(),
+      settings.swapchain_transients_limits.value_or(TransientsPoolLimitsVK{
+          .max_entries = TransientsPoolVK::kDefaultMaxEntries,
+          .max_bytes = TransientsPoolVK::kDefaultMaxBytes,
+          .allow_environment_override = true,
+      }));
   device_name_ = std::string(physical_device_properties.deviceName);
   command_queue_vk_ = std::make_shared<CommandQueueVK>(weak_from_this());
   should_enable_surface_control_ = settings.enable_surface_control;
@@ -776,6 +780,13 @@ void ContextVK::DisposeThreadLocalCachedResources() {
     cached_descriptor_pool_.erase(std::this_thread::get_id());
   }
   command_pool_recycler_->Dispose();
+}
+
+ResourceCacheTrimResult ContextVK::TrimIdleResourceCaches() {
+  if (!swapchain_transients_pool_) {
+    return {};
+  }
+  return swapchain_transients_pool_->TrimIdle();
 }
 
 const std::shared_ptr<YUVConversionLibraryVK>&

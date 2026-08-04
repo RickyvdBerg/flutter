@@ -5,6 +5,7 @@
 #ifndef FLUTTER_IMPELLER_RENDERER_CONTEXT_H_
 #define FLUTTER_IMPELLER_RENDERER_CONTEXT_H_
 
+#include <cstddef>
 #include <future>
 #include <memory>
 #include <string>
@@ -28,6 +29,22 @@ namespace impeller {
 class ShaderLibrary;
 class CommandBuffer;
 class PipelineLibrary;
+
+/// Accounted resources held by a context-owned idle cache.
+struct ResourceCacheUsage {
+  size_t entries = 0u;
+  size_t bytes = 0u;
+
+  constexpr bool operator==(const ResourceCacheUsage&) const = default;
+};
+
+/// Exact before/after accounting for an idle-only cache trim.
+struct ResourceCacheTrimResult {
+  ResourceCacheUsage before;
+  ResourceCacheUsage after;
+
+  constexpr bool operator==(const ResourceCacheTrimResult&) const = default;
+};
 
 /// A wrapper for provided a deferred initialization of impeller to various
 /// engine subsystems.
@@ -226,6 +243,11 @@ class Context {
   /// executing a rendering operation.  This API can be called after the
   /// operation completes in order to clear the cache.
   virtual void DisposeThreadLocalCachedResources() {}
+
+  /// Drop context-scoped cached resources which are provably idle. Resources
+  /// leased by a render target or referenced by submitted GPU work remain
+  /// owned by the cache. Backends without such a cache return zero usage.
+  virtual ResourceCacheTrimResult TrimIdleResourceCaches() { return {}; }
 
   /// @brief Enqueue command_buffer for submission by the end of the frame.
   ///

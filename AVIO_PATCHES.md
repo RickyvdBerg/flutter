@@ -235,6 +235,24 @@ replacement remain the sole write path. Tests pin every malformed read shape
 and an over-budget driver result; cache policy/configuration is supplied by the
 separate resource-lifecycle extension rather than global process state.
 
+### Patch 34: hard transient budgets and idle-only trim
+
+The Vulkan context's cached MSAA and depth/stencil attachments obey exact
+entry and byte limits. Admission reclaims only entries with no external
+wrapper owner and no texture reference from submitted GPU work. If every
+candidate is leased, the acquisition fails instead of dropping a live entry
+from accounting and silently exceeding the configured limit. Footprint
+arithmetic is checked before allocation, and explicit profiles bypass the
+legacy process-environment override.
+
+Memory-pressure cleanup reaches Impeller in Slimpeller builds on the raster
+thread. The backend-neutral `TrimIdleResourceCaches` seam reports exact
+before/after usage, while Vulkan removes only the same provably idle entries;
+active render targets remain untouched. Per-frame thread-local descriptor and
+command-pool disposal is unchanged. Focused tests pin lease conservation,
+entry and byte rejection, overflow rejection, idle-only trimming, and GPU
+tracked-texture preservation.
+
 ## Known baseline debt
 
 - ~~Generic embedder compositor and platform-view tests required broad

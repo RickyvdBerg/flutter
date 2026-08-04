@@ -250,6 +250,17 @@ need "timeline callback retires the exact upstream submission id" \
   'RecordCompletion\(submission_id\)'
 need "transients pool budget" \
   $F/impeller/renderer/backend/vulkan 'IMPELLER_VK_TRANSIENTS_BUDGET_MIB'
+need "transient admission fails instead of unaccounting leased entries" \
+  $F/impeller/renderer/backend/vulkan/swapchain/transients_pool_vk.cc \
+  'if \(candidate == lru_\.end\(\)\)'
+need "transient trim requires wrapper and GPU idleness" \
+  $F/impeller/renderer/backend/vulkan/swapchain/transients_pool_vk.cc \
+  'entry\.transients\.use_count\(\) == 1u && entry\.transients->IsIdle\(\)'
+need "Slimpeller low-memory path trims idle Impeller caches" \
+  $F/shell/common/rasterizer.cc 'TrimIdleResourceCaches'
+need "explicit transient profiles bypass environment policy" \
+  $F/impeller/renderer/backend/vulkan/swapchain/transients_pool_vk.h \
+  'allow_environment_override'
 need "pipeline cache is bounded before mapping" \
   $F/impeller/renderer/backend/vulkan/pipeline_cache_data_vk.cc \
   'GetRegularFileSize'

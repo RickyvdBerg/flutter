@@ -7,6 +7,7 @@
 
 #include <format>
 #include <memory>
+#include <optional>
 
 #include "flutter/fml/concurrent_message_loop.h"
 #include "flutter/fml/mapping.h"
@@ -21,6 +22,7 @@
 #include "impeller/renderer/backend/vulkan/queue_vk.h"
 #include "impeller/renderer/backend/vulkan/sampler_library_vk.h"
 #include "impeller/renderer/backend/vulkan/shader_library_vk.h"
+#include "impeller/renderer/backend/vulkan/swapchain/transients_pool_vk.h"
 #include "impeller/renderer/backend/vulkan/workarounds_vk.h"
 #include "impeller/renderer/capabilities.h"
 #include "impeller/renderer/command_buffer.h"
@@ -42,7 +44,6 @@ class DescriptorPoolRecyclerVK;
 class CommandQueueVK;
 class DescriptorPoolVK;
 class TimelineCompletionVK;
-class TransientsPoolVK;
 
 class IdleWaiterVK : public IdleWaiter {
  public:
@@ -85,6 +86,7 @@ class ContextVK final : public Context,
     PFN_vkGetInstanceProcAddr proc_address_callback = nullptr;
     std::vector<std::shared_ptr<fml::Mapping>> shader_libraries_data;
     fml::UniqueFD cache_directory;
+    std::optional<TransientsPoolLimitsVK> swapchain_transients_limits;
     bool enable_validation = false;
     bool enable_gpu_tracing = false;
     bool enable_surface_control = false;
@@ -222,7 +224,7 @@ class ContextVK final : public Context,
 
   std::shared_ptr<CommandPoolRecyclerVK> GetCommandPoolRecycler() const;
 
-  /// @brief  Process-wide pool of `SwapchainTransientsVK` keyed by
+  /// @brief  Context-scoped pool of `SwapchainTransientsVK` keyed by
   ///         `(width, height, color format, MSAA enabled)`. Used by
   ///         embedder render-target paths that must request a new
   ///         backing store every frame and would otherwise re-allocate
@@ -243,6 +245,9 @@ class ContextVK final : public Context,
 
   // |Context|
   void DisposeThreadLocalCachedResources() override;
+
+  // |Context|
+  ResourceCacheTrimResult TrimIdleResourceCaches() override;
 
   /// @brief Whether the Android Surface control based swapchain should be
   ///        enabled

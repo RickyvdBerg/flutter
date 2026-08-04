@@ -3,6 +3,9 @@
 // found in the LICENSE file.
 
 #include "flutter/fml/synchronization/waitable_event.h"
+
+#include <limits>
+
 #include "flutter/testing/testing.h"  // IWYU pragma: keep
 #include "impeller/base/validation.h"
 #include "impeller/core/formats.h"
@@ -49,11 +52,13 @@ TEST(ContextVKTest, TransientsPoolDoesNotReuseLeasedEntries) {
   desc.size = ISize(100, 100);
   desc.format = PixelFormat::kR8G8B8A8UNormInt;
 
-  TransientsPoolVK pool(std::weak_ptr<Context>(),
-                        PixelFormat::kD32FloatS8UInt,
+  TransientsPoolVK pool(std::weak_ptr<Context>(), PixelFormat::kD32FloatS8UInt,
                         /*supports_memoryless_textures=*/false,
-                        /*max_entries=*/8u,
-                        /*max_bytes=*/1024u * 1024u);
+                        TransientsPoolLimitsVK{
+                            .max_entries = 8u,
+                            .max_bytes = 1024u * 1024u,
+                            .allow_environment_override = false,
+                        });
 
   auto first = pool.Acquire(desc, /*enable_msaa=*/true);
   ASSERT_TRUE(first);
@@ -67,6 +72,102 @@ TEST(ContextVKTest, TransientsPoolDoesNotReuseLeasedEntries) {
   auto third = pool.Acquire(desc, /*enable_msaa=*/true);
   ASSERT_TRUE(third);
   EXPECT_EQ(third.get(), first_raw);
+}
+
+TEST(ContextVKTest, TransientsPoolNeverEvictsLeasedEntryToExceedLimit) {
+  TextureDescriptor first_desc;
+  first_desc.size = ISize(64, 64);
+  first_desc.format = PixelFormat::kR8G8B8A8UNormInt;
+  TextureDescriptor second_desc = first_desc;
+  second_desc.size = ISize(65, 64);
+
+  TransientsPoolVK pool(std::weak_ptr<Context>(), PixelFormat::kD32FloatS8UInt,
+                        /*supports_memoryless_textures=*/false,
+                        TransientsPoolLimitsVK{
+                            .max_entries = 1u,
+                            .max_bytes = 1024u * 1024u,
+                            .allow_environment_override = false,
+                        });
+
+  auto first = pool.Acquire(first_desc, /*enable_msaa=*/false);
+  ASSERT_TRUE(first);
+  EXPECT_EQ(pool.GetUsage().entries, 1u);
+  EXPECT_FALSE(pool.Acquire(second_desc, /*enable_msaa=*/false));
+  EXPECT_EQ(pool.GetUsage().entries, 1u);
+
+  first.reset();
+  EXPECT_TRUE(pool.Acquire(second_desc, /*enable_msaa=*/false));
+  EXPECT_EQ(pool.GetUsage().entries, 1u);
+}
+
+TEST(ContextVKTest, TransientsPoolRejectsEntryLargerThanByteBudget) {
+  TextureDescriptor desc;
+  desc.size = ISize(100, 100);
+  desc.format = PixelFormat::kR8G8B8A8UNormInt;
+
+  TransientsPoolVK pool(std::weak_ptr<Context>(), PixelFormat::kD32FloatS8UInt,
+                        /*supports_memoryless_textures=*/false,
+                        TransientsPoolLimitsVK{
+                            .max_entries = 8u,
+                            .max_bytes = 1u,
+                            .allow_environment_override = false,
+                        });
+
+  EXPECT_FALSE(pool.Acquire(desc, /*enable_msaa=*/true));
+  EXPECT_EQ(pool.GetUsage(), ResourceCacheUsage{});
+}
+
+TEST(ContextVKTest, TransientsPoolRejectsOverflowingFootprint) {
+  TextureDescriptor desc;
+  desc.size = ISize(std::numeric_limits<int64_t>::max(),
+                    std::numeric_limits<int64_t>::max());
+  desc.format = PixelFormat::kR8G8B8A8UNormInt;
+
+  TransientsPoolVK pool(std::weak_ptr<Context>(), PixelFormat::kD32FloatS8UInt,
+                        /*supports_memoryless_textures=*/false,
+                        TransientsPoolLimitsVK{
+                            .max_entries = 8u,
+                            .max_bytes = std::numeric_limits<size_t>::max(),
+                            .allow_environment_override = false,
+                        });
+
+  EXPECT_FALSE(pool.Acquire(desc, /*enable_msaa=*/true));
+  EXPECT_EQ(pool.GetUsage(), ResourceCacheUsage{});
+}
+
+TEST(ContextVKTest, TransientsPoolTrimDropsOnlyIdleEntries) {
+  TextureDescriptor first_desc;
+  first_desc.size = ISize(64, 64);
+  first_desc.format = PixelFormat::kR8G8B8A8UNormInt;
+  TextureDescriptor second_desc = first_desc;
+  second_desc.size = ISize(65, 64);
+
+  TransientsPoolVK pool(std::weak_ptr<Context>(), PixelFormat::kD32FloatS8UInt,
+                        /*supports_memoryless_textures=*/false,
+                        TransientsPoolLimitsVK{
+                            .max_entries = 4u,
+                            .max_bytes = 1024u * 1024u,
+                            .allow_environment_override = false,
+                        });
+
+  auto leased = pool.Acquire(first_desc, /*enable_msaa=*/false);
+  ASSERT_TRUE(leased);
+  {
+    auto idle = pool.Acquire(second_desc, /*enable_msaa=*/false);
+    ASSERT_TRUE(idle);
+  }
+  const auto before = pool.GetUsage();
+  ASSERT_EQ(before.entries, 2u);
+
+  const auto first_trim = pool.TrimIdle();
+  EXPECT_EQ(first_trim.before, before);
+  EXPECT_EQ(first_trim.after.entries, 1u);
+  EXPECT_LT(first_trim.after.bytes, first_trim.before.bytes);
+
+  leased.reset();
+  const auto second_trim = pool.TrimIdle();
+  EXPECT_EQ(second_trim.before.entries, 1u);
+  EXPECT_EQ(second_trim.after, ResourceCacheUsage{});
 }
 
 TEST(ContextVKTest, TransientsPoolDoesNotReuseTrackedTextureEntries) {

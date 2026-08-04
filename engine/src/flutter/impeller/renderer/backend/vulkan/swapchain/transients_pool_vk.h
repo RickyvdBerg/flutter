@@ -9,6 +9,7 @@
 #include <list>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 #include "impeller/base/thread.h"
 #include "impeller/core/formats.h"
@@ -17,6 +18,12 @@
 #include "impeller/renderer/context.h"
 
 namespace impeller {
+
+struct TransientsPoolLimitsVK {
+  size_t max_entries;
+  size_t max_bytes;
+  bool allow_environment_override;
+};
 
 //------------------------------------------------------------------------------
 /// @brief      Context-scoped pool of `SwapchainTransientsVK`, keyed by
@@ -67,8 +74,11 @@ class TransientsPoolVK {
   TransientsPoolVK(std::weak_ptr<Context> context,
                    PixelFormat depth_stencil_format,
                    bool supports_memoryless_textures,
-                   size_t max_entries = kDefaultMaxEntries,
-                   size_t max_bytes = kDefaultMaxBytes);
+                   TransientsPoolLimitsVK limits = {
+                       .max_entries = kDefaultMaxEntries,
+                       .max_bytes = kDefaultMaxBytes,
+                       .allow_environment_override = true,
+                   });
 
   ~TransientsPoolVK();
 
@@ -86,6 +96,13 @@ class TransientsPoolVK {
   ///         `ResourceManagerVK` and `TimelineCompletionVK` are destroyed so
   ///         that the textures' destructors complete cleanly.
   void Reset();
+
+  /// Drop only entries which have no external wrapper owner and whose cached
+  /// textures are not referenced by in-flight GPU work.
+  ResourceCacheTrimResult TrimIdle();
+
+  /// Snapshot exact accounted cache usage.
+  ResourceCacheUsage GetUsage() const;
 
   /// @brief  Snapshot of cached entry count for diagnostics.
   size_t GetEntryCountForTesting() const;
@@ -116,12 +133,17 @@ class TransientsPoolVK {
   // Compute the worst-case device memory footprint of an entry. Returns 0
   // when memoryless attachments are supported, since those consume no
   // dedicated VRAM.
-  size_t ComputeFootprint(const TextureDescriptor& desc,
-                          bool enable_msaa) const;
+  std::optional<size_t> ComputeFootprint(const TextureDescriptor& desc,
+                                         bool enable_msaa) const;
 
-  // Drop entries from the LRU tail while either limit is exceeded. Never
-  // evicts the front entry; callers should insert at front before calling.
-  void EvictExcess() IPLR_REQUIRES(mutex_);
+  // Make room for one exact candidate by dropping idle entries from the LRU
+  // tail. Returns false rather than exceeding either hard limit when every
+  // eviction candidate is leased or still referenced by GPU work.
+  bool ReserveFor(size_t byte_footprint) IPLR_REQUIRES(mutex_);
+
+  bool EntryIsIdle(const Entry& entry) const IPLR_REQUIRES(mutex_);
+
+  ResourceCacheUsage GetUsageLocked() const IPLR_REQUIRES(mutex_);
 
   static size_t ResolveByteBudgetFromEnv(size_t default_bytes);
 

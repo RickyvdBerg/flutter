@@ -171,6 +171,15 @@ void Rasterizer::DisableThreadMergerIfNeeded() {
 }
 
 void Rasterizer::NotifyLowMemoryWarning() const {
+  if (surface_) {
+    auto aiks_context = surface_->GetAiksContext();
+    if (aiks_context) {
+      auto context = aiks_context->GetContext();
+      if (context) {
+        context->TrimIdleResourceCaches();
+      }
+    }
+  }
 #if !SLIMPELLER
   if (!surface_) {
     FML_DLOG(INFO)

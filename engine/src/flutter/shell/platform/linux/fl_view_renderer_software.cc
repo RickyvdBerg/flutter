@@ -140,6 +140,8 @@ static gboolean fl_view_renderer_software_draw(GtkWidget* widget, cairo_t* cr) {
     wait_for_frame(self, window, scale_factor);
   }
 
+  fl_view_renderer_notify_compositor_materials(FL_VIEW_RENDERER(self));
+
   gboolean result =
       fl_compositor_software_render(self->compositor, cr, scale_factor);
 
@@ -152,7 +154,10 @@ static gboolean fl_view_renderer_software_draw(GtkWidget* widget, cairo_t* cr) {
 static void fl_view_renderer_software_present_layers(
     FlViewRenderer* renderer,
     const FlutterLayer** layers,
-    size_t layers_count) {
+    size_t layers_count,
+    const FlCompositorMaterial* materials,
+    size_t materials_count,
+    gboolean materials_invalid) {
   FlViewRendererSoftware* self = FL_VIEW_RENDERER_SOFTWARE(renderer);
 
   // Frames may be presented before the widget is realized and the compositor
@@ -162,6 +167,8 @@ static void fl_view_renderer_software_present_layers(
   }
 
   g_mutex_lock(&self->frame_mutex);
+  fl_view_renderer_store_compositor_materials(
+      renderer, materials, materials_count, materials_invalid);
   fl_compositor_software_composite_layers(self->compositor, layers,
                                           layers_count);
   g_mutex_unlock(&self->frame_mutex);

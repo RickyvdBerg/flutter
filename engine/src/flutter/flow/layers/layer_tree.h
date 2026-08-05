@@ -7,8 +7,11 @@
 
 #include <cstdint>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "flutter/common/graphics/texture.h"
+#include "flutter/flow/avio_compositor_material.h"
 #include "flutter/flow/compositor_context.h"
 #include "flutter/flow/layers/layer.h"
 #include "flutter/flow/raster_cache.h"
@@ -56,6 +59,16 @@ class LayerTree {
   const PaintRegionMap& paint_region_map() const { return paint_region_map_; }
   PaintRegionMap& paint_region_map() { return paint_region_map_; }
 
+  const std::vector<AvioCompositorMaterial>& avio_compositor_materials() const {
+    return avio_compositor_materials_;
+  }
+  std::vector<AvioCompositorMaterial> TakeAvioCompositorMaterials() {
+    return std::move(avio_compositor_materials_);
+  }
+  bool avio_compositor_materials_invalid() const {
+    return avio_compositor_materials_invalid_;
+  }
+
  private:
   std::shared_ptr<Layer> root_layer_;
   DlISize frame_size_;  // Physical pixels.
@@ -63,6 +76,8 @@ class LayerTree {
   PaintRegionMap paint_region_map_;
 
   std::vector<RasterCacheItem*> raster_cache_items_;
+  std::vector<AvioCompositorMaterial> avio_compositor_materials_;
+  bool avio_compositor_materials_invalid_ = false;
 
   FML_DISALLOW_COPY_AND_ASSIGN(LayerTree);
 };

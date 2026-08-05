@@ -8,6 +8,7 @@
 #include <gdk/gdkwayland.h>
 #include <gtk/gtk-a11y.h>
 
+#include <array>
 #include <cstring>
 
 #include "flutter/common/constants.h"
@@ -69,6 +70,10 @@ struct _FlView {
   gboolean sized_to_content;
 
   GCancellable* cancellable;
+
+  FlViewCompositorMaterialsCallback compositor_materials_callback;
+  gpointer compositor_materials_user_data;
+  GDestroyNotify compositor_materials_destroy_notify;
 };
 
 enum { SIGNAL_FIRST_FRAME, LAST_SIGNAL };
@@ -254,12 +259,64 @@ static void on_pre_engine_restart_cb(FlView* self) {
 }
 
 // Implements FlRenderable::present_layers
-static void fl_view_present_layers(FlRenderable* renderable,
-                                   const FlutterLayer** layers,
-                                   size_t layers_count) {
+static void fl_view_present_layers(
+    FlRenderable* renderable,
+    const FlutterLayer** layers,
+    size_t layers_count,
+    const FlutterAvioCompositorMaterial* materials,
+    size_t materials_count,
+    bool materials_invalid) {
   FlView* self = FL_VIEW(renderable);
+  std::array<FlCompositorMaterial, FLUTTER_AVIO_MAX_COMPOSITOR_MATERIALS>
+      frame_materials;
+  size_t frame_materials_count = 0u;
+  if (materials_count > frame_materials.size() ||
+      (materials_count > 0u && materials == nullptr)) {
+    materials_invalid = true;
+  }
+  for (size_t index = 0; !materials_invalid && index < materials_count;
+       index++) {
+    const auto& material = materials[index];
+    frame_materials[frame_materials_count++] = FlCompositorMaterial{
+        .id = material.id,
+        .left = material.rect.left,
+        .top = material.rect.top,
+        .right = material.rect.right,
+        .bottom = material.rect.bottom,
+        .recipe = static_cast<FlCompositorMaterialRecipe>(material.recipe),
+        .tier = material.tier,
+        .uses_default_corner = material.uses_default_corner,
+        .corner_scale = material.corner_scale,
+        .corner_radius = material.corner_radius,
+        .corner_exponent = material.corner_exponent,
+        .corner_mask = material.corner_mask,
+        .blur_radius = material.blur_radius,
+        .tint_red = material.tint_red,
+        .tint_green = material.tint_green,
+        .tint_blue = material.tint_blue,
+        .tint_alpha = material.tint_alpha,
+        .saturation = material.saturation,
+        .luminosity = material.luminosity,
+        .noise_opacity = material.noise_opacity,
+        .order = material.order,
+        .strength = material.strength,
+    };
+  }
+  fl_view_renderer_present_layers(self->renderer, layers, layers_count,
+                                  frame_materials.data(), frame_materials_count,
+                                  materials_invalid);
+}
 
-  fl_view_renderer_present_layers(self->renderer, layers, layers_count);
+static void compositor_materials_cb(const FlCompositorMaterial* materials,
+                                    size_t materials_count,
+                                    gboolean invalid,
+                                    gpointer user_data) {
+  FlView* self = FL_VIEW(user_data);
+  if (self->compositor_materials_callback != nullptr) {
+    self->compositor_materials_callback(self, materials, materials_count,
+                                        invalid,
+                                        self->compositor_materials_user_data);
+  }
 }
 
 // Implements FlPluginRegistry::get_registrar_for_plugin.
@@ -510,6 +567,18 @@ static void fl_view_dispose(GObject* object) {
 
   g_cancellable_cancel(self->cancellable);
 
+  if (self->renderer != nullptr) {
+    fl_view_renderer_set_compositor_materials_callback(self->renderer, nullptr,
+                                                       nullptr);
+  }
+  if (self->compositor_materials_destroy_notify != nullptr) {
+    self->compositor_materials_destroy_notify(
+        self->compositor_materials_user_data);
+  }
+  self->compositor_materials_callback = nullptr;
+  self->compositor_materials_user_data = nullptr;
+  self->compositor_materials_destroy_notify = nullptr;
+
   g_clear_object(&self->zoom_gesture);
   g_clear_object(&self->rotate_gesture);
   if (self->engine != nullptr) {
@@ -658,6 +727,8 @@ static void setup_engine(FlView* self) {
       break;
   }
   gtk_widget_show(GTK_WIDGET(self->renderer));
+  fl_view_renderer_set_compositor_materials_callback(
+      self->renderer, compositor_materials_cb, self);
   gtk_container_add(GTK_CONTAINER(self->event_box), GTK_WIDGET(self->renderer));
   g_signal_connect_swapped(self->renderer, "realize", G_CALLBACK(realize_cb),
                            self);
@@ -777,6 +848,21 @@ G_MODULE_EXPORT void fl_view_set_background_color(FlView* self,
                                                   const GdkRGBA* color) {
   g_return_if_fail(FL_IS_VIEW(self));
   fl_view_renderer_set_background_color(self->renderer, color);
+}
+
+G_MODULE_EXPORT void fl_view_set_compositor_materials_callback(
+    FlView* self,
+    FlViewCompositorMaterialsCallback callback,
+    gpointer user_data,
+    GDestroyNotify destroy_notify) {
+  g_return_if_fail(FL_IS_VIEW(self));
+  if (self->compositor_materials_destroy_notify != nullptr) {
+    self->compositor_materials_destroy_notify(
+        self->compositor_materials_user_data);
+  }
+  self->compositor_materials_callback = callback;
+  self->compositor_materials_user_data = user_data;
+  self->compositor_materials_destroy_notify = destroy_notify;
 }
 
 FlViewAccessible* fl_view_get_accessible(FlView* self) {

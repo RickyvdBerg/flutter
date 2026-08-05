@@ -16,9 +16,13 @@ G_DEFINE_TYPE_WITH_CODE(FlMockRenderable,
                         G_IMPLEMENT_INTERFACE(fl_renderable_get_type(),
                                               mock_renderable_iface_init))
 
-static void mock_renderable_present_layers(FlRenderable* renderable,
-                                           const FlutterLayer** layers,
-                                           size_t layers_count) {}
+static void mock_renderable_present_layers(
+    FlRenderable* renderable,
+    const FlutterLayer** layers,
+    size_t layers_count,
+    const FlutterAvioCompositorMaterial* materials,
+    size_t materials_count,
+    bool materials_invalid) {}
 
 static void mock_renderable_iface_init(FlRenderableInterface* iface) {
   iface->present_layers = mock_renderable_present_layers;

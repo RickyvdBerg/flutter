@@ -36,17 +36,21 @@ class EmbedderLayers {
   void PushPlatformViewLayer(FlutterPlatformViewIdentifier identifier,
                              const EmbeddedViewParams& params);
 
-  using PresentCallback =
-      std::function<bool(FlutterViewId view_id,
-                         const std::vector<const FlutterLayer*>& layers)>;
-  using PresentRenderTargetCallback =
-      std::function<bool(
-          FlutterViewId view_id,
-          const FlutterBackingStore* backing_store,
-          const FlutterBackingStorePresentInfo* backing_store_present_info)>;
-  void InvokePresentCallback(FlutterViewId view_id,
-                             std::shared_ptr<const EmbedderLayers> retained_layers,
-                             const PresentCallback& callback);
+  using PresentCallback = std::function<bool(
+      FlutterViewId view_id,
+      const std::vector<const FlutterLayer*>& layers,
+      const std::vector<FlutterAvioCompositorMaterial>& compositor_materials,
+      bool compositor_materials_invalid)>;
+  using PresentRenderTargetCallback = std::function<bool(
+      FlutterViewId view_id,
+      const FlutterBackingStore* backing_store,
+      const FlutterBackingStorePresentInfo* backing_store_present_info)>;
+  void InvokePresentCallback(
+      FlutterViewId view_id,
+      std::shared_ptr<const EmbedderLayers> retained_layers,
+      const std::vector<FlutterAvioCompositorMaterial>& compositor_materials,
+      bool compositor_materials_invalid,
+      const PresentCallback& callback);
   bool InvokePresentRenderTargetCallback(
       FlutterViewId view_id,
       const PresentRenderTargetCallback& callback);

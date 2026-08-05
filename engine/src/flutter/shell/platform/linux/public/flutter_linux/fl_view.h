@@ -20,6 +20,50 @@ G_BEGIN_DECLS
 G_MODULE_EXPORT
 G_DECLARE_FINAL_TYPE(FlView, fl_view, FL, VIEW, GtkBox)
 
+/// Recipe vocabulary for compositor-owned material attached to a Flutter
+/// frame. This mirrors the Avio embedder extension without exposing the raw
+/// embedder header through flutter_linux's public API.
+typedef enum {
+  FL_COMPOSITOR_MATERIAL_RECIPE_EXPLICIT = 0,
+  FL_COMPOSITOR_MATERIAL_RECIPE_TIERED = 1,
+} FlCompositorMaterialRecipe;
+
+/// One immutable material node belonging to the exact frame being drawn.
+typedef struct {
+  guint64 id;
+  gdouble left;
+  gdouble top;
+  gdouble right;
+  gdouble bottom;
+  FlCompositorMaterialRecipe recipe;
+  guint32 tier;
+  gboolean uses_default_corner;
+  /// Uniform logical geometry scale applied to the material's corner shape.
+  gfloat corner_scale;
+  gdouble corner_radius;
+  gdouble corner_exponent;
+  guint32 corner_mask;
+  gdouble blur_radius;
+  gfloat tint_red;
+  gfloat tint_green;
+  gfloat tint_blue;
+  gfloat tint_alpha;
+  gfloat saturation;
+  gfloat luminosity;
+  gfloat noise_opacity;
+  gint32 order;
+  gfloat strength;
+} FlCompositorMaterial;
+
+/// Called on the GTK thread immediately before the exact Flutter frame is
+/// drawn. The descriptor array is valid only for the callback.
+typedef void (*FlViewCompositorMaterialsCallback)(
+    FlView* view,
+    const FlCompositorMaterial* materials,
+    size_t materials_count,
+    gboolean invalid,
+    gpointer user_data);
+
 /**
  * FlView:
  *
@@ -99,6 +143,22 @@ int64_t fl_view_get_id(FlView* view);
  * Set the background color for Flutter (defaults to black).
  */
 void fl_view_set_background_color(FlView* view, const GdkRGBA* color);
+
+/**
+ * fl_view_set_compositor_materials_callback:
+ * @view: an #FlView.
+ * @callback: callback invoked immediately before drawing an exact frame.
+ * @user_data: data supplied to @callback.
+ * @destroy_notify: optional destroy function for @user_data.
+ *
+ * Installs the one consumer of retained external-compositor material metadata.
+ * Replacing or disposing the callback invokes the previous destroy function.
+ */
+void fl_view_set_compositor_materials_callback(
+    FlView* view,
+    FlViewCompositorMaterialsCallback callback,
+    gpointer user_data,
+    GDestroyNotify destroy_notify);
 
 G_END_DECLS
 

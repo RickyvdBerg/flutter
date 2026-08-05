@@ -118,7 +118,8 @@ CompositorContext::ScopedFrame::~ScopedFrame() {
 RasterStatus CompositorContext::ScopedFrame::Raster(
     flutter::LayerTree& layer_tree,
     bool ignore_raster_cache,
-    FrameDamage* frame_damage) {
+    FrameDamage* frame_damage,
+    bool reject_invalid_compositor_materials) {
   TRACE_EVENT0("flutter", "CompositorContext::ScopedFrame::Raster");
 
   std::vector<DlIRect> clip_rects;
@@ -159,6 +160,10 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
 
   bool root_needs_readback =
       layer_tree.Preroll(*this, ignore_raster_cache, cull_rect);
+  if (reject_invalid_compositor_materials &&
+      layer_tree.avio_compositor_materials_invalid()) {
+    return RasterStatus::kInvalidCompositorMaterials;
+  }
   bool needs_save_layer = root_needs_readback && !surface_supports_readback();
   PostPrerollResult post_preroll_result = PostPrerollResult::kSuccess;
   if (view_embedder_ && raster_thread_merger_) {

@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "dart_api.h"
+#include "flutter/flow/layers/avio_compositor_material_layer.h"
 #include "flutter/flow/layers/backdrop_filter_layer.h"
 #include "flutter/flow/layers/clip_path_layer.h"
 #include "flutter/flow/layers/clip_rect_layer.h"
@@ -225,6 +226,60 @@ void SceneBuilder::pushShaderMask(Dart_Handle layer_handle,
   }
 }
 
+void SceneBuilder::pushAvioCompositorMaterial(
+    Dart_Handle layer_handle,
+    int64_t id,
+    double left,
+    double top,
+    double right,
+    double bottom,
+    uint32_t recipe,
+    uint32_t tier,
+    bool uses_default_corner,
+    double corner_radius,
+    double corner_exponent,
+    uint32_t corner_mask,
+    double blur_radius,
+    double tint_red,
+    double tint_green,
+    double tint_blue,
+    double tint_alpha,
+    double saturation,
+    double luminosity,
+    double noise_opacity,
+    int32_t order,
+    double strength,
+    const fml::RefPtr<EngineLayer>& old_layer) {
+  AvioCompositorMaterial material = {
+      .id = id > 0 ? static_cast<uint64_t>(id) : 0u,
+      .rect = DlRect::MakeLTRB(SafeNarrow(left), SafeNarrow(top),
+                               SafeNarrow(right), SafeNarrow(bottom)),
+      .recipe = static_cast<AvioCompositorMaterialRecipe>(recipe),
+      .tier = tier,
+      .uses_default_corner = uses_default_corner,
+      .corner_radius = SafeNarrow(corner_radius),
+      .corner_exponent = SafeNarrow(corner_exponent),
+      .corner_mask = corner_mask,
+      .blur_radius = SafeNarrow(blur_radius),
+      .tint_red = SafeNarrow(tint_red),
+      .tint_green = SafeNarrow(tint_green),
+      .tint_blue = SafeNarrow(tint_blue),
+      .tint_alpha = SafeNarrow(tint_alpha),
+      .saturation = SafeNarrow(saturation),
+      .luminosity = SafeNarrow(luminosity),
+      .noise_opacity = SafeNarrow(noise_opacity),
+      .order = order,
+      .strength = SafeNarrow(strength),
+  };
+  auto layer =
+      std::make_shared<AvioCompositorMaterialLayer>(std::move(material));
+  PushLayer(layer);
+  EngineLayer::MakeRetained(layer_handle, layer);
+  if (old_layer && old_layer->Layer()) {
+    layer->AssignOldLayer(old_layer->Layer().get());
+  }
+}
+
 void SceneBuilder::addRetained(const fml::RefPtr<EngineLayer>& retained_layer) {
   AddLayer(retained_layer->Layer());
 }
@@ -303,6 +358,14 @@ void SceneBuilder::AddLayer(std::shared_ptr<Layer> layer) {
   FML_DCHECK(layer);
 
   if (!layer_stack_.empty()) {
+    if (layer->subtree_has_avio_compositor_material()) {
+      // Active ancestors were inserted before their children. Propagate the
+      // marker here so a wholly retained subtree keeps the one-pass full-scene
+      // material cull on its next frame without scanning the layer tree.
+      for (const auto& ancestor : layer_stack_) {
+        ancestor->set_subtree_has_avio_compositor_material(true);
+      }
+    }
     layer_stack_.back()->Add(std::move(layer));
   }
 }

@@ -83,6 +83,10 @@ enum class DrawSurfaceStatus {
   kRetry,
   // Failed to rasterize the frame.
   kFailed,
+  // A selected root target rejected the layer tree before paint. Its typed
+  // presentation callback owns the terminal outcome, so this is neither a GPU
+  // failure nor a successful tree eligible for retained promotion.
+  kRejected,
   // Layer tree was discarded because its size does not match the view size.
   // This typically occurs during resizing.
   kDiscarded,

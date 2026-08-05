@@ -166,6 +166,8 @@ static gboolean fl_view_renderer_opengl_draw(GtkWidget* widget, cairo_t* cr) {
     wait_for_frame(self, window, scale_factor);
   }
 
+  fl_view_renderer_notify_compositor_materials(FL_VIEW_RENDERER(self));
+
   if (self->render_context != nullptr) {
     gdk_gl_context_make_current(self->render_context);
   }
@@ -182,9 +184,13 @@ static gboolean fl_view_renderer_opengl_draw(GtkWidget* widget, cairo_t* cr) {
 }
 
 // Implements FlViewRenderer::present_layers.
-static void fl_view_renderer_opengl_present_layers(FlViewRenderer* renderer,
-                                                   const FlutterLayer** layers,
-                                                   size_t layers_count) {
+static void fl_view_renderer_opengl_present_layers(
+    FlViewRenderer* renderer,
+    const FlutterLayer** layers,
+    size_t layers_count,
+    const FlCompositorMaterial* materials,
+    size_t materials_count,
+    gboolean materials_invalid) {
   FlViewRendererOpenGL* self = FL_VIEW_RENDERER_OPENGL(renderer);
 
   // Frames may be presented before the widget is realized and the compositor
@@ -194,6 +200,8 @@ static void fl_view_renderer_opengl_present_layers(FlViewRenderer* renderer,
   }
 
   g_mutex_lock(&self->frame_mutex);
+  fl_view_renderer_store_compositor_materials(
+      renderer, materials, materials_count, materials_invalid);
   fl_compositor_opengl_composite_layers(self->compositor, layers, layers_count);
   g_mutex_unlock(&self->frame_mutex);
 

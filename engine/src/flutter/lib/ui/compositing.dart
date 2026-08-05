@@ -237,6 +237,19 @@ class ShaderMaskEngineLayer extends _EngineLayerWrapper {
   ShaderMaskEngineLayer._(super.nativeLayer) : super._();
 }
 
+/// Recipe vocabulary for an Avio external-compositor material node.
+///
+/// Stock embedders ignore this immutable metadata. An Avio embedder consumes
+/// it with the exact frame carrying the retained layer tree.
+enum AvioCompositorMaterialRecipe { explicit, tiered }
+
+/// An opaque handle to an Avio compositor-material engine layer.
+///
+/// Instances are created by [SceneBuilder.pushAvioCompositorMaterial].
+class AvioCompositorMaterialEngineLayer extends _EngineLayerWrapper {
+  AvioCompositorMaterialEngineLayer._(super.nativeLayer) : super._();
+}
+
 /// Builds a [Scene] containing the given visuals.
 ///
 /// A [Scene] can then be rendered using [FlutterView.render].
@@ -460,6 +473,30 @@ abstract class SceneBuilder {
     BlendMode blendMode, {
     ShaderMaskEngineLayer? oldLayer,
     FilterQuality filterQuality = FilterQuality.low,
+  });
+
+  /// Pushes a retained, non-painting material node for an external compositor.
+  ///
+  /// The node follows the same transform, clip, opacity, and retained-layer
+  /// diff rules as its children. Its descriptor is delivered only as part of
+  /// the exact frame presentation callback.
+  AvioCompositorMaterialEngineLayer pushAvioCompositorMaterial({
+    required int id,
+    required Rect rect,
+    required AvioCompositorMaterialRecipe recipe,
+    int tier = 0,
+    bool usesDefaultCorner = false,
+    double cornerRadius = 0,
+    double cornerExponent = 2,
+    int cornerMask = 0,
+    double blurRadius = 0,
+    Color tint = const Color(0x00000000),
+    double saturation = 1,
+    double luminosity = 1,
+    double noiseOpacity = 0,
+    int order = 0,
+    double strength = 1,
+    AvioCompositorMaterialEngineLayer? oldLayer,
   });
 
   /// Ends the effect of the most recently pushed operation.
@@ -948,6 +985,125 @@ base class _NativeSceneBuilder extends NativeFieldWrapperClass1 implements Scene
     double maskRectBottom,
     int blendMode,
     int filterQualityIndex,
+    EngineLayer? oldLayer,
+  );
+
+  @override
+  AvioCompositorMaterialEngineLayer pushAvioCompositorMaterial({
+    required int id,
+    required Rect rect,
+    required AvioCompositorMaterialRecipe recipe,
+    int tier = 0,
+    bool usesDefaultCorner = false,
+    double cornerRadius = 0,
+    double cornerExponent = 2,
+    int cornerMask = 0,
+    double blurRadius = 0,
+    Color tint = const Color(0x00000000),
+    double saturation = 1,
+    double luminosity = 1,
+    double noiseOpacity = 0,
+    int order = 0,
+    double strength = 1,
+    AvioCompositorMaterialEngineLayer? oldLayer,
+  }) {
+    assert(id > 0);
+    assert(rect.isFinite && !rect.isEmpty);
+    assert(tier >= 0);
+    assert(cornerRadius.isFinite && cornerRadius >= 0);
+    assert(
+      cornerExponent.isFinite &&
+          cornerExponent >= 2 &&
+          cornerExponent <= 12,
+    );
+    assert(blurRadius.isFinite && blurRadius >= 0);
+    assert(saturation.isFinite && saturation >= 0);
+    assert(luminosity.isFinite && luminosity >= 0);
+    assert(noiseOpacity.isFinite && noiseOpacity >= 0 && noiseOpacity <= 1);
+    assert(strength.isFinite && strength >= 0 && strength <= 1);
+    assert(_debugCheckCanBeUsedAsOldLayer(oldLayer, 'pushAvioCompositorMaterial'));
+    final EngineLayer engineLayer = _NativeEngineLayer._();
+    _pushAvioCompositorMaterial(
+      engineLayer,
+      id,
+      rect.left,
+      rect.top,
+      rect.right,
+      rect.bottom,
+      recipe.index,
+      tier,
+      usesDefaultCorner,
+      cornerRadius,
+      cornerExponent,
+      cornerMask,
+      blurRadius,
+      tint.r,
+      tint.g,
+      tint.b,
+      tint.a,
+      saturation,
+      luminosity,
+      noiseOpacity,
+      order,
+      strength,
+      oldLayer?._nativeLayer,
+    );
+    final layer = AvioCompositorMaterialEngineLayer._(engineLayer);
+    assert(_debugPushLayer(layer));
+    return layer;
+  }
+
+  @Native<
+    Void Function(
+      Pointer<Void>,
+      Handle,
+      Int64,
+      Double,
+      Double,
+      Double,
+      Double,
+      Uint32,
+      Uint32,
+      Bool,
+      Double,
+      Double,
+      Uint32,
+      Double,
+      Double,
+      Double,
+      Double,
+      Double,
+      Double,
+      Double,
+      Double,
+      Int32,
+      Double,
+      Handle,
+    )
+  >(symbol: 'SceneBuilder::pushAvioCompositorMaterial')
+  external void _pushAvioCompositorMaterial(
+    EngineLayer layer,
+    int id,
+    double left,
+    double top,
+    double right,
+    double bottom,
+    int recipe,
+    int tier,
+    bool usesDefaultCorner,
+    double cornerRadius,
+    double cornerExponent,
+    int cornerMask,
+    double blurRadius,
+    double tintRed,
+    double tintGreen,
+    double tintBlue,
+    double tintAlpha,
+    double saturation,
+    double luminosity,
+    double noiseOpacity,
+    int order,
+    double strength,
     EngineLayer? oldLayer,
   );
 

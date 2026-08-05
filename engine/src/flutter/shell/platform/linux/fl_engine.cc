@@ -400,7 +400,9 @@ static bool compositor_present_view_callback(
     return true;
   }
 
-  fl_renderable_present_layers(renderable, info->layers, info->layers_count);
+  fl_renderable_present_layers(
+      renderable, info->layers, info->layers_count, info->compositor_materials,
+      info->compositor_materials_count, info->compositor_materials_invalid);
   return true;
 }
 

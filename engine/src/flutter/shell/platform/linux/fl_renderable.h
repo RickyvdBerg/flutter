@@ -27,7 +27,10 @@ struct _FlRenderableInterface {
 
   void (*present_layers)(FlRenderable* renderable,
                          const FlutterLayer** layers,
-                         size_t layers_count);
+                         size_t layers_count,
+                         const FlutterAvioCompositorMaterial* materials,
+                         size_t materials_count,
+                         bool materials_invalid);
 };
 
 /**
@@ -38,9 +41,13 @@ struct _FlRenderableInterface {
  *
  * Present a frame. This method can be called from any thread.
  */
-void fl_renderable_present_layers(FlRenderable* renderable,
-                                  const FlutterLayer** layers,
-                                  size_t layers_count);
+void fl_renderable_present_layers(
+    FlRenderable* renderable,
+    const FlutterLayer** layers,
+    size_t layers_count,
+    const FlutterAvioCompositorMaterial* materials,
+    size_t materials_count,
+    bool materials_invalid);
 
 G_END_DECLS
 

@@ -11,6 +11,7 @@
 #include <optional>
 
 #include "flutter/flow/frame_timings.h"
+#include "flutter/flow/layers/avio_compositor_material_layer.h"
 #include "flutter/fml/synchronization/count_down_latch.h"
 #include "flutter/fml/time/time_point.h"
 #include "flutter/shell/common/thread_host.h"
@@ -124,6 +125,12 @@ class MockExternalViewEmbedder : public ExternalViewEmbedder {
        const fml::RefPtr<fml::RasterThreadMerger>& raster_thread_merger),
       (override));
   MOCK_METHOD(bool, SupportsDynamicThreadMerging, (), (override));
+  MOCK_METHOD(std::optional<SurfaceFrame::FramebufferInfo>,
+              AcquireRootRenderTarget,
+              (int64_t,
+               GrDirectContext*,
+               const std::shared_ptr<impeller::AiksContext>&),
+              (override));
 };
 }  // namespace
 
@@ -265,6 +272,89 @@ TEST(RasterizerTest,
     EXPECT_TRUE(result.success);
     ON_CALL(delegate, ShouldDiscardLayerTree).WillByDefault(Return(false));
     rasterizer->Draw(pipeline);
+    latch.Signal();
+  });
+  latch.Wait();
+}
+
+TEST(RasterizerTest,
+     invalidSelectedTargetMaterialIsRejectedWithoutRetainedPromotion) {
+  std::string test_name =
+      ::testing::UnitTest::GetInstance()->current_test_info()->name();
+  ThreadHost thread_host("io.flutter.test." + test_name + ".",
+                         ThreadHost::Type::kPlatform |
+                             ThreadHost::Type::kRaster | ThreadHost::Type::kIo |
+                             ThreadHost::Type::kUi);
+  TaskRunners task_runners("test", thread_host.platform_thread->GetTaskRunner(),
+                           thread_host.raster_thread->GetTaskRunner(),
+                           thread_host.ui_thread->GetTaskRunner(),
+                           thread_host.io_thread->GetTaskRunner());
+  NiceMock<MockDelegate> delegate;
+  Settings settings;
+  ON_CALL(delegate, GetSettings()).WillByDefault(ReturnRef(settings));
+  EXPECT_CALL(delegate, GetTaskRunners())
+      .WillRepeatedly(ReturnRef(task_runners));
+  EXPECT_CALL(delegate, OnFrameRasterized(_));
+
+  auto rasterizer = std::make_unique<Rasterizer>(delegate);
+  auto surface = std::make_unique<NiceMock<MockSurface>>();
+  auto external_view_embedder =
+      std::make_shared<NiceMock<MockExternalViewEmbedder>>();
+  rasterizer->SetExternalViewEmbedder(external_view_embedder);
+
+  const DlISize frame_size(64, 64);
+  SurfaceFrame::FramebufferInfo framebuffer_info;
+  framebuffer_info.supports_readback = true;
+  auto surface_frame = std::make_unique<SurfaceFrame>(
+      nullptr, framebuffer_info,
+      /*encode_callback=*/[](const SurfaceFrame&, DlCanvas*) { return true; },
+      /*submit_callback=*/[](const SurfaceFrame&) { return true; }, frame_size);
+  EXPECT_CALL(*surface, AllowsDrawingWhenGpuDisabled()).WillOnce(Return(true));
+  EXPECT_CALL(*surface, AcquireFrame(frame_size))
+      .WillOnce(Return(ByMove(std::move(surface_frame))));
+  EXPECT_CALL(*surface, MakeRenderContextCurrent())
+      .WillOnce(Return(ByMove(std::make_unique<GLContextDefaultResult>(true))));
+
+  EXPECT_CALL(*external_view_embedder, BeginFrame(nullptr, _));
+  EXPECT_CALL(*external_view_embedder,
+              PrepareFlutterView(frame_size, kDevicePixelRatio));
+  EXPECT_CALL(*external_view_embedder,
+              AcquireRootRenderTarget(kImplicitViewId, nullptr, _))
+      .WillOnce(Return(framebuffer_info));
+  EXPECT_CALL(*external_view_embedder,
+              SubmitFlutterView(kImplicitViewId, nullptr, _, _))
+      .WillOnce([](int64_t, GrDirectContext*,
+                   const std::shared_ptr<impeller::AiksContext>&,
+                   std::unique_ptr<SurfaceFrame> frame) {
+        EXPECT_TRUE(frame->submit_info().avio_compositor_materials_invalid);
+      });
+  EXPECT_CALL(*external_view_embedder, EndFrame(false, _));
+
+  rasterizer->Setup(std::move(surface));
+  fml::AutoResetWaitableEvent latch;
+  thread_host.raster_thread->GetTaskRunner()->PostTask([&] {
+    auto pipeline = std::make_shared<FramePipeline>(/*depth=*/10);
+    auto material = AvioCompositorMaterial{
+        .id = 0u,
+        .rect = DlRect::MakeXYWH(0.0f, 0.0f, 20.0f, 20.0f),
+        .recipe = AvioCompositorMaterialRecipe::kTiered,
+        .tier = 2u,
+    };
+    auto root =
+        std::make_shared<AvioCompositorMaterialLayer>(std::move(material));
+    auto layer_tree = std::make_unique<LayerTree>(root, frame_size);
+    auto layer_tree_item = std::make_unique<FrameItem>(
+        SingleLayerTreeList(kImplicitViewId, std::move(layer_tree),
+                            kDevicePixelRatio),
+        CreateFinishedBuildRecorder());
+    EXPECT_TRUE(
+        pipeline->Produce().Complete(std::move(layer_tree_item)).success);
+    ON_CALL(delegate, ShouldDiscardLayerTree).WillByDefault(Return(false));
+
+    EXPECT_EQ(rasterizer->Draw(pipeline), DrawStatus::kDone);
+    EXPECT_EQ(rasterizer->GetLastDrawStatus(kImplicitViewId),
+              DrawSurfaceStatus::kRejected);
+    EXPECT_EQ(rasterizer->GetLastLayerTree(kImplicitViewId), nullptr);
     latch.Signal();
   });
   latch.Wait();

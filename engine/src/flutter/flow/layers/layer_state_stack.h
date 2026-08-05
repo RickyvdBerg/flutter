@@ -127,6 +127,13 @@ class LayerStateStack {
   void set_preroll_delegate(const DlRect& cull_rect);
   void set_preroll_delegate(const DlMatrix& matrix);
 
+  // Installs the normal partial-raster cull plus a full-scene cull tracked by
+  // the same transform/clip mutations. Avio material metadata reads the latter
+  // so a cursor-only repaint cannot erase an unchanged retained material.
+  void set_preroll_delegate_with_scene_cull(const DlRect& cull_rect,
+                                            const DlRect& scene_cull_rect,
+                                            const DlMatrix& matrix);
+
   // Fills the supplied MatatorsStack object with the mutations recorded
   // by this LayerStateStack in the order encountered.
   void fill(MutatorsStack* mutators);
@@ -273,6 +280,19 @@ class LayerStateStack {
   // The cull_rect (not the exact clip) relative to the device pixels.
   // This rectangle may be a conservative estimate of the true clip region.
   DlRect device_cull_rect() const { return delegate_->device_cull_rect(); }
+
+  // Full-scene cull for retained non-paint metadata. It equals the ordinary
+  // cull unless the preroll delegate was explicitly configured with one.
+  DlRect device_scene_cull_rect() const {
+    return delegate_->device_scene_cull_rect();
+  }
+
+  // Whether the current full-scene clip can be represented by an axis-aligned
+  // material rectangle. Rect clips preserve this; arbitrary shape clips do
+  // not.
+  bool scene_clip_is_rectilinear() const {
+    return delegate_->scene_clip_is_rectilinear();
+  }
 
   // The cull_rect (not the exact clip) relative to the local coordinates.
   // This rectangle may be a conservative estimate of the true clip region.
@@ -430,6 +450,8 @@ class LayerStateStack {
 
     virtual DlRect local_cull_rect() const = 0;
     virtual DlRect device_cull_rect() const = 0;
+    virtual DlRect device_scene_cull_rect() const = 0;
+    virtual bool scene_clip_is_rectilinear() const = 0;
     virtual DlMatrix matrix() const = 0;
     virtual bool content_culled(const DlRect& content_bounds) const = 0;
 

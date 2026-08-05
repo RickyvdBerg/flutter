@@ -8,10 +8,16 @@ G_DEFINE_INTERFACE(FlRenderable, fl_renderable, G_TYPE_OBJECT)
 
 static void fl_renderable_default_init(FlRenderableInterface* iface) {}
 
-void fl_renderable_present_layers(FlRenderable* self,
-                                  const FlutterLayer** layers,
-                                  size_t layers_count) {
+void fl_renderable_present_layers(
+    FlRenderable* self,
+    const FlutterLayer** layers,
+    size_t layers_count,
+    const FlutterAvioCompositorMaterial* materials,
+    size_t materials_count,
+    bool materials_invalid) {
   g_return_if_fail(FL_IS_RENDERABLE(self));
 
-  FL_RENDERABLE_GET_IFACE(self)->present_layers(self, layers, layers_count);
+  FL_RENDERABLE_GET_IFACE(self)->present_layers(self, layers, layers_count,
+                                                materials, materials_count,
+                                                materials_invalid);
 }

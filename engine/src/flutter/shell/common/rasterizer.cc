@@ -817,6 +817,10 @@ std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
     } else if (status == DrawSurfaceStatus::kFailed) {
       CompleteFrameOpportunity(frame_timings_recorder, view_id,
                                FrameOpportunityOutcome::kRasterFailed);
+    } else if (status == DrawSurfaceStatus::kRejected) {
+      // The selected-target presentation callback already terminalized this
+      // exact opportunity with its typed pre-raster rejection. Repeating that
+      // terminal here would violate the one-opportunity/one-terminal contract.
     }
   }
   // TODO(dkwingsmt): Pass in raster cache(s) for all views.
@@ -968,8 +972,8 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
     RasterStatus frame_status =
         compositor_frame->Raster(layer_tree,           // layer tree
                                  ignore_raster_cache,  // ignore raster cache
-                                 damage.get()          // frame damage
-        );
+                                 damage.get(),         // frame damage
+                                 selected_target_info.has_value());
     if (frame_status == RasterStatus::kSkipAndRetry) {
       return DrawSurfaceStatus::kRetry;
     }
@@ -989,6 +993,10 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
 
     SurfaceFrame::SubmitInfo submit_info;
     submit_info.presentation_time = presentation_time;
+    submit_info.avio_compositor_materials =
+        layer_tree.TakeAvioCompositorMaterials();
+    submit_info.avio_compositor_materials_invalid =
+        layer_tree.avio_compositor_materials_invalid();
     if (damage) {
       submit_info.frame_damage = std::move(frame_dmg);
       submit_info.buffer_damage = damage->GetBufferDamage();
@@ -996,7 +1004,7 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
       submit_info.frame_damage = std::move(eve_frame_damage);
     }
 
-    frame->set_submit_info(submit_info);
+    frame->set_submit_info(std::move(submit_info));
 
     if (external_view_embedder_ &&
         (!raster_thread_merger_ || raster_thread_merger_->IsMerged())) {
@@ -1018,6 +1026,8 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
 
     if (frame_status == RasterStatus::kResubmit) {
       return DrawSurfaceStatus::kRetry;
+    } else if (frame_status == RasterStatus::kInvalidCompositorMaterials) {
+      return DrawSurfaceStatus::kRejected;
     } else {
       FML_CHECK(frame_status == RasterStatus::kSuccess);
       return DrawSurfaceStatus::kSuccess;

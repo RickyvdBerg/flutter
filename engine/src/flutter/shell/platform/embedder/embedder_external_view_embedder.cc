@@ -314,6 +314,57 @@ static std::vector<FlutterRect> ToFlutterRects(
   return flutter_rects;
 }
 
+std::vector<FlutterAvioCompositorMaterial>
+ConvertAvioCompositorMaterialsToEmbedderCoordinates(
+    const std::vector<AvioCompositorMaterial>& materials,
+    const DlMatrix& surface_transformation,
+    double device_pixel_ratio) {
+  const double logical_scale =
+      device_pixel_ratio > 0.0 ? 1.0 / device_pixel_ratio : 1.0;
+  const auto surface_scale =
+      surface_transformation.GetMaxScale2D().value_or(0.0f);
+  std::vector<FlutterAvioCompositorMaterial> result;
+  result.reserve(materials.size());
+  for (const auto& material : materials) {
+    const auto rect =
+        material.rect.TransformAndClipBounds(surface_transformation);
+    result.push_back(FlutterAvioCompositorMaterial{
+        .struct_size = sizeof(FlutterAvioCompositorMaterial),
+        .id = material.id,
+        .rect =
+            FlutterRect{
+                rect.GetLeft() * logical_scale,
+                rect.GetTop() * logical_scale,
+                rect.GetRight() * logical_scale,
+                rect.GetBottom() * logical_scale,
+            },
+        .recipe =
+            static_cast<FlutterAvioCompositorMaterialRecipe>(material.recipe),
+        .tier = material.tier,
+        .uses_default_corner = material.uses_default_corner,
+        .corner_scale = static_cast<float>(material.corner_scale *
+                                           surface_scale * logical_scale),
+        .corner_radius = material.corner_radius,
+        .corner_exponent = material.corner_exponent,
+        .corner_mask = material.corner_mask,
+        .blur_radius = material.blur_radius,
+        .tint_red = material.tint_red,
+        .tint_green = material.tint_green,
+        .tint_blue = material.tint_blue,
+        .tint_alpha = material.tint_alpha,
+        .saturation = material.saturation,
+        .luminosity = material.luminosity,
+        .noise_opacity = material.noise_opacity,
+        .order = material.order,
+        .strength = material.strength,
+    });
+  }
+  return result;
+}
+
+static_assert(kMaxAvioCompositorMaterialsPerFrame ==
+              FLUTTER_AVIO_MAX_COMPOSITOR_MATERIALS);
+
 static SkRegion ToSkRegion(const DlRegion& region) {
   SkRegion result;
   for (const DlIRect& rect : region.getRects(/*deband=*/true)) {
@@ -843,7 +894,7 @@ void EmbedderExternalViewEmbedder::SubmitGenericFlutterView(
   }
 #endif  // !SLIMPELLER
 
-  const auto submit_info = frame->submit_info();
+  const auto& submit_info = frame->submit_info();
   const uint64_t presentation_time =
       submit_info.presentation_time.has_value()
           ? submit_info.presentation_time->ToEpochDelta().ToNanoseconds()
@@ -852,8 +903,13 @@ void EmbedderExternalViewEmbedder::SubmitGenericFlutterView(
       pending_frame_size_, pending_device_pixel_ratio_,
       pending_surface_transformation_, presentation_time);
   builder.PushLayers(presented_layers);
-  presented_layers.InvokePresentCallback(flutter_view_id, nullptr,
-                                         present_callback_);
+  const auto compositor_materials =
+      ConvertAvioCompositorMaterialsToEmbedderCoordinates(
+          submit_info.avio_compositor_materials,
+          pending_surface_transformation_, pending_device_pixel_ratio_);
+  presented_layers.InvokePresentCallback(
+      flutter_view_id, nullptr, compositor_materials,
+      submit_info.avio_compositor_materials_invalid, present_callback_);
 
   deferred_cleanup_render_targets.clear();
   for (auto& [descriptor, render_target] :
@@ -905,8 +961,26 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
     }
   }
 
+  const auto& submit_info = frame->submit_info();
+  const auto compositor_materials =
+      ConvertAvioCompositorMaterialsToEmbedderCoordinates(
+          submit_info.avio_compositor_materials,
+          pending_surface_transformation_, pending_device_pixel_ratio_);
+  if (submit_info.avio_compositor_materials_invalid) {
+    CompleteRootRenderTarget(
+        flutter_view_id,
+        kFlutterPresentRenderTargetStatusInvalidCompositorMaterials,
+        pending_root_render_target_
+            ? pending_root_render_target_->GetBackingStore()
+            : nullptr,
+        nullptr, &compositor_materials, true);
+    ResetPendingRootRenderTarget();
+    frame->Submit();
+    return;
+  }
+
   auto& root_view = root_found->second;
-  if (!root_view->HasEngineRenderedContents()) {
+  if (!root_view->HasEngineRenderedContents() && compositor_materials.empty()) {
     CompleteRootRenderTarget(
         flutter_view_id, kFlutterPresentRenderTargetStatusNoVisualChange,
         pending_root_render_target_
@@ -967,7 +1041,6 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
   }
 #endif  // !SLIMPELLER
 
-  const auto submit_info = frame->submit_info();
   if (selected_target_damage_ && submit_info.buffer_damage.has_value() &&
       submit_info.buffer_damage->isEmpty()) {
     CompleteRootRenderTarget(flutter_view_id,
@@ -1063,9 +1136,10 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
   (void)render_complete_sync_fd;
 #endif
 
-  if (!CompleteRootRenderTarget(
-          flutter_view_id, kFlutterPresentRenderTargetStatusPresented,
-          render_target->GetBackingStore(), &present_info)) {
+  if (!CompleteRootRenderTarget(flutter_view_id,
+                                kFlutterPresentRenderTargetStatusPresented,
+                                render_target->GetBackingStore(), &present_info,
+                                &compositor_materials)) {
     FML_LOG(ERROR) << "Could not present explicit render target for view "
                    << flutter_view_id;
   }
@@ -1082,7 +1156,10 @@ bool EmbedderExternalViewEmbedder::CompleteRootRenderTarget(
     int64_t flutter_view_id,
     FlutterPresentRenderTargetStatus status,
     const FlutterBackingStore* backing_store,
-    const FlutterBackingStorePresentInfo* backing_store_present_info) const {
+    const FlutterBackingStorePresentInfo* backing_store_present_info,
+    const std::vector<FlutterAvioCompositorMaterial>* compositor_materials,
+    bool compositor_materials_invalid) const {
+  static const std::vector<FlutterAvioCompositorMaterial> kNoMaterials;
   return present_render_target_callback_(
       flutter_view_id,
       pending_frame_opportunity_.has_value() ? pending_frame_opportunity_->id
@@ -1091,7 +1168,9 @@ bool EmbedderExternalViewEmbedder::CompleteRootRenderTarget(
           ? static_cast<FlutterEngineDisplayId>(
                 pending_frame_opportunity_->display_id)
           : 0,
-      status, backing_store, backing_store_present_info);
+      status, backing_store, backing_store_present_info,
+      compositor_materials ? *compositor_materials : kNoMaterials,
+      compositor_materials_invalid);
 }
 
 }  // namespace flutter

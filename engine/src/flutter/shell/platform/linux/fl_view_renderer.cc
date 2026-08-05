@@ -4,12 +4,24 @@
 
 #include "flutter/shell/platform/linux/fl_view_renderer.h"
 
+#include <algorithm>
+
 typedef struct {
   // Background color drawn behind the Flutter frame.
   GdkRGBA* background_color;
 
   // TRUE if have got the first frame to render.
   gboolean have_first_frame;
+
+  // Exact-frame metadata is hard-bounded by the public engine contract. Keep
+  // it inline so the first drawable frame does not allocate merely to retain
+  // the sidecar until GTK's paired draw.
+  FlCompositorMaterial
+      compositor_materials[FLUTTER_AVIO_MAX_COMPOSITOR_MATERIALS];
+  size_t compositor_materials_count;
+  gboolean compositor_materials_invalid;
+  FlViewRendererCompositorMaterialsCallback compositor_materials_callback;
+  gpointer compositor_materials_user_data;
 } FlViewRendererPrivate;
 
 enum { SIGNAL_FIRST_FRAME, LAST_SIGNAL };
@@ -22,9 +34,13 @@ G_DEFINE_TYPE_WITH_PRIVATE(FlViewRenderer,
 
 // Default implementation for the abstract present_layers method. Subclasses
 // must override this.
-static void fl_view_renderer_present_layers_default(FlViewRenderer* self,
-                                                    const FlutterLayer** layers,
-                                                    size_t layers_count) {
+static void fl_view_renderer_present_layers_default(
+    FlViewRenderer* self,
+    const FlutterLayer** layers,
+    size_t layers_count,
+    const FlCompositorMaterial* materials,
+    size_t materials_count,
+    gboolean materials_invalid) {
   g_assert_not_reached();
 }
 
@@ -33,7 +49,6 @@ static void fl_view_renderer_dispose(GObject* object) {
       fl_view_renderer_get_instance_private(FL_VIEW_RENDERER(object)));
 
   g_clear_pointer(&priv->background_color, gdk_rgba_free);
-
   G_OBJECT_CLASS(fl_view_renderer_parent_class)->dispose(object);
 }
 
@@ -89,11 +104,57 @@ void fl_view_renderer_paint_background(FlViewRenderer* self, cairo_t* cr) {
 
 void fl_view_renderer_present_layers(FlViewRenderer* self,
                                      const FlutterLayer** layers,
-                                     size_t layers_count) {
+                                     size_t layers_count,
+                                     const FlCompositorMaterial* materials,
+                                     size_t materials_count,
+                                     gboolean materials_invalid) {
   g_return_if_fail(FL_IS_VIEW_RENDERER(self));
 
   FlViewRendererClass* klass = FL_VIEW_RENDERER_GET_CLASS(self);
-  klass->present_layers(self, layers, layers_count);
+  klass->present_layers(self, layers, layers_count, materials, materials_count,
+                        materials_invalid);
+}
+
+void fl_view_renderer_store_compositor_materials(
+    FlViewRenderer* self,
+    const FlCompositorMaterial* materials,
+    size_t materials_count,
+    gboolean invalid) {
+  g_return_if_fail(FL_IS_VIEW_RENDERER(self));
+  FlViewRendererPrivate* priv = static_cast<FlViewRendererPrivate*>(
+      fl_view_renderer_get_instance_private(self));
+  const bool malformed =
+      materials_count > FLUTTER_AVIO_MAX_COMPOSITOR_MATERIALS ||
+      (materials_count > 0u && materials == nullptr);
+  priv->compositor_materials_count = 0u;
+  if (!invalid && !malformed && materials_count > 0u) {
+    std::copy_n(materials, materials_count, priv->compositor_materials);
+    priv->compositor_materials_count = materials_count;
+  }
+  priv->compositor_materials_invalid = invalid || malformed;
+}
+
+void fl_view_renderer_set_compositor_materials_callback(
+    FlViewRenderer* self,
+    FlViewRendererCompositorMaterialsCallback callback,
+    gpointer user_data) {
+  g_return_if_fail(FL_IS_VIEW_RENDERER(self));
+  FlViewRendererPrivate* priv = static_cast<FlViewRendererPrivate*>(
+      fl_view_renderer_get_instance_private(self));
+  priv->compositor_materials_callback = callback;
+  priv->compositor_materials_user_data = user_data;
+}
+
+void fl_view_renderer_notify_compositor_materials(FlViewRenderer* self) {
+  g_return_if_fail(FL_IS_VIEW_RENDERER(self));
+  FlViewRendererPrivate* priv = static_cast<FlViewRendererPrivate*>(
+      fl_view_renderer_get_instance_private(self));
+  if (priv->compositor_materials_callback == nullptr) {
+    return;
+  }
+  priv->compositor_materials_callback(
+      priv->compositor_materials, priv->compositor_materials_count,
+      priv->compositor_materials_invalid, priv->compositor_materials_user_data);
 }
 
 void fl_view_renderer_notify_frame(FlViewRenderer* self) {

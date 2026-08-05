@@ -35,6 +35,14 @@ class DummyDelegate : public LayerStateStack::Delegate {
     error();
     return {};
   }
+  DlRect device_scene_cull_rect() const override {
+    error();
+    return {};
+  }
+  bool scene_clip_is_rectilinear() const override {
+    error();
+    return false;
+  }
   DlMatrix matrix() const override {
     error();
     return dummy_matrix_;
@@ -87,6 +95,8 @@ class DlCanvasDelegate : public LayerStateStack::Delegate {
   DlRect device_cull_rect() const override {
     return canvas_->GetDestinationClipCoverage();
   }
+  DlRect device_scene_cull_rect() const override { return device_cull_rect(); }
+  bool scene_clip_is_rectilinear() const override { return true; }
   DlMatrix matrix() const override { return canvas_->GetMatrix(); }
   bool content_culled(const DlRect& content_bounds) const override {
     return canvas_->QuickReject(content_bounds);
@@ -140,8 +150,14 @@ class DlCanvasDelegate : public LayerStateStack::Delegate {
 
 class PrerollDelegate : public LayerStateStack::Delegate {
  public:
-  PrerollDelegate(const DlRect& cull_rect, const DlMatrix& matrix) {
+  PrerollDelegate(const DlRect& cull_rect,
+                  const DlMatrix& matrix,
+                  const std::optional<DlRect>& scene_cull_rect) {
     save_stack_.emplace_back(cull_rect, matrix);
+    if (scene_cull_rect.has_value()) {
+      scene_save_stack_.emplace();
+      scene_save_stack_->emplace_back(scene_cull_rect.value(), matrix);
+    }
   }
 
   void decommission() override {}
@@ -153,51 +169,120 @@ class PrerollDelegate : public LayerStateStack::Delegate {
   DlRect device_cull_rect() const override {
     return state().GetDeviceCullCoverage();
   }
+  DlRect device_scene_cull_rect() const override {
+    return scene_state() ? scene_state()->GetDeviceCullCoverage()
+                         : device_cull_rect();
+  }
+  bool scene_clip_is_rectilinear() const override {
+    return scene_save_stack_.has_value()
+               ? scene_save_stack_->back().clip_is_rectilinear
+               : true;
+  }
   bool content_culled(const DlRect& content_bounds) const override {
     return state().content_culled(content_bounds);
   }
 
-  void save() override { save_stack_.emplace_back(state()); }
+  void save() override {
+    save_stack_.emplace_back(state());
+    if (scene_save_stack_.has_value()) {
+      scene_save_stack_->emplace_back(scene_save_stack_->back());
+    }
+  }
   void saveLayer(const DlRect& bounds,
                  LayerStateStack::RenderingAttributes& attributes,
                  DlBlendMode blend,
                  const DlImageFilter* backdrop,
                  std::optional<int64_t> backdrop_id) override {
     save_stack_.emplace_back(state());
+    if (scene_save_stack_.has_value()) {
+      scene_save_stack_->emplace_back(scene_save_stack_->back());
+    }
   }
-  void restore() override { save_stack_.pop_back(); }
+  void restore() override {
+    save_stack_.pop_back();
+    if (scene_save_stack_.has_value()) {
+      scene_save_stack_->pop_back();
+    }
+  }
 
   void translate(DlScalar tx, DlScalar ty) override {
     state().translate(tx, ty);
+    if (scene_state()) {
+      scene_state()->translate(tx, ty);
+    }
   }
-  void transform(const DlMatrix& matrix) override { state().transform(matrix); }
+  void transform(const DlMatrix& matrix) override {
+    state().transform(matrix);
+    if (scene_state()) {
+      scene_state()->transform(matrix);
+    }
+  }
   void integralTransform() override {
     DlMatrix integral;
     if (RasterCacheUtil::ComputeIntegralTransCTM(state().matrix(), &integral)) {
       state().setTransform(integral);
     }
+    if (scene_state() && RasterCacheUtil::ComputeIntegralTransCTM(
+                             scene_state()->matrix(), &integral)) {
+      scene_state()->setTransform(integral);
+    }
   }
 
   void clipRect(const DlRect& rect, DlClipOp op, bool is_aa) override {
     state().clipRect(rect, op, is_aa);
+    if (scene_state()) {
+      scene_state()->clipRect(rect, op, is_aa);
+    }
   }
   void clipRRect(const DlRoundRect& rrect, DlClipOp op, bool is_aa) override {
     state().clipRRect(rrect, op, is_aa);
+    if (scene_state()) {
+      scene_state()->clipRRect(rrect, op, is_aa);
+      scene_save_stack_->back().clip_is_rectilinear = false;
+    }
   }
   void clipRSuperellipse(const DlRoundSuperellipse& rse,
                          DlClipOp op,
                          bool is_aa) override {
     state().clipRSuperellipse(rse, op, is_aa);
+    if (scene_state()) {
+      scene_state()->clipRSuperellipse(rse, op, is_aa);
+      scene_save_stack_->back().clip_is_rectilinear = false;
+    }
   }
   void clipPath(const DlPath& path, DlClipOp op, bool is_aa) override {
     state().clipPath(path, op, is_aa);
+    if (scene_state()) {
+      scene_state()->clipPath(path, op, is_aa);
+      scene_save_stack_->back().clip_is_rectilinear = false;
+    }
   }
 
  private:
+  struct SceneState {
+    SceneState(const DlRect& cull_rect, const DlMatrix& matrix)
+        : matrix_clip(cull_rect, matrix) {}
+
+    DisplayListMatrixClipState matrix_clip;
+    bool clip_is_rectilinear = true;
+  };
+
   DisplayListMatrixClipState& state() { return save_stack_.back(); }
   const DisplayListMatrixClipState& state() const { return save_stack_.back(); }
 
+  DisplayListMatrixClipState* scene_state() {
+    return scene_save_stack_.has_value()
+               ? &scene_save_stack_->back().matrix_clip
+               : nullptr;
+  }
+  const DisplayListMatrixClipState* scene_state() const {
+    return scene_save_stack_.has_value()
+               ? &scene_save_stack_->back().matrix_clip
+               : nullptr;
+  }
+
   std::vector<DisplayListMatrixClipState> save_stack_;
+  std::optional<std::vector<SceneState>> scene_save_stack_;
 };
 
 // ==============================================================
@@ -649,7 +734,18 @@ void LayerStateStack::set_preroll_delegate(const DlMatrix& matrix) {
 void LayerStateStack::set_preroll_delegate(const DlRect& cull_rect,
                                            const DlMatrix& matrix) {
   clear_delegate();
-  delegate_ = std::make_shared<PrerollDelegate>(cull_rect, matrix);
+  delegate_ =
+      std::make_shared<PrerollDelegate>(cull_rect, matrix, std::nullopt);
+  reapply_all();
+}
+
+void LayerStateStack::set_preroll_delegate_with_scene_cull(
+    const DlRect& cull_rect,
+    const DlRect& scene_cull_rect,
+    const DlMatrix& matrix) {
+  clear_delegate();
+  delegate_ =
+      std::make_shared<PrerollDelegate>(cull_rect, matrix, scene_cull_rect);
   reapply_all();
 }
 

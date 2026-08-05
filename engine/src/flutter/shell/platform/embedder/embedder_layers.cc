@@ -77,8 +77,8 @@ void EmbedderLayers::PushBackingStoreLayer(
         target_local_frame_damage.getRects(/*deband=*/true);
     frame_damage_rects->reserve(frame_damage_rect_list.size());
     for (const auto& rect : frame_damage_rect_list) {
-      auto transformed_rect =
-          DlRect::Make(rect).TransformAndClipBounds(root_surface_transformation_);
+      auto transformed_rect = DlRect::Make(rect).TransformAndClipBounds(
+          root_surface_transformation_);
       frame_damage_rects->push_back(FlutterRect{
           .left = transformed_rect.GetLeft(),
           .top = transformed_rect.GetTop(),
@@ -301,6 +301,8 @@ void EmbedderLayers::PushPlatformViewLayer(
 void EmbedderLayers::InvokePresentCallback(
     FlutterViewId view_id,
     std::shared_ptr<const EmbedderLayers> retained_layers,
+    const std::vector<FlutterAvioCompositorMaterial>& compositor_materials,
+    bool compositor_materials_invalid,
     const PresentCallback& callback) {
   (void)retained_layers;
   auto presented_layers = presented_layers_;
@@ -313,7 +315,8 @@ void EmbedderLayers::InvokePresentCallback(
   for (const auto& layer : presented_layers_) {
     presented_layers_pointers.push_back(&layer);
   }
-  callback(view_id, presented_layers_pointers);
+  callback(view_id, presented_layers_pointers, compositor_materials,
+           compositor_materials_invalid);
 }
 
 bool EmbedderLayers::InvokePresentRenderTargetCallback(
@@ -339,7 +342,8 @@ bool EmbedderLayers::InvokePresentRenderTargetCallback(
     }
   }
 
-  if (backing_store_layer == nullptr || backing_store_layer->backing_store == nullptr ||
+  if (backing_store_layer == nullptr ||
+      backing_store_layer->backing_store == nullptr ||
       backing_store_layer->backing_store_present_info == nullptr) {
     FML_LOG(ERROR)
         << "Explicit render-target presentation requires a backing store with "

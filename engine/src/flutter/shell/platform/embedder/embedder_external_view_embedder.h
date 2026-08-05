@@ -9,6 +9,7 @@
 #include <memory>
 #include <set>
 #include <unordered_map>
+#include <vector>
 
 #include "flutter/flow/embedded_views.h"
 #include "flutter/fml/hash_combine.h"
@@ -17,6 +18,16 @@
 #include "flutter/shell/platform/embedder/embedder_render_target_cache.h"
 
 namespace flutter {
+
+/// Converts material nodes collected in Flutter scene coordinates into the
+/// logical surface coordinates consumed by the embedder API. The external
+/// view path prerolls with an identity root transform, then applies the
+/// platform surface transform exactly once here, matching pixel rendering.
+std::vector<FlutterAvioCompositorMaterial>
+ConvertAvioCompositorMaterialsToEmbedderCoordinates(
+    const std::vector<AvioCompositorMaterial>& materials,
+    const DlMatrix& surface_transformation,
+    double device_pixel_ratio);
 
 //------------------------------------------------------------------------------
 /// @brief      The external view embedder used by the generic embedder API.
@@ -35,16 +46,20 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
           GrDirectContext* context,
           const std::shared_ptr<impeller::AiksContext>& aiks_context,
           const FlutterBackingStoreConfig& config)>;
-  using PresentCallback =
-      std::function<bool(FlutterViewId view_id,
-                         const std::vector<const FlutterLayer*>& layers)>;
+  using PresentCallback = std::function<bool(
+      FlutterViewId view_id,
+      const std::vector<const FlutterLayer*>& layers,
+      const std::vector<FlutterAvioCompositorMaterial>& compositor_materials,
+      bool compositor_materials_invalid)>;
   using PresentRenderTargetCallback = std::function<bool(
       FlutterViewId view_id,
       FlutterFrameOpportunityId opportunity_id,
       FlutterEngineDisplayId display_id,
       FlutterPresentRenderTargetStatus status,
       const FlutterBackingStore* backing_store,
-      const FlutterBackingStorePresentInfo* backing_store_present_info)>;
+      const FlutterBackingStorePresentInfo* backing_store_present_info,
+      const std::vector<FlutterAvioCompositorMaterial>& compositor_materials,
+      bool compositor_materials_invalid)>;
   using SurfaceTransformationCallback = std::function<DlMatrix(void)>;
 
   //----------------------------------------------------------------------------
@@ -153,7 +168,10 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
       FlutterPresentRenderTargetStatus status,
       const FlutterBackingStore* backing_store = nullptr,
       const FlutterBackingStorePresentInfo* backing_store_present_info =
-          nullptr) const;
+          nullptr,
+      const std::vector<FlutterAvioCompositorMaterial>* compositor_materials =
+          nullptr,
+      bool compositor_materials_invalid = false) const;
 
   const FlutterCompositorMode compositor_mode_;
   const bool selected_target_damage_;

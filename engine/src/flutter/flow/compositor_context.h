@@ -44,6 +44,9 @@ enum class RasterStatus {
   // with separate threads for rasterization and platform tasks,
   // potentially leading to different performance characteristics.
   kSkipAndRetry,
+  // The retained material sidecar cannot represent the exact scene. This is
+  // emitted only when a selected root target requested pre-raster validation.
+  kInvalidCompositorMaterials,
 };
 
 class FrameDamage {
@@ -77,10 +80,11 @@ class FrameDamage {
   // If previous layer tree is not specified, returns empty vector (full
   // repaint), but the paint region of layer_tree will be calculated so that
   // it can be used for diffing of subsequent frames.
-  std::vector<DlIRect> ComputeClipRects(flutter::LayerTree& layer_tree,
-                                         bool has_raster_cache,
-                                         bool impeller_enabled,
-                                         TextureRegistry* texture_registry = nullptr);
+  std::vector<DlIRect> ComputeClipRects(
+      flutter::LayerTree& layer_tree,
+      bool has_raster_cache,
+      bool impeller_enabled,
+      TextureRegistry* texture_registry = nullptr);
 
   // See Damage::frame_damage.
   std::optional<DlRegion> GetFrameDamage() const {
@@ -141,9 +145,11 @@ class CompositorContext {
 
     impeller::AiksContext* aiks_context() const { return aiks_context_; }
 
-    virtual RasterStatus Raster(LayerTree& layer_tree,
-                                bool ignore_raster_cache,
-                                FrameDamage* frame_damage);
+    virtual RasterStatus Raster(
+        LayerTree& layer_tree,
+        bool ignore_raster_cache,
+        FrameDamage* frame_damage,
+        bool reject_invalid_compositor_materials = false);
 
    private:
     void PaintLayerTreeSkia(flutter::LayerTree& layer_tree,
@@ -216,9 +222,8 @@ class CompositorContext {
   /// @brief  Whether Impeller shouild attempt a partial repaint.
   ///         The Impeller backend requires an additional blit pass, which may
   ///         not be worthwhile if the damage region is large.
-  static bool ShouldPerformPartialRepaint(
-      DlIRect bounds,
-      DlISize layer_tree_size);
+  static bool ShouldPerformPartialRepaint(DlIRect bounds,
+                                          DlISize layer_tree_size);
 
   FML_DISALLOW_COPY_AND_ASSIGN(CompositorContext);
 };

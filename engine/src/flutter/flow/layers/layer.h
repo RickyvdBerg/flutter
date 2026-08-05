@@ -13,6 +13,7 @@
 #include "flutter/common/graphics/texture.h"
 #include "flutter/common/macros.h"
 #include "flutter/display_list/dl_canvas.h"
+#include "flutter/flow/avio_compositor_material.h"
 #include "flutter/flow/diff_context.h"
 #include "flutter/flow/embedded_views.h"
 #include "flutter/flow/layers/layer_state_stack.h"
@@ -32,6 +33,7 @@ class MockLayer;
 }  // namespace testing
 
 class ContainerLayer;
+class AvioCompositorMaterialLayer;
 class DisplayListLayer;
 class PerformanceOverlayLayer;
 class TextureLayer;
@@ -73,6 +75,11 @@ struct PrerollContext {
   int renderable_state_flags = 0;
 
   std::vector<RasterCacheItem*>* raster_cached_entries;
+
+  // Avio's retained external-compositor scene metadata. The layer tree owns
+  // both pointers for the duration of preroll; stock callers leave them null.
+  std::vector<AvioCompositorMaterial>* avio_compositor_materials = nullptr;
+  bool* avio_compositor_materials_invalid = nullptr;
 };
 
 struct PaintContext {
@@ -189,6 +196,13 @@ class Layer {
     subtree_has_platform_view_ = value;
   }
 
+  bool subtree_has_avio_compositor_material() const {
+    return subtree_has_avio_compositor_material_;
+  }
+  void set_subtree_has_avio_compositor_material(bool value) {
+    subtree_has_avio_compositor_material_ = value;
+  }
+
   // Returns the paint bounds in the layer's local coordinate system
   // as determined during Preroll().  The bounds should include any
   // transform, clip or distortions performed by the layer itself,
@@ -242,6 +256,10 @@ class Layer {
   }
 #endif  //  !SLIMPELLER
   virtual const ContainerLayer* as_container_layer() const { return nullptr; }
+  virtual const AvioCompositorMaterialLayer* as_avio_compositor_material_layer()
+      const {
+    return nullptr;
+  }
   virtual const DisplayListLayer* as_display_list_layer() const {
     return nullptr;
   }
@@ -256,6 +274,7 @@ class Layer {
   uint64_t unique_id_;
   uint64_t original_layer_id_;
   bool subtree_has_platform_view_ = false;
+  bool subtree_has_avio_compositor_material_ = false;
 
   static uint64_t NextUniqueID();
 

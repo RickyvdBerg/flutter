@@ -188,7 +188,8 @@ static constexpr FlutterAvioExtensionFeatures kAvioSupportedFeatures =
     kFlutterAvioExtensionFeatureExactVsyncCancellation |
     kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
     kFlutterAvioExtensionFeatureSelectedTargetDamage |
-    kFlutterAvioExtensionFeatureViewVisibility
+    kFlutterAvioExtensionFeatureViewVisibility |
+    kFlutterAvioExtensionFeatureAtomicCompositorMaterials
 #if FML_OS_LINUX && defined(SHELL_ENABLE_VULKAN) && \
     defined(IMPELLER_SUPPORTS_RENDERING)
     | kFlutterAvioExtensionFeatureResourceLifecycleConfig
@@ -2076,7 +2077,11 @@ InferExternalViewEmbedderFromArgs(
   flutter::EmbedderExternalViewEmbedder::PresentCallback present_callback;
   if (c_present_callback) {
     present_callback = [c_present_callback, user_data = compositor->user_data](
-                           FlutterViewId view_id, const auto& layers) {
+                           FlutterViewId view_id, const auto& layers,
+                           const auto& compositor_materials,
+                           bool compositor_materials_invalid) {
+      (void)compositor_materials;
+      (void)compositor_materials_invalid;
       TRACE_EVENT0("flutter", "FlutterCompositorPresentLayers");
       return c_present_callback(const_cast<const FlutterLayer**>(layers.data()),
                                 layers.size(), user_data);
@@ -2084,7 +2089,9 @@ InferExternalViewEmbedderFromArgs(
   } else if (c_present_view_callback) {
     present_callback = [c_present_view_callback,
                         user_data = compositor->user_data](
-                           FlutterViewId view_id, const auto& layers) {
+                           FlutterViewId view_id, const auto& layers,
+                           const auto& compositor_materials,
+                           bool compositor_materials_invalid) {
       TRACE_EVENT0("flutter", "FlutterCompositorPresentView");
       FlutterPresentViewInfo info = {
           .struct_size = sizeof(FlutterPresentViewInfo),
@@ -2092,6 +2099,9 @@ InferExternalViewEmbedderFromArgs(
           .layers = const_cast<const FlutterLayer**>(layers.data()),
           .layers_count = layers.size(),
           .user_data = user_data,
+          .compositor_materials = compositor_materials.data(),
+          .compositor_materials_count = compositor_materials.size(),
+          .compositor_materials_invalid = compositor_materials_invalid,
       };
       return c_present_view_callback(&info);
     };
@@ -2109,7 +2119,9 @@ InferExternalViewEmbedderFromArgs(
             FlutterEngineDisplayId display_id,
             FlutterPresentRenderTargetStatus status,
             const FlutterBackingStore* backing_store,
-            const FlutterBackingStorePresentInfo* backing_store_present_info) {
+            const FlutterBackingStorePresentInfo* backing_store_present_info,
+            const auto& compositor_materials,
+            bool compositor_materials_invalid) {
           TRACE_EVENT0("flutter", "FlutterCompositorPresentRenderTarget");
           FlutterPresentRenderTargetInfo info = {
               .struct_size = sizeof(FlutterPresentRenderTargetInfo),
@@ -2120,6 +2132,9 @@ InferExternalViewEmbedderFromArgs(
               .status = status,
               .opportunity_id = opportunity_id,
               .display_id = display_id,
+              .compositor_materials = compositor_materials.data(),
+              .compositor_materials_count = compositor_materials.size(),
+              .compositor_materials_invalid = compositor_materials_invalid,
           };
           if (frame_opportunity_registry) {
             if (opportunity_id == 0 ||

@@ -104,6 +104,9 @@ void ContainerLayer::DiffChildren(DiffContext* context,
 }
 
 void ContainerLayer::Add(std::shared_ptr<Layer> layer) {
+  if (layer->subtree_has_avio_compositor_material()) {
+    set_subtree_has_avio_compositor_material(true);
+  }
   layers_.emplace_back(std::move(layer));
 }
 

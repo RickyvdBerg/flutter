@@ -8,6 +8,7 @@
 #include <gtk/gtk.h>
 
 #include "flutter/shell/platform/embedder/embedder.h"
+#include "flutter/shell/platform/linux/public/flutter_linux/fl_view.h"
 
 G_BEGIN_DECLS
 
@@ -38,7 +39,10 @@ struct _FlViewRendererClass {
    */
   void (*present_layers)(FlViewRenderer* renderer,
                          const FlutterLayer** layers,
-                         size_t layers_count);
+                         size_t layers_count,
+                         const FlCompositorMaterial* materials,
+                         size_t materials_count,
+                         gboolean materials_invalid);
 };
 
 /**
@@ -72,7 +76,34 @@ void fl_view_renderer_paint_background(FlViewRenderer* renderer, cairo_t* cr);
  */
 void fl_view_renderer_present_layers(FlViewRenderer* renderer,
                                      const FlutterLayer** layers,
-                                     size_t layers_count);
+                                     size_t layers_count,
+                                     const FlCompositorMaterial* materials,
+                                     size_t materials_count,
+                                     gboolean materials_invalid);
+
+typedef void (*FlViewRendererCompositorMaterialsCallback)(
+    const FlCompositorMaterial* materials,
+    size_t materials_count,
+    gboolean invalid,
+    gpointer user_data);
+
+/// Stores the material sidecar while a concrete renderer holds its frame lock.
+void fl_view_renderer_store_compositor_materials(
+    FlViewRenderer* renderer,
+    const FlCompositorMaterial* materials,
+    size_t materials_count,
+    gboolean invalid);
+
+/// Installs the GTK-thread consumer invoked by
+/// fl_view_renderer_notify_compositor_materials.
+void fl_view_renderer_set_compositor_materials_callback(
+    FlViewRenderer* renderer,
+    FlViewRendererCompositorMaterialsCallback callback,
+    gpointer user_data);
+
+/// Delivers the sidecar paired with the frame currently protected by the
+/// concrete renderer's frame lock.
+void fl_view_renderer_notify_compositor_materials(FlViewRenderer* renderer);
 
 /**
  * fl_view_renderer_notify_frame:

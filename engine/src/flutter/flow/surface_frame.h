@@ -7,11 +7,14 @@
 
 #include <memory>
 #include <optional>
+#include <utility>
+#include <vector>
 
 #include "flutter/common/graphics/gl_context_switch.h"
 #include "flutter/display_list/dl_builder.h"
 #include "flutter/display_list/geometry/dl_region.h"
 #include "flutter/display_list/skia/dl_sk_canvas.h"
+#include "flutter/flow/avio_compositor_material.h"
 #include "flutter/fml/macros.h"
 #include "flutter/fml/time/time_point.h"
 
@@ -113,6 +116,11 @@ class SurfaceFrame {
     // presentViewController page transition, then this will cause CoreAnimation
     // assertion errors and exit the app.
     bool present_with_transaction = false;
+
+    // Retained external-compositor nodes from the exact layer tree rasterized
+    // into this frame. They share frame custody with pixels and damage.
+    std::vector<AvioCompositorMaterial> avio_compositor_materials;
+    bool avio_compositor_materials_invalid = false;
   };
 
   bool Encode();
@@ -127,8 +135,8 @@ class SurfaceFrame {
 
   const FramebufferInfo& framebuffer_info() const { return framebuffer_info_; }
 
-  void set_submit_info(const SubmitInfo& submit_info) {
-    submit_info_ = submit_info;
+  void set_submit_info(SubmitInfo submit_info) {
+    submit_info_ = std::move(submit_info);
   }
   const SubmitInfo& submit_info() const { return submit_info_; }
 

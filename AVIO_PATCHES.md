@@ -72,6 +72,7 @@ already ancestors of the selected main target under their original commits.
 | 34 | Enforce hard transient budgets and trim only idle resources | permanent resource-lifecycle contract | none |
 | 35 | Negotiate exact resource profiles and principal-scoped pipeline-cache access | permanent ABI/lifecycle extension | none |
 | 36 | Suppress raster demand with exact per-view visibility | permanent ABI/lifecycle extension | none |
+| 37 | Carry retained compositor-material nodes with the exact Flutter frame | permanent ABI/scene extension | none |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -296,6 +297,26 @@ renderable view becomes hidden, the raster thread trims only already-idle
 Impeller resources. Dart timers and application policy remain controlled by
 Avio's separate typed shell lifecycle channel, so the engine never infers
 authority, lock state, or suspension from missing vsync.
+
+### Patch 37: exact retained compositor material
+
+`SceneBuilder.pushAvioCompositorMaterial` adds a bounded, non-painting retained
+node whose transformed rectangle, rectangular clip, opacity, recipe, and stable
+identity are collected from the complete scene. The immutable set rides
+`SurfaceFrame::SubmitInfo` into `FlutterPresentViewInfo` or
+`FlutterPresentRenderTargetInfo`, so an embedder cannot pair generation N's
+pixels with a later material registry. Metadata changes participate in layer
+diff damage; partial-raster culling cannot erase unchanged material nodes.
+
+The feature is negotiated as
+`kFlutterAvioExtensionFeatureAtomicCompositorMaterials`, capped by
+`FLUTTER_AVIO_MAX_COMPOSITOR_MATERIALS`, and rejects overflow or scene shapes
+the external rectangle vocabulary cannot express. Root-target rejection is a
+typed pre-raster terminal that does not quarantine a healthy GPU target. Linux
+GTK exposes the same exact-frame sidecar immediately before drawing the paired
+frame. This patch does not precompile shaders or allocate material render
+targets: non-material trees keep the stock preroll path and all GPU resources
+remain demand-driven in Avio.
 
 ## Known baseline debt
 

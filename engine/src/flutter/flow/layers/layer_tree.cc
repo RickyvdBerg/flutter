@@ -37,10 +37,24 @@ bool LayerTree::Preroll(CompositorContext::ScopedFrame& frame,
 
   SkColorSpace* color_space = GetColorSpace(frame.canvas());
   LayerStateStack state_stack;
-  state_stack.set_preroll_delegate(cull_rect,
-                                   frame.root_surface_transformation());
+  const bool has_compositor_material =
+      root_layer_->subtree_has_avio_compositor_material();
+  const DlRect scene_cull_rect = DlRect::MakeSize(frame_size_);
+  if (has_compositor_material && !cull_rect.Contains(scene_cull_rect)) {
+    // Partial raster needs a second clip history so unchanged retained nodes
+    // stay in the exact-frame sidecar. A full first frame already traverses
+    // the complete scene; avoid duplicating every stack mutation on that
+    // latency-sensitive path.
+    state_stack.set_preroll_delegate_with_scene_cull(
+        cull_rect, scene_cull_rect, frame.root_surface_transformation());
+  } else {
+    state_stack.set_preroll_delegate(cull_rect,
+                                     frame.root_surface_transformation());
+  }
 
   raster_cache_items_.clear();
+  avio_compositor_materials_.clear();
+  avio_compositor_materials_invalid_ = false;
 
   PrerollContext context = {
 #if !SLIMPELLER
@@ -56,6 +70,11 @@ bool LayerTree::Preroll(CompositorContext::ScopedFrame& frame,
       .ui_time = frame.context().ui_time(),
       .texture_registry = frame.context().texture_registry(),
       .raster_cached_entries = &raster_cache_items_,
+      .avio_compositor_materials =
+          has_compositor_material ? &avio_compositor_materials_ : nullptr,
+      .avio_compositor_materials_invalid =
+          has_compositor_material ? &avio_compositor_materials_invalid_
+                                  : nullptr,
   };
 
   root_layer_->Preroll(&context);

@@ -88,6 +88,18 @@ typedef uint64_t FlutterAvioExtensionFeatures;
 #define kFlutterAvioExtensionFeatureResourceLifecycleConfig \
   0x0000000000000040ULL
 #define kFlutterAvioExtensionFeatureViewVisibility 0x0000000000000080ULL
+#define kFlutterAvioExtensionFeatureAtomicCompositorMaterials \
+  0x0000000000000100ULL
+
+/// Hard transaction bound shared by retained scene collection and embedders.
+#define FLUTTER_AVIO_MAX_COMPOSITOR_MATERIALS 64u
+
+typedef enum {
+  /// All rendering parameters are carried directly in the descriptor.
+  kFlutterAvioCompositorMaterialRecipeExplicit = 0,
+  /// The consumer resolves `tier` through its own trusted recipe table.
+  kFlutterAvioCompositorMaterialRecipeTiered = 1,
+} FlutterAvioCompositorMaterialRecipe;
 
 typedef struct {
   /// The size of this struct. Must be sizeof(FlutterAvioExtensionCapabilities).
@@ -817,6 +829,35 @@ typedef struct {
   double right;
   double bottom;
 } FlutterRect;
+
+/// One retained external-compositor material node.
+///
+/// `rect` is in logical view coordinates after Flutter transforms and clips.
+/// `corner_scale` carries the matching uniform retained-tree scale so a
+/// consumer can transform the corner shape without scaling recipe kernels.
+/// The array containing this value lives only for the presentation callback.
+typedef struct {
+  size_t struct_size;
+  uint64_t id;
+  FlutterRect rect;
+  FlutterAvioCompositorMaterialRecipe recipe;
+  uint32_t tier;
+  bool uses_default_corner;
+  float corner_scale;
+  double corner_radius;
+  double corner_exponent;
+  uint32_t corner_mask;
+  double blur_radius;
+  float tint_red;
+  float tint_green;
+  float tint_blue;
+  float tint_alpha;
+  float saturation;
+  float luminosity;
+  float noise_opacity;
+  int32_t order;
+  float strength;
+} FlutterAvioCompositorMaterial;
 
 /// A structure to represent a 2D point.
 typedef struct {
@@ -2514,6 +2555,15 @@ typedef struct {
 
   /// The |FlutterCompositor.user_data|.
   void* user_data;
+
+  /// Immutable material nodes belonging to this exact frame.
+  const FlutterAvioCompositorMaterial* compositor_materials;
+  size_t compositor_materials_count;
+
+  /// True when the retained scene exceeded its bounded material budget. The
+  /// callback must reject the frame; the array is deliberately not a silently
+  /// truncated scene.
+  bool compositor_materials_invalid;
 } FlutterPresentViewInfo;
 
 typedef enum {
@@ -2534,6 +2584,12 @@ typedef enum {
 
   /// An engine invariant required by root-target mode was not satisfied.
   kFlutterPresentRenderTargetStatusInternalInvariantViolation,
+
+  /// The retained material sidecar could not describe the exact scene. This
+  /// terminal occurs before rasterization or GPU work; selected-target mode
+  /// may already have acquired the named backing store. Appended to preserve
+  /// every established C ABI enum value.
+  kFlutterPresentRenderTargetStatusInvalidCompositorMaterials,
 } FlutterPresentRenderTargetStatus;
 
 typedef enum {
@@ -2597,6 +2653,11 @@ typedef struct {
   /// Display which owned the exact opportunity. Zero is the stock/default
   /// display when no exact opportunity was supplied.
   FlutterEngineDisplayId display_id;
+
+  /// Immutable material nodes belonging to this exact target presentation.
+  const FlutterAvioCompositorMaterial* compositor_materials;
+  size_t compositor_materials_count;
+  bool compositor_materials_invalid;
 } FlutterPresentRenderTargetInfo;
 
 typedef bool (*FlutterBackingStoreCreateCallback)(

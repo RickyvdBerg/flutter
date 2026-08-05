@@ -190,6 +190,10 @@ need "BuildOwner indexes view build scopes" \
   $W/lib/src/widgets/framework.dart 'registerViewBuildScope'
 need "widgets build only admitted view scopes" \
   $W/lib/src/widgets/binding.dart 'owner\.buildViewScope\(viewId\)'
+need "scoped frames can bootstrap structural View boundaries" \
+  $W/lib/src/widgets/binding.dart 'activeViewIds == null \|\| _hasUnattributableDirtyBuild'
+need "new View content waits in its owned build scope" \
+  $W/lib/src/widgets/view.dart 'activeFrameViewIds == null'
 need "dirty-view settlement occurs at the owning scope" \
   $W/lib/src/widgets/binding.dart '_dirtyBuildViewIds\.remove\(viewId\)'
 need "unsettled widget scopes request another opportunity" \
@@ -230,6 +234,9 @@ need "nested View updates remain behind their own scope" \
 need "residual widget demand schedules another scoped frame" \
   $W/test/widgets/view_scoped_build_scheduling_test.dart \
   'unprocessed view scope requests another frame opportunity'
+need "first scoped frame bootstrap regression test" \
+  $W/test/widgets/view_scoped_build_scheduling_test.dart \
+  'the first scoped frame bootstraps only its admitted view'
 need "structural pointer preservation regression test" \
   $W/test/widgets/view_scoped_frame_scheduling_test.dart \
   'scoped render demand never rewrites structural pointer events'

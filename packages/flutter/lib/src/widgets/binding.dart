@@ -1450,8 +1450,9 @@ mixin WidgetsBinding
   //      on a single display, route the frame request through
   //      [PlatformDispatcher.scheduleFrameForDisplayViews] instead of the
   //      global path.
-  //   4. Build only the independently owned [BuildScope]s admitted by the
-  //      engine callback before rendering those same views.
+  //   4. Settle dirty non-rendering root structure, then build only the
+  //      independently owned [BuildScope]s admitted by the engine callback
+  //      before rendering those same views.
   //
   // Each dirty entry is removed when its owning build scope returns. A later
   // scope or post-frame callback that dirties the same view adds it again and
@@ -1631,11 +1632,14 @@ mixin WidgetsBinding
 
   /// Builds exactly the widget scopes admitted for the current frame.
   ///
-  /// A legacy global frame builds the non-view root scope followed by every
-  /// registered view scope. A compositor-scoped frame builds only the view IDs
-  /// in [activeFrameViewIds]. Each consumed dirty entry is settled as its
-  /// scope returns, so a mutation caused by a later scope remains pending for
-  /// another opportunity.
+  /// Every frame may settle dirty structure outside a view-owned scope. That
+  /// root scope can create, remove, or retarget [View] boundaries, but each
+  /// boundary owns a separate [BuildScope], so this step cannot build its
+  /// visual descendants. A legacy global frame then builds every registered
+  /// view scope; a compositor-scoped frame builds only the view IDs in
+  /// [activeFrameViewIds]. Each consumed dirty entry is settled as its scope
+  /// returns, so a mutation caused by a later scope remains pending for another
+  /// opportunity.
   ///
   /// Frame-driving subclasses such as the Flutter test binding must call this
   /// instead of cloning the former global `BuildOwner.buildScope(rootElement)`
@@ -1644,11 +1648,11 @@ mixin WidgetsBinding
   void buildDirtyWidgetScopes() {
     final BuildOwner owner = buildOwner!;
     final Set<int>? activeViewIds = activeFrameViewIds;
+    if (rootElement != null && (activeViewIds == null || _hasUnattributableDirtyBuild)) {
+      owner.buildScope(rootElement!);
+      _hasUnattributableDirtyBuild = false;
+    }
     if (activeViewIds == null) {
-      if (rootElement != null) {
-        owner.buildScope(rootElement!);
-        _hasUnattributableDirtyBuild = false;
-      }
       for (final int viewId in owner.registeredViewBuildScopeIds()) {
         if (owner.buildViewScope(viewId)) {
           _dirtyBuildViewIds.remove(viewId);

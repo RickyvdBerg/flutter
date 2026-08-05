@@ -38,6 +38,47 @@ class _BuildProbeState extends State<_BuildProbe> {
 void main() {
   final binding = _ScopedBuildTestBinding();
 
+  testWidgets('the first scoped frame bootstraps only its admitted view', (
+    WidgetTester tester,
+  ) async {
+    final firstView = FakeView(tester.view, viewId: 401);
+    final secondView = FakeView(tester.view, viewId: 402);
+    final firstKey = GlobalKey<_BuildProbeState>();
+    final secondKey = GlobalKey<_BuildProbeState>();
+    addTearDown(() => binding.frameViewIds = null);
+
+    binding.frameViewIds = <int>{firstView.viewId};
+    binding.attachRootWidget(
+      ViewCollection(
+        views: <Widget>[
+          View(
+            view: firstView,
+            child: _BuildProbe(key: firstKey),
+          ),
+          View(
+            view: secondView,
+            child: _BuildProbe(key: secondKey),
+          ),
+        ],
+      ),
+    );
+
+    await tester.pump();
+
+    expect(firstKey.currentState, isNotNull);
+    expect(secondKey.currentState, isNull);
+    expect(
+      binding.buildOwner!.registeredViewBuildScopeIds(),
+      containsAll(<int>[firstView.viewId, secondView.viewId]),
+    );
+    expect(binding.hasScheduledFrame, isTrue);
+
+    binding.frameViewIds = <int>{secondView.viewId};
+    await tester.pump();
+
+    expect(secondKey.currentState, isNotNull);
+  });
+
   testWidgets('unprocessed view scope requests another frame opportunity', (
     WidgetTester tester,
   ) async {

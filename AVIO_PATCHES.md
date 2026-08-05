@@ -186,11 +186,15 @@ back into a global frame.
 
 Each real `View` owns and registers one native framework `BuildScope` with its
 `BuildOwner`. `WidgetsBinding` resolves the engine-admitted view IDs through
-that O(1) registry and builds only those scopes before rendering the same set.
-A global frame builds the non-view root followed by every registered view in
-stable ID order. Dirty entries settle as their scope returns, so a later scope
-dirtying an already-built sibling remains demand for another opportunity and
-requests that opportunity at the end of the current widget frame.
+that O(1) registry. Every frame may settle the non-rendering root scope so it
+can create or retire structural `View` boundaries; mounting a boundary leaves
+its visual descendants dirty in the new view-owned scope. A global frame then
+builds every registered view in stable ID order, while a scoped frame builds
+only its engine-admitted views. This makes the first exact frame a valid
+bootstrap without letting it build or render an unadmitted sibling. Dirty
+entries settle as their scope returns, so a later scope dirtying an
+already-built sibling remains demand for another opportunity and requests that
+opportunity at the end of the current widget frame.
 Retiring a view also retires its scheduler custody at the same lifecycle edge,
 so a removed scope cannot leave a stale ID widening later frame requests.
 
@@ -201,8 +205,9 @@ KMS presentation. A parent-driven update to a nested `View` marks that view's
 own scope dirty instead of synchronously crossing the scope boundary. The
 frame-driving Flutter test binding calls the same protected build operation as
 production so conformance cannot drift behind a cloned global-build step. A
-binding-level regression test admits one of two dirty views and pins that the
-unprocessed scope requests the next frame before its demand can be forgotten.
+binding-level regressions begin from an unbuilt root, admit one of two views,
+and pin both that only the admitted child boots and that the unprocessed scope
+requests the next frame before its demand can be forgotten.
 
 ### Patch 32: selected-target partial raster
 

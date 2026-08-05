@@ -524,7 +524,16 @@ class _RawViewElement extends RenderTreeRootElement {
     assert(_effectivePipelineOwner.rootNode == null);
     _effectivePipelineOwner.rootNode = renderObject;
     _attachView();
-    _updateChild();
+    if (WidgetsBinding.instance.activeFrameViewIds == null) {
+      // Preserve the ordinary global-frame mount contract: every view is
+      // admitted, so its initial child may be built synchronously.
+      _updateChild();
+    } else {
+      // Mounting the structural View boundary may happen while another view's
+      // exact frame is active. Keep visual descendants in this View's own build
+      // scope; the binding will build them only when this view is admitted.
+      markNeedsBuild();
+    }
     renderObject.prepareInitialFrame();
     if (_effectivePipelineOwner.semanticsOwner != null) {
       renderObject.scheduleInitialSemantics();

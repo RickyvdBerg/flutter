@@ -938,7 +938,7 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
                 framebuffer_info.vertical_clip_alignment);
 
             auto* gr_context = surface_->GetContext();
-            metadata_damage.ComputeClipRects(
+            metadata_damage.ComputeDamage(
                 layer_tree, surface_->EnableRasterCache(), !gr_context,
                 compositor_context_->texture_registry().get());
 

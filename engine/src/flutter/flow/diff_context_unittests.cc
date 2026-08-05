@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "flutter/flow/testing/diff_context_test.h"
 #include "flutter/display_list/geometry/dl_region.h"
-#include "flutter/flow/damage_coalesce.h"
+#include "flutter/flow/compositor_context.h"
+#include "flutter/flow/layers/layer_tree.h"
+#include "flutter/flow/testing/diff_context_test.h"
 
 namespace flutter {
 namespace testing {
@@ -104,57 +105,43 @@ TEST_F(DiffContextTest, IdenticalTreesProduceEmptyDamage) {
   EXPECT_TRUE(damage.buffer_damage.isEmpty());
 }
 
-// ---- CoalesceDamageRects tests ----
+TEST_F(DiffContextTest, FrameDamageSeparatesLogicalAndRasterDamage) {
+  const DlISize frame_size(800, 600);
+  const auto unchanged_middle = CreateDisplayList(
+      DlRect::MakeLTRB(300, 220, 500, 380), DlColor(0x8050A0F0));
 
-TEST(CoalesceDamageRectsTest, EmptyInput) {
-  auto result = CoalesceDamageRects({});
-  EXPECT_TRUE(result.empty());
-}
+  auto previous_root = CreateContainerLayer({
+      CreateDisplayListLayer(CreateDisplayList(
+          DlRect::MakeLTRB(20, 220, 120, 380), DlColor(0xFF1EB45A))),
+      CreateDisplayListLayer(unchanged_middle),
+      CreateDisplayListLayer(CreateDisplayList(
+          DlRect::MakeLTRB(680, 220, 780, 380), DlColor(0xFFAA46D2))),
+  });
+  LayerTree previous(previous_root, frame_size);
+  FrameDamage initial_damage;
+  initial_damage.ComputeDamage(previous, /*has_raster_cache=*/false,
+                               /*impeller_enabled=*/true);
 
-TEST(CoalesceDamageRectsTest, SingleRect) {
-  std::vector<DlIRect> rects = {DlIRect::MakeLTRB(10, 10, 50, 50)};
-  auto result = CoalesceDamageRects(rects);
-  ASSERT_EQ(result.size(), 1u);
-  EXPECT_EQ(result[0], DlIRect::MakeLTRB(10, 10, 50, 50));
-}
+  auto current_root = CreateContainerLayer({
+      CreateDisplayListLayer(CreateDisplayList(
+          DlRect::MakeLTRB(20, 220, 120, 380), DlColor(0xFFDC7823))),
+      CreateDisplayListLayer(unchanged_middle),
+      CreateDisplayListLayer(CreateDisplayList(
+          DlRect::MakeLTRB(680, 220, 780, 380), DlColor(0xFF2896DC))),
+  });
+  LayerTree current(current_root, frame_size);
+  FrameDamage damage;
+  damage.SetPreviousLayerTree(&previous);
+  damage.ComputeDamage(current, /*has_raster_cache=*/false,
+                       /*impeller_enabled=*/true);
 
-TEST(CoalesceDamageRectsTest, MaxRectsEnforced) {
-  // Create 20 well-separated rects.
-  std::vector<DlIRect> rects;
-  for (int i = 0; i < 20; i++) {
-    int x = i * 200;
-    rects.push_back(DlIRect::MakeLTRB(x, 0, x + 100, 100));
-  }
-  CoalesceConfig config;
-  config.max_rects = 4;
-  auto result = CoalesceDamageRects(std::move(rects), config);
-  EXPECT_LE(result.size(), 4u);
-  EXPECT_GE(result.size(), 1u);
-}
-
-TEST(CoalesceDamageRectsTest, SmallRectsAreMerged) {
-  // A tiny rect (below min_edge threshold) should be merged into its neighbor.
-  std::vector<DlIRect> rects = {
-      DlIRect::MakeLTRB(0, 0, 100, 100),
-      DlIRect::MakeLTRB(110, 110, 115, 115),  // 5x5, below 64x64 threshold
-  };
-  CoalesceConfig config;
-  config.min_edge = 64;
-  auto result = CoalesceDamageRects(std::move(rects), config);
-  EXPECT_EQ(result.size(), 1u);
-}
-
-TEST(CoalesceDamageRectsTest, WellSeparatedRectsPreserved) {
-  // Two well-separated, large rects should stay separate.
-  std::vector<DlIRect> rects = {
-      DlIRect::MakeLTRB(0, 0, 100, 100),
-      DlIRect::MakeLTRB(5000, 5000, 5100, 5100),
-  };
-  CoalesceConfig config;
-  config.max_rects = 8;
-  config.gap_ratio = 0.01f;  // very strict gap ratio
-  auto result = CoalesceDamageRects(std::move(rects), config);
-  EXPECT_EQ(result.size(), 2u);
+  const auto frame_damage = damage.GetFrameDamage();
+  const auto raster_damage = damage.GetBufferDamage();
+  ASSERT_TRUE(frame_damage.has_value());
+  ASSERT_TRUE(raster_damage.has_value());
+  EXPECT_GT(frame_damage->getRects(/*deband=*/true).size(), 1u);
+  EXPECT_EQ(raster_damage->getRects(/*deband=*/true).size(), 1u);
+  EXPECT_EQ(raster_damage->bounds(), frame_damage->bounds());
 }
 
 }  // namespace testing

@@ -129,8 +129,8 @@ fi
 echo "--- Damage tracking ---"
 need "frame_damage in FlutterBackingStorePresentInfo" \
   $F/shell/platform/embedder/embedder.h 'frame_damage'
-need "multi-rect damage coalescing" \
-  $F/flow 'CoalesceDamageRects'
+need "logical and raster damage are separated" \
+  $F/flow/compositor_context.h 'intentionally distinct from sparse logical frame damage'
 need "dmabuf per-commit damage rects ABI" \
   $F/shell/platform/embedder/embedder.h 'num_damage_rects'
 need "selected-target damage feature negotiation" \
@@ -155,6 +155,9 @@ need "three-target selected-damage pixel regression" \
 need "transparent blur removal pixel regression" \
   $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
   'SelectedTargetDamageClearsRemovedBlurWithFullRepaintParity'
+need "disjoint translucent replacement pixel regression" \
+  $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
+  'SelectedTargetDamageBoundsActualRasterForTranslucentGap'
 need "full fallback clears preserved selected target" \
   $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
   'SelectedTargetDamageFullFallbackClearsPreservedTarget'

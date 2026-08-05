@@ -6,20 +6,20 @@
 
 #include <optional>
 #include <utility>
-#include <vector>
 #include "flutter/display_list/geometry/dl_region.h"
-#include "flutter/flow/damage_coalesce.h"
 #include "flutter/flow/layers/layer_tree.h"
 
 namespace flutter {
 
-std::vector<DlIRect> FrameDamage::ComputeClipRects(
-    flutter::LayerTree& layer_tree,
-    bool has_raster_cache,
-    bool impeller_enabled,
-    TextureRegistry* texture_registry) {
+void FrameDamage::ComputeDamage(flutter::LayerTree& layer_tree,
+                                bool has_raster_cache,
+                                bool impeller_enabled,
+                                TextureRegistry* texture_registry) {
+  ignore_damage_ = false;
   if (!layer_tree.root_layer()) {
-    return {};
+    damage_.reset();
+    raster_damage_.reset();
+    return;
   }
   PaintRegionMap empty_paint_region_map;
   DiffContext context(layer_tree.frame_size(), layer_tree.paint_region_map(),
@@ -43,8 +43,9 @@ std::vector<DlIRect> FrameDamage::ComputeClipRects(
 
   damage_ = context.ComputeDamage(
       additional_damage_, horizontal_clip_alignment_, vertical_clip_alignment_);
-  auto rects = damage_->buffer_damage.getRects(/*deband=*/true);
-  return CoalesceDamageRects(std::move(rects));
+  raster_damage_ = damage_->buffer_damage.isEmpty()
+                       ? DlRegion()
+                       : DlRegion(damage_->buffer_damage.bounds());
 }
 
 CompositorContext::CompositorContext()
@@ -122,31 +123,29 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
     bool reject_invalid_compositor_materials) {
   TRACE_EVENT0("flutter", "CompositorContext::ScopedFrame::Raster");
 
-  std::vector<DlIRect> clip_rects;
+  std::optional<DlRegion> raster_damage;
   DlIRect clip_bounds = DlIRect::MakeLTRB(0, 0, 0, 0);
   if (frame_damage) {
-    clip_rects = frame_damage->ComputeClipRects(
-        layer_tree, !ignore_raster_cache, !gr_context_,
-        context_.texture_registry().get());
+    frame_damage->ComputeDamage(layer_tree, !ignore_raster_cache, !gr_context_,
+                                context_.texture_registry().get());
+    raster_damage = frame_damage->GetBufferDamage();
 
     // Exact no-change is a terminal result, not a request for a full repaint.
     // Test it before the partial-repaint cost heuristic: an empty clip has no
     // area to optimize, but resetting its damage would erase that distinction.
     const auto frame_damage_region = frame_damage->GetFrameDamage();
-    const auto buffer_damage_region = frame_damage->GetBufferDamage();
-    if (frame_damage_region.has_value() && buffer_damage_region.has_value() &&
-        frame_damage_region->isEmpty() && buffer_damage_region->isEmpty()) {
+    if (frame_damage_region.has_value() && raster_damage.has_value() &&
+        frame_damage_region->isEmpty() && raster_damage->isEmpty()) {
       return RasterStatus::kSuccess;
     }
 
-    if (!clip_rects.empty()) {
-      DlRegion rgn(clip_rects);
-      clip_bounds = rgn.bounds();
+    if (raster_damage.has_value() && !raster_damage->isEmpty()) {
+      clip_bounds = raster_damage->bounds();
     }
 
     if (aiks_context_ &&
         !ShouldPerformPartialRepaint(clip_bounds, layer_tree.frame_size())) {
-      clip_rects.clear();
+      raster_damage.reset();
       clip_bounds = DlIRect::MakeLTRB(0, 0, 0, 0);
       frame_damage->Reset();
     }
@@ -154,7 +153,7 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
 
   // Compute bounding rect for Preroll cull rect.
   DlRect cull_rect = kGiantRect;
-  if (!clip_rects.empty()) {
+  if (raster_damage.has_value() && !raster_damage->isEmpty()) {
     cull_rect = DlRect::Make(clip_bounds);
   }
 
@@ -183,7 +182,9 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
   } else {
     // Skia path: use bounding rect (preserve existing behavior).
     std::optional<DlRect> skia_clip =
-        clip_rects.empty() ? std::nullopt : std::make_optional(cull_rect);
+        raster_damage.has_value() && !raster_damage->isEmpty()
+            ? std::make_optional(cull_rect)
+            : std::nullopt;
     PaintLayerTreeSkia(layer_tree, skia_clip, needs_save_layer,
                        ignore_raster_cache);
   }

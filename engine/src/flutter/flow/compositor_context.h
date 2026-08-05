@@ -75,27 +75,28 @@ class FrameDamage {
     vertical_clip_alignment_ = vertical;
   }
 
-  // Calculates clip rects for current rasterization. This is diff of layer
-  // tree and previous layer tree + any additional provided damage.
-  // If previous layer tree is not specified, returns empty vector (full
-  // repaint), but the paint region of layer_tree will be calculated so that
-  // it can be used for diffing of subsequent frames.
-  std::vector<DlIRect> ComputeClipRects(
-      flutter::LayerTree& layer_tree,
-      bool has_raster_cache,
-      bool impeller_enabled,
-      TextureRegistry* texture_registry = nullptr);
+  // Calculates logical frame damage and the region that this renderer will
+  // actually replace in the backing target. The logical damage remains
+  // sparse. The current canvas and Impeller dispatch paths admit one
+  // rectangular raster clip, so buffer damage is lowered once here to the
+  // bounding rectangle of the logical buffer damage.
+  //
+  // If previous layer tree is not specified, the full frame is damaged, but
+  // the paint region of layer_tree is still calculated for subsequent frames.
+  void ComputeDamage(flutter::LayerTree& layer_tree,
+                     bool has_raster_cache,
+                     bool impeller_enabled,
+                     TextureRegistry* texture_registry = nullptr);
 
   // See Damage::frame_damage.
   std::optional<DlRegion> GetFrameDamage() const {
     return damage_ ? std::make_optional(damage_->frame_damage) : std::nullopt;
   }
 
-  // See Damage::buffer_damage.
-  std::optional<DlRegion> GetBufferDamage() {
-    return (damage_ && !ignore_damage_)
-               ? std::make_optional(damage_->buffer_damage)
-               : std::nullopt;
+  // The exact region replaced in the backing target by rasterization. This is
+  // intentionally distinct from sparse logical frame damage.
+  std::optional<DlRegion> GetBufferDamage() const {
+    return !ignore_damage_ ? raster_damage_ : std::nullopt;
   }
 
   // Remove reported buffer_damage to inform clients that a partial repaint
@@ -107,6 +108,7 @@ class FrameDamage {
  private:
   DlRegion additional_damage_;
   std::optional<Damage> damage_;
+  std::optional<DlRegion> raster_damage_;
   const LayerTree* prev_layer_tree_ = nullptr;
   int vertical_clip_alignment_ = 1;
   int horizontal_clip_alignment_ = 1;

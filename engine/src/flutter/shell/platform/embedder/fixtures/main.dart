@@ -1614,6 +1614,60 @@ void render_partial_repaint_clear_and_blur() {
 
 @pragma('vm:entry-point')
 // ignore: non_constant_identifier_names
+void render_disjoint_partial_repaint_with_translucent_gap() {
+  OffsetEngineLayer? leftLayer;
+  OffsetEngineLayer? middleLayer;
+  OffsetEngineLayer? rightLayer;
+  int frame = 0;
+
+  final middleRecorder = PictureRecorder();
+  final middleCanvas = Canvas(middleRecorder);
+  middleCanvas.drawRect(
+    const Rect.fromLTRB(300.0, 220.0, 500.0, 380.0),
+    Paint()..color = const Color.fromARGB(128, 80, 160, 240),
+  );
+  final middlePicture = middleRecorder.endRecording();
+
+  PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
+    final builder = SceneBuilder();
+
+    leftLayer = builder.pushOffset(0.0, 0.0, oldLayer: leftLayer);
+    final leftRecorder = PictureRecorder();
+    final leftCanvas = Canvas(leftRecorder);
+    leftCanvas.drawRect(
+      const Rect.fromLTRB(20.0, 220.0, 120.0, 380.0),
+      Paint()
+        ..color = frame == 0
+            ? const Color.fromARGB(255, 30, 180, 90)
+            : const Color.fromARGB(255, 220, 120, 35),
+    );
+    builder.addPicture(Offset.zero, leftRecorder.endRecording());
+    builder.pop();
+
+    middleLayer = builder.pushOffset(0.0, 0.0, oldLayer: middleLayer);
+    builder.addPicture(Offset.zero, middlePicture);
+    builder.pop();
+
+    rightLayer = builder.pushOffset(0.0, 0.0, oldLayer: rightLayer);
+    final rightRecorder = PictureRecorder();
+    final rightCanvas = Canvas(rightRecorder);
+    rightCanvas.drawRect(
+      const Rect.fromLTRB(680.0, 220.0, 780.0, 380.0),
+      Paint()
+        ..color = frame == 0
+            ? const Color.fromARGB(255, 170, 70, 210)
+            : const Color.fromARGB(255, 40, 150, 220),
+    );
+    builder.addPicture(Offset.zero, rightRecorder.endRecording());
+    builder.pop();
+
+    frame++;
+    PlatformDispatcher.instance.views.first.render(builder.build());
+  };
+}
+
+@pragma('vm:entry-point')
+// ignore: non_constant_identifier_names
 void render_impeller_test() {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
     final builder = SceneBuilder();

@@ -225,10 +225,20 @@ scratch image, copy pass, or second fence source. A full-repaint fallback
 restores `Clear`, unknown or malformed target history fails safely to full, and
 an empty exact buffer update terminates as `NoVisualChange` without raster.
 
+Logical frame damage remains sparse. The renderer's one rectangular canvas and
+Impeller dispatch are lowered once to an explicit raster/replacement region;
+that same region is the layer-tree clip, transparent clear, retained-coverage
+replacement, and reported buffer damage. This prevents unchanged translucent
+content between disjoint logical changes from blending over preserved pixels.
+The old sparse-rect coalescer was removed because every consumer immediately
+reduced its result to the same bounding rectangle, so it neither reduced raster
+work nor described the pixels actually replaced.
+
 Every target selected by the embedder is returned exactly once even when target
 construction fails. Pixel tests rotate three real targets, exercise sparse
-catch-up, transparent blur removal, and compare both partial and heuristic-full
-fallbacks byte-for-byte against a forced full repaint.
+catch-up, transparent blur removal, disjoint damage around unchanged translucent
+content, and compare both partial and heuristic-full fallbacks byte-for-byte
+against a forced full repaint.
 
 ### Patch 33: bounded Impeller pipeline-cache I/O
 

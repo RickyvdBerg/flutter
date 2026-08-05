@@ -662,7 +662,7 @@ TEST_F(EmbedderTest,
                       }));
   EXPECT_EQ(target_identifiers, (std::vector<uint64_t>{7u, 8u, 9u, 7u, 8u}));
   EXPECT_EQ(frame_damage_counts, (std::vector<int64_t>{1, 0, 0, 0, -1}));
-  EXPECT_EQ(buffer_damage_counts, (std::vector<int64_t>{-1, -1, -1, 2, -1}));
+  EXPECT_EQ(buffer_damage_counts, (std::vector<int64_t>{-1, -1, -1, 1, -1}));
   EXPECT_EQ(selected_target.create_count, 5u);
   EXPECT_EQ(selected_target.collect_count, 5u);
   engine.reset();
@@ -779,6 +779,147 @@ TEST_F(EmbedderTest,
   EXPECT_GT(frame_damage_counts[1], 0);
   EXPECT_GT(buffer_damage_counts[1], 0);
   EXPECT_EQ(buffer_damage_counts[2], -1);
+  EXPECT_EQ(selected_target.collect_count, 3u);
+  engine.reset();
+}
+
+TEST_F(EmbedderTest, SelectedTargetDamageBoundsActualRasterForTranslucentGap) {
+  auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.AddCommandLineArgument("--enable-impeller");
+  builder.SetDartEntrypoint(
+      "render_disjoint_partial_repaint_with_translucent_gap");
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      /*avoid_backing_store_cache=*/false,
+      kFlutterAvioExtensionFeatureRootRenderTarget |
+          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
+
+  SelectedTargetTestContext selected_target(context.GetCompositor());
+  builder.GetCompositor().user_data = &selected_target;
+  builder.GetCompositor().create_backing_store_callback =
+      [](const FlutterBackingStoreConfig* config,
+         FlutterBackingStore* backing_store_out, void* user_data) {
+        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
+            config, backing_store_out);
+      };
+  builder.GetCompositor().collect_backing_store_callback =
+      [](const FlutterBackingStore* backing_store, void* user_data) {
+        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
+            backing_store);
+      };
+  builder.GetCompositor().present_render_target_callback =
+      [](const FlutterPresentRenderTargetInfo* info) {
+        return reinterpret_cast<SelectedTargetTestContext*>(info->user_data)
+            ->Present(*info);
+      };
+
+  fml::AutoResetWaitableEvent result_ready;
+  fml::AutoResetWaitableEvent target_collected;
+  std::vector<FlutterPresentRenderTargetStatus> statuses;
+  std::vector<int64_t> frame_damage_counts;
+  std::vector<int64_t> buffer_damage_counts;
+  std::vector<std::vector<FlutterRect>> frame_damage_rects;
+  std::vector<std::vector<FlutterRect>> buffer_damage_rects;
+  context.GetCompositor().AddOnCollectRenderTargetCallback(
+      [&] { target_collected.Signal(); });
+  selected_target.on_result = [&](const FlutterPresentRenderTargetInfo& info) {
+    statuses.push_back(info.status);
+    const auto* present_info = info.backing_store_present_info;
+    const auto copy_region = [](const FlutterRegion* region) {
+      if (region == nullptr || region->rects_count == 0u) {
+        return std::vector<FlutterRect>{};
+      }
+      return std::vector<FlutterRect>(region->rects,
+                                      region->rects + region->rects_count);
+    };
+    const FlutterRegion* frame_damage =
+        present_info ? present_info->frame_damage : nullptr;
+    const FlutterRegion* buffer_damage =
+        present_info ? present_info->buffer_damage : nullptr;
+    frame_damage_counts.push_back(
+        frame_damage ? static_cast<int64_t>(frame_damage->rects_count) : -1);
+    buffer_damage_counts.push_back(
+        buffer_damage ? static_cast<int64_t>(buffer_damage->rects_count) : -1);
+    frame_damage_rects.push_back(copy_region(frame_damage));
+    buffer_damage_rects.push_back(copy_region(buffer_damage));
+    result_ready.Signal();
+    return true;
+  };
+
+  auto initial_scene = context.GetNextSceneImage();
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 800;
+  event.height = 600;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto initial_image = initial_scene.get();
+  ASSERT_TRUE(initial_image);
+
+  selected_target.PreserveWithoutCatchUpDamage();
+  auto partial_scene = context.GetNextSceneImage();
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto partial_image = partial_scene.get();
+  ASSERT_TRUE(partial_image);
+
+  selected_target.Invalidate();
+  auto full_reference_scene = context.GetNextSceneImage();
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto full_reference_image = full_reference_scene.get();
+  ASSERT_TRUE(full_reference_image);
+
+  EXPECT_FALSE(RasterImagesAreSame(initial_image, partial_image,
+                                   /*allowable_different_pixels=*/0));
+  EXPECT_TRUE(RasterImagesAreSame(partial_image, full_reference_image,
+                                  /*allowable_different_pixels=*/0));
+  EXPECT_EQ(statuses, (std::vector<FlutterPresentRenderTargetStatus>{
+                          kFlutterPresentRenderTargetStatusPresented,
+                          kFlutterPresentRenderTargetStatusPresented,
+                          kFlutterPresentRenderTargetStatusPresented,
+                      }));
+  ASSERT_EQ(frame_damage_counts.size(), 3u);
+  ASSERT_EQ(buffer_damage_counts.size(), 3u);
+  EXPECT_GT(frame_damage_counts[1], 1);
+  EXPECT_EQ(buffer_damage_counts[1], 1);
+  ASSERT_GT(frame_damage_rects[1].size(), 1u);
+  ASSERT_EQ(buffer_damage_rects[1].size(), 1u);
+
+  FlutterRect frame_bounds = frame_damage_rects[1][0];
+  for (size_t index = 1u; index < frame_damage_rects[1].size(); index++) {
+    const FlutterRect& rect = frame_damage_rects[1][index];
+    frame_bounds.left = std::min(frame_bounds.left, rect.left);
+    frame_bounds.top = std::min(frame_bounds.top, rect.top);
+    frame_bounds.right = std::max(frame_bounds.right, rect.right);
+    frame_bounds.bottom = std::max(frame_bounds.bottom, rect.bottom);
+  }
+  const FlutterRect& raster_bounds = buffer_damage_rects[1][0];
+  EXPECT_DOUBLE_EQ(raster_bounds.left, frame_bounds.left);
+  EXPECT_DOUBLE_EQ(raster_bounds.top, frame_bounds.top);
+  EXPECT_DOUBLE_EQ(raster_bounds.right, frame_bounds.right);
+  EXPECT_DOUBLE_EQ(raster_bounds.bottom, frame_bounds.bottom);
   EXPECT_EQ(selected_target.collect_count, 3u);
   engine.reset();
 }

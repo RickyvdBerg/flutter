@@ -25,6 +25,10 @@ TEST(RenderPassBuilder, CreatesRenderPassWithNoDepthStencil) {
 
   EXPECT_TRUE(!!render_pass);
   EXPECT_FALSE(builder.GetDepthStencil().has_value());
+  const auto& dependencies = GetLastRenderPassDependencies();
+  ASSERT_EQ(dependencies.size(), 3u);
+  EXPECT_EQ(dependencies[0].dstAccessMask,
+            VkAccessFlags{VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT});
 }
 
 TEST(RenderPassBuilder, RenderPassWithLoadOpUsesCurrentLayout) {
@@ -51,6 +55,11 @@ TEST(RenderPassBuilder, RenderPassWithLoadOpUsesCurrentLayout) {
   EXPECT_EQ(color.finalLayout, vk::ImageLayout::eShaderReadOnlyOptimal);
   EXPECT_EQ(color.loadOp, vk::AttachmentLoadOp::eLoad);
   EXPECT_EQ(color.storeOp, vk::AttachmentStoreOp::eStore);
+  const auto& dependencies = GetLastRenderPassDependencies();
+  ASSERT_EQ(dependencies.size(), 3u);
+  EXPECT_EQ(dependencies[0].dstAccessMask,
+            VkAccessFlags{VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                          VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT});
 }
 
 TEST(RenderPassBuilder, CreatesRenderPassWithCombinedDepthStencil) {

@@ -134,7 +134,7 @@ TEST(RenderPassVK, TransfersExternalRenderTargetOwnership) {
   RenderTarget target;
   ColorAttachment color;
   color.texture = external_texture;
-  color.load_action = LoadAction::kClear;
+  color.load_action = LoadAction::kLoad;
   color.store_action = StoreAction::kStore;
   target.SetColorAttachment(color, 0);
 
@@ -146,14 +146,17 @@ TEST(RenderPassVK, TransfersExternalRenderTargetOwnership) {
   auto& barriers = GetImageMemoryBarriers(
       CommandBufferVK::Cast(*command_buffer).GetCommandBuffer());
   ASSERT_EQ(barriers.size(), 2u);
-  const uint32_t local_family = static_cast<uint32_t>(
-      context->GetGraphicsQueue()->GetIndex().family);
+  const uint32_t local_family =
+      static_cast<uint32_t>(context->GetGraphicsQueue()->GetIndex().family);
 
   EXPECT_EQ(barriers[0].srcQueueFamilyIndex, VK_QUEUE_FAMILY_FOREIGN_EXT);
   EXPECT_EQ(barriers[0].dstQueueFamilyIndex, local_family);
   EXPECT_EQ(barriers[0].oldLayout, VK_IMAGE_LAYOUT_GENERAL);
   EXPECT_EQ(barriers[0].newLayout, VK_IMAGE_LAYOUT_GENERAL);
   EXPECT_EQ(barriers[0].subresourceRange.layerCount, 1u);
+  EXPECT_EQ(barriers[0].dstAccessMask,
+            VkAccessFlags{VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                          VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT});
 
   EXPECT_EQ(barriers[1].srcQueueFamilyIndex, local_family);
   EXPECT_EQ(barriers[1].dstQueueFamilyIndex, VK_QUEUE_FAMILY_FOREIGN_EXT);

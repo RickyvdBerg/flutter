@@ -146,6 +146,12 @@ need "root target is acquired before damage finalization" \
 need "Impeller first pass honors a preserved target load" \
   $F/impeller/entity/inline_pass_context.cc \
   'The first pass honors the render target'
+need "preserved foreign target acquire declares attachment reads" \
+  $F/impeller/renderer/backend/vulkan/render_pass_vk.cc \
+  'dstAccessMask \|= vk::AccessFlagBits::eColorAttachmentRead'
+need "preserved render-pass dependency declares attachment reads" \
+  $F/impeller/renderer/backend/vulkan/render_pass_builder_vk.cc \
+  'dstAccessMask \|= vk::AccessFlagBits::eColorAttachmentRead'
 absent_in "partial-raster scratch/copy compensation" \
   $F/shell/platform/embedder/embedder_external_view.cc \
   'Embedder Partial Repaint Copy|GetImpellerPartialRepaintTarget'

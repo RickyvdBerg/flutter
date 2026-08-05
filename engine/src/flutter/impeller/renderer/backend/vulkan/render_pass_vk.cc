@@ -69,10 +69,14 @@ static void EncodeExternalImageAcquire(
     const TextureSourceVK& source,
     const ExternalImageOwnershipVK& ownership,
     vk::CommandBuffer command_buffer,
-    uint32_t local_queue_family) {
+    uint32_t local_queue_family,
+    bool loads_existing_contents) {
   vk::ImageMemoryBarrier barrier;
   barrier.srcAccessMask = {};
   barrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+  if (loads_existing_contents) {
+    barrier.dstAccessMask |= vk::AccessFlagBits::eColorAttachmentRead;
+  }
   barrier.oldLayout = ownership.interchange_layout;
   barrier.newLayout = ownership.interchange_layout;
   barrier.srcQueueFamilyIndex = ownership.queue_family_index;
@@ -81,8 +85,7 @@ static void EncodeExternalImageAcquire(
   barrier.subresourceRange.aspectMask =
       ToImageAspectFlags(source.GetTextureDescriptor().format);
   barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount =
-      source.GetTextureDescriptor().mip_count;
+  barrier.subresourceRange.levelCount = source.GetTextureDescriptor().mip_count;
   barrier.subresourceRange.baseArrayLayer = 0;
   barrier.subresourceRange.layerCount =
       ToArrayLayerCount(source.GetTextureDescriptor());
@@ -112,8 +115,7 @@ static void EncodeExternalImageRelease(
   barrier.subresourceRange.aspectMask =
       ToImageAspectFlags(source.GetTextureDescriptor().format);
   barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount =
-      source.GetTextureDescriptor().mip_count;
+  barrier.subresourceRange.levelCount = source.GetTextureDescriptor().mip_count;
   barrier.subresourceRange.baseArrayLayer = 0;
   barrier.subresourceRange.layerCount =
       ToArrayLayerCount(source.GetTextureDescriptor());
@@ -236,10 +238,9 @@ RenderPassVK::RenderPassVK(const std::shared_ptr<const Context>& context,
   if (const auto ownership = frame_data_source->GetExternalImageOwnership()) {
     EncodeExternalImageAcquire(
         *frame_data_source, *ownership, command_buffer_vk_,
-        static_cast<uint32_t>(
-            vk_context.GetGraphicsQueue()->GetIndex().family));
-    frame_data_texture.SetLayoutWithoutEncoding(
-        ownership->interchange_layout);
+        static_cast<uint32_t>(vk_context.GetGraphicsQueue()->GetIndex().family),
+        !resolve_image_vk_ && color0.load_action == LoadAction::kLoad);
+    frame_data_texture.SetLayoutWithoutEncoding(ownership->interchange_layout);
   }
   frame_data = frame_data_texture.GetCachedFrameData(
       sample_count, cache_mip_level, cache_slice);

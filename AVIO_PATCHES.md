@@ -224,6 +224,10 @@ render-complete semaphore remain the only GPU ownership path. There is no
 scratch image, copy pass, or second fence source. A full-repaint fallback
 restores `Clear`, unknown or malformed target history fails safely to full, and
 an empty exact buffer update terminates as `NoVisualChange` without raster.
+Because `Load` reads the retained color attachment, both the foreign-queue
+acquire barrier and the render pass's incoming dependency declare color
+attachment read access alongside write access. Clear targets remain
+write-only.
 
 Logical frame damage remains sparse. The renderer's one rectangular canvas and
 Impeller dispatch are lowered once to an explicit raster/replacement region;

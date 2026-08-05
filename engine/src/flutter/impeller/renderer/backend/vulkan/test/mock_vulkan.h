@@ -30,6 +30,8 @@ std::vector<std::vector<uint32_t>> GetMockVulkanQueueSubmitSignalCounts();
 std::vector<std::vector<std::vector<uint64_t>>>
 GetMockVulkanQueueSubmitSignalValues();
 
+const std::vector<VkSubpassDependency>& GetLastRenderPassDependencies();
+
 // A test-controlled version of |vk::Fence|.
 class MockFence final {
  public:

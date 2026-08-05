@@ -202,6 +202,16 @@ vk::UniqueRenderPass RenderPassBuilderVK::Build(
                           vk::AccessFlagBits::eColorAttachmentWrite;
   deps[0].dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
   deps[0].dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+  bool loads_existing_color =
+      color0_.has_value() && color0_->loadOp == vk::AttachmentLoadOp::eLoad;
+  for (const auto& [_, color] : colors_) {
+    loads_existing_color |= color.loadOp == vk::AttachmentLoadOp::eLoad;
+  }
+  // A render-pass LOAD is a color-attachment read. Keep it in the same
+  // destination scope as the writes that follow it.
+  if (loads_existing_color) {
+    deps[0].dstAccessMask |= vk::AccessFlagBits::eColorAttachmentRead;
+  }
   deps[0].dependencyFlags = kSelfDependencyFlags;
 
   // Self dependency for reading back the framebuffer, necessary for

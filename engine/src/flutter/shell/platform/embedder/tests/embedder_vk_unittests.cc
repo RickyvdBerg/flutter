@@ -783,6 +783,131 @@ TEST_F(EmbedderTest,
   engine.reset();
 }
 
+TEST_F(EmbedderTest,
+       SelectedTargetDamageClearsFullyRemovedSceneBeforeNoVisualChange) {
+  auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.AddCommandLineArgument("--enable-impeller");
+  builder.SetDartEntrypoint("render_then_clear_to_empty");
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      /*avoid_backing_store_cache=*/false,
+      kFlutterAvioExtensionFeatureRootRenderTarget |
+          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
+
+  SelectedTargetTestContext selected_target(context.GetCompositor());
+  builder.GetCompositor().user_data = &selected_target;
+  builder.GetCompositor().create_backing_store_callback =
+      [](const FlutterBackingStoreConfig* config,
+         FlutterBackingStore* backing_store_out, void* user_data) {
+        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
+            config, backing_store_out);
+      };
+  builder.GetCompositor().collect_backing_store_callback =
+      [](const FlutterBackingStore* backing_store, void* user_data) {
+        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
+            backing_store);
+      };
+  builder.GetCompositor().present_render_target_callback =
+      [](const FlutterPresentRenderTargetInfo* info) {
+        return reinterpret_cast<SelectedTargetTestContext*>(info->user_data)
+            ->Present(*info);
+      };
+
+  fml::AutoResetWaitableEvent result_ready;
+  fml::AutoResetWaitableEvent target_collected;
+  std::vector<FlutterPresentRenderTargetStatus> statuses;
+  std::vector<int64_t> frame_damage_counts;
+  std::vector<int64_t> buffer_damage_counts;
+  context.GetCompositor().AddOnCollectRenderTargetCallback(
+      [&] { target_collected.Signal(); });
+  selected_target.on_result = [&](const FlutterPresentRenderTargetInfo& info) {
+    statuses.push_back(info.status);
+    const auto* present_info = info.backing_store_present_info;
+    frame_damage_counts.push_back(
+        present_info && present_info->frame_damage
+            ? static_cast<int64_t>(present_info->frame_damage->rects_count)
+            : -1);
+    buffer_damage_counts.push_back(
+        present_info && present_info->buffer_damage
+            ? static_cast<int64_t>(present_info->buffer_damage->rects_count)
+            : -1);
+    result_ready.Signal();
+    return true;
+  };
+
+  auto initial_scene = context.GetNextSceneImage();
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 800;
+  event.height = 600;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto initial_image = initial_scene.get();
+  ASSERT_TRUE(initial_image);
+
+  selected_target.PreserveWithoutCatchUpDamage();
+  auto cleared_scene = context.GetNextSceneImage();
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto cleared_image = cleared_scene.get();
+  ASSERT_TRUE(cleared_image);
+
+  selected_target.Invalidate();
+  auto full_reference_scene = context.GetNextSceneImage();
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto full_reference_image = full_reference_scene.get();
+  ASSERT_TRUE(full_reference_image);
+
+  selected_target.PreserveWithoutCatchUpDamage();
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusNoVisualChange);
+
+  EXPECT_FALSE(RasterImagesAreSame(initial_image, cleared_image,
+                                   /*allowable_different_pixels=*/0));
+  EXPECT_TRUE(RasterImagesAreSame(cleared_image, full_reference_image,
+                                  /*allowable_different_pixels=*/0));
+  EXPECT_EQ(statuses, (std::vector<FlutterPresentRenderTargetStatus>{
+                          kFlutterPresentRenderTargetStatusPresented,
+                          kFlutterPresentRenderTargetStatusPresented,
+                          kFlutterPresentRenderTargetStatusPresented,
+                          kFlutterPresentRenderTargetStatusNoVisualChange,
+                      }));
+  ASSERT_EQ(frame_damage_counts.size(), 4u);
+  ASSERT_EQ(buffer_damage_counts.size(), 4u);
+  EXPECT_GT(frame_damage_counts[1], 0);
+  EXPECT_GT(buffer_damage_counts[1], 0);
+  EXPECT_EQ(buffer_damage_counts[2], -1);
+  EXPECT_EQ(buffer_damage_counts[3], -1);
+  EXPECT_EQ(selected_target.collect_count, 4u);
+  engine.reset();
+}
+
 TEST_F(EmbedderTest, SelectedTargetDamageBoundsActualRasterForTranslucentGap) {
   auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
 

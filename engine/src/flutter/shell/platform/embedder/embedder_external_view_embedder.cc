@@ -980,7 +980,8 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
   }
 
   auto& root_view = root_found->second;
-  if (!root_view->HasEngineRenderedContents() && compositor_materials.empty()) {
+  if (!selected_target_damage_ && !root_view->HasEngineRenderedContents() &&
+      compositor_materials.empty()) {
     CompleteRootRenderTarget(
         flutter_view_id, kFlutterPresentRenderTargetStatusNoVisualChange,
         pending_root_render_target_

@@ -224,6 +224,11 @@ render-complete semaphore remain the only GPU ownership path. There is no
 scratch image, copy pass, or second fence source. A full-repaint fallback
 restores `Clear`, unknown or malformed target history fails safely to full, and
 an empty exact buffer update terminates as `NoVisualChange` without raster.
+An empty current display list is not itself a no-change proof: when its exact
+buffer damage removes pixels from the preserved target, the engine performs a
+clear-only render, replaces retained coverage, and publishes that damage. Only
+exact empty selected-buffer damage may terminalize a selected target as
+`NoVisualChange`.
 Because `Load` reads the retained color attachment, both the foreign-queue
 acquire barrier and the render pass's incoming dependency declare color
 attachment read access alongside write access. Clear targets remain
@@ -240,9 +245,9 @@ work nor described the pixels actually replaced.
 
 Every target selected by the embedder is returned exactly once even when target
 construction fails. Pixel tests rotate three real targets, exercise sparse
-catch-up, transparent blur removal, disjoint damage around unchanged translucent
-content, and compare both partial and heuristic-full fallbacks byte-for-byte
-against a forced full repaint.
+catch-up, transparent blur removal, complete scene removal, disjoint damage
+around unchanged translucent content, and compare both partial and
+heuristic-full fallbacks byte-for-byte against a forced full repaint.
 
 ### Patch 33: bounded Impeller pipeline-cache I/O
 

@@ -132,9 +132,9 @@ bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
                                   bool clear_surface) {
   TRACE_EVENT0("flutter", "EmbedderExternalView::Render");
   TryEndRecording();
-  FML_DCHECK(HasEngineRenderedContents())
-      << "Unnecessarily asked to render into a render target when there was "
-         "nothing to render.";
+  // A selected retained target can require a clear-only render when the current
+  // display list is empty but buffer damage removes pixels from the prior
+  // frame. The damage clear below is the render work in that case.
 
   DlMatrix render_transform =
       DlMatrix::MakeTranslation(

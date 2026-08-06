@@ -167,6 +167,12 @@ need "disjoint translucent replacement pixel regression" \
 need "full fallback clears preserved selected target" \
   $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
   'SelectedTargetDamageFullFallbackClearsPreservedTarget'
+need "selected-target no-change waits for exact empty buffer damage" \
+  $F/shell/platform/embedder/embedder_external_view_embedder.cc \
+  '!selected_target_damage_ &&'
+need "complete scene removal clears a preserved selected target" \
+  $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
+  'SelectedTargetDamageClearsFullyRemovedSceneBeforeNoVisualChange'
 
 echo "--- Typed backing stores / chrome ---"
 need "FlutterBackingStoreRequestType enum" \

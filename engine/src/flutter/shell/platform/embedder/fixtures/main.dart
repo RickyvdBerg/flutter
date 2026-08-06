@@ -1573,6 +1573,27 @@ void render_gradient_retained() {
 
 @pragma('vm:entry-point')
 // ignore: non_constant_identifier_names
+void render_then_clear_to_empty() {
+  int frame = 0;
+  PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
+    final builder = SceneBuilder();
+    if (frame == 0) {
+      final recorder = PictureRecorder();
+      final canvas = Canvas(recorder);
+      canvas.drawRect(
+        const Rect.fromLTRB(120.0, 140.0, 520.0, 360.0),
+        Paint()..color = const Color.fromARGB(255, 30, 180, 90),
+      );
+      builder.addPicture(Offset.zero, recorder.endRecording());
+    }
+    frame++;
+    PlatformDispatcher.instance.views.first.render(builder.build());
+  };
+  PlatformDispatcher.instance.scheduleFrame();
+}
+
+@pragma('vm:entry-point')
+// ignore: non_constant_identifier_names
 void render_partial_repaint_clear_and_blur() {
   OffsetEngineLayer? staticLayer;
   OffsetEngineLayer? effectLayer;

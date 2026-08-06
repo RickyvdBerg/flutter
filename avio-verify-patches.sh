@@ -173,6 +173,9 @@ need "selected-target no-change waits for exact empty buffer damage" \
 need "complete scene removal clears a preserved selected target" \
   $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
   'SelectedTargetDamageClearsFullyRemovedSceneBeforeNoVisualChange'
+need "initial empty selected target remains unpublished" \
+  $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
+  'SelectedTargetDamageInitialEmptySceneDoesNotPublishUnknownTarget'
 
 echo "--- Typed backing stores / chrome ---"
 need "FlutterBackingStoreRequestType enum" \

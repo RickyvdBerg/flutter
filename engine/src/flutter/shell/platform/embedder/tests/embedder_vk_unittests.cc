@@ -908,6 +908,76 @@ TEST_F(EmbedderTest,
   engine.reset();
 }
 
+TEST_F(EmbedderTest,
+       SelectedTargetDamageInitialEmptySceneDoesNotPublishUnknownTarget) {
+  auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.AddCommandLineArgument("--enable-impeller");
+  builder.SetDartEntrypoint("empty_scene_posts_zero_layers_to_compositor");
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      /*avoid_backing_store_cache=*/false,
+      kFlutterAvioExtensionFeatureRootRenderTarget |
+          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
+
+  SelectedTargetTestContext selected_target(context.GetCompositor());
+  builder.GetCompositor().user_data = &selected_target;
+  builder.GetCompositor().create_backing_store_callback =
+      [](const FlutterBackingStoreConfig* config,
+         FlutterBackingStore* backing_store_out, void* user_data) {
+        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
+            config, backing_store_out);
+      };
+  builder.GetCompositor().collect_backing_store_callback =
+      [](const FlutterBackingStore* backing_store, void* user_data) {
+        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
+            backing_store);
+      };
+  builder.GetCompositor().present_render_target_callback =
+      [](const FlutterPresentRenderTargetInfo* info) {
+        return reinterpret_cast<SelectedTargetTestContext*>(info->user_data)
+            ->Present(*info);
+      };
+
+  fml::AutoResetWaitableEvent result_ready;
+  fml::AutoResetWaitableEvent target_collected;
+  FlutterPresentRenderTargetStatus status =
+      kFlutterPresentRenderTargetStatusInternalInvariantViolation;
+  context.GetCompositor().AddOnCollectRenderTargetCallback(
+      [&] { target_collected.Signal(); });
+  selected_target.on_result = [&](const FlutterPresentRenderTargetInfo& info) {
+    status = info.status;
+    EXPECT_NE(info.backing_store, nullptr);
+    EXPECT_EQ(info.backing_store_present_info, nullptr);
+    result_ready.Signal();
+    return true;
+  };
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 800;
+  event.height = 600;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+
+  EXPECT_EQ(status, kFlutterPresentRenderTargetStatusNoVisualChange);
+  EXPECT_EQ(selected_target.create_count, 1u);
+  EXPECT_EQ(selected_target.present_count, 1u);
+  EXPECT_EQ(selected_target.collect_count, 1u);
+  engine.reset();
+}
+
 TEST_F(EmbedderTest, SelectedTargetDamageBoundsActualRasterForTranslucentGap) {
   auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
 

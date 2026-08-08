@@ -126,10 +126,11 @@ static void InvalidateApiState(SkSurface& skia_surface) {
 }
 #endif
 
-bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
-                                  const DlRect& render_target_bounds,
-                                  const std::optional<DlRegion>& buffer_damage,
-                                  bool clear_surface) {
+EmbedderExternalView::RenderResult EmbedderExternalView::Render(
+    const EmbedderRenderTarget& render_target,
+    const DlRect& render_target_bounds,
+    const std::optional<DlRegion>& buffer_damage,
+    bool clear_surface) {
   TRACE_EVENT0("flutter", "EmbedderExternalView::Render");
   TryEndRecording();
   // A selected retained target can require a clear-only render when the current
@@ -177,7 +178,10 @@ bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
         }
       }
       if (damage_rects.empty()) {
-        return true;
+        // Every requested rectangle fell outside the target. No pass runs, so
+        // the target still holds exactly its previous contents; saying
+        // otherwise would let the caller record this frame as its history.
+        return RenderResult::kNoVisualChange;
       }
     }
     dl_builder.SetTransform(render_transform);
@@ -188,23 +192,27 @@ bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
       return impeller::RenderToTarget(aiks_context->GetContentContext(), target,
                                       display_list, damage_rects,
                                       /*reset_host_buffer=*/true,
-                                      /*is_onscreen=*/false);
+                                      /*is_onscreen=*/false)
+                 ? RenderResult::kRenderedRequestedDamage
+                 : RenderResult::kFailed;
     }
     return impeller::RenderToTarget(
-        aiks_context->GetContentContext(), target, display_list,
-        impeller::Rect::MakeSize(target.GetRenderTargetSize()),
-        /*reset_host_buffer=*/true,
-        /*is_onscreen=*/false);
+               aiks_context->GetContentContext(), target, display_list,
+               impeller::Rect::MakeSize(target.GetRenderTargetSize()),
+               /*reset_host_buffer=*/true,
+               /*is_onscreen=*/false)
+               ? RenderResult::kRenderedFullTarget
+               : RenderResult::kFailed;
   }
 #endif  // IMPELLER_SUPPORTS_RENDERING
 
 #if SLIMPELLER
   FML_LOG(FATAL) << "Impeller opt-out unavailable.";
-  return false;
+  return RenderResult::kFailed;
 #else   // SLIMPELLER
   auto skia_surface = render_target.GetSkiaSurface();
   if (!skia_surface) {
-    return false;
+    return RenderResult::kFailed;
   }
 
   auto [ok, invalidate_api_state] = render_target.MaybeMakeCurrent();
@@ -214,7 +222,7 @@ bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
   }
   if (!ok) {
     FML_LOG(ERROR) << "Could not make the surface current.";
-    return false;
+    return RenderResult::kFailed;
   }
 
   // Clear the current render target (most likely EGLSurface) at the
@@ -236,7 +244,7 @@ bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
 
   auto canvas = skia_surface->getCanvas();
   if (!canvas) {
-    return false;
+    return RenderResult::kFailed;
   }
   DlSkCanvasAdapter dl_canvas(canvas);
   int restore_count = dl_canvas.GetSaveCount();
@@ -249,7 +257,9 @@ bool EmbedderExternalView::Render(const EmbedderRenderTarget& render_target,
   dl_canvas.Flush();
 #endif  //  !SLIMPELLER
 
-  return true;
+  // The Skia path has no partial-repaint mode; it always paints the whole
+  // surface.
+  return RenderResult::kRenderedFullTarget;
 }
 
 void EmbedderExternalView::TryEndRecording() const {

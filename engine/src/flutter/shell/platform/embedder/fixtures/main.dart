@@ -1687,6 +1687,154 @@ void render_disjoint_partial_repaint_with_translucent_gap() {
   };
 }
 
+// Frame 0 and every later frame push a save layer of the same size in
+// different places. The offscreen the first one used goes back to the render
+// target cache and is handed to the second, which covers only a quarter of it
+// with its own content. Whatever the second layer does not draw must be
+// transparent, not the first layer's pixels.
+//
+// The clip is what fixes the offscreen's size: a clip with
+// `antiAliasWithSaveLayer` sizes its layer from the clip, not from the
+// content, so the two frames' layers are the same size no matter how much of
+// them gets painted. The two rectangles inside each layer overlap on purpose
+// -- overlapping content cannot absorb the group opacity, so Impeller has to
+// allocate a real offscreen instead of folding the opacity into the draws.
+//
+// Every edge here is axis-aligned on an integer pixel. A rounded clip would
+// antialias its corners, and the frames being compared straddle an MSAA
+// boundary (a preserved target renders single-sample, a full repaint does
+// not), so antialiased edges would differ for reasons that have nothing to do
+// with what this is testing.
+@pragma('vm:entry-point')
+// ignore: non_constant_identifier_names
+void render_partial_repaint_through_recycled_save_layers() {
+  OpacityEngineLayer? opacityLayer;
+  ClipRectEngineLayer? clipLayer;
+  int frame = 0;
+
+  PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
+    final builder = SceneBuilder();
+    final Rect bounds = frame == 0
+        ? const Rect.fromLTRB(100.0, 100.0, 300.0, 300.0)
+        : const Rect.fromLTRB(400.0, 300.0, 600.0, 500.0);
+
+    opacityLayer = builder.pushOpacity(160, oldLayer: opacityLayer);
+    clipLayer = builder.pushClipRect(
+      bounds,
+      clipBehavior: Clip.antiAliasWithSaveLayer,
+      oldLayer: clipLayer,
+    );
+
+    final recorder = PictureRecorder();
+    final canvas = Canvas(recorder);
+    if (frame == 0) {
+      // Content fills the whole layer, so its offscreen goes back to the cache
+      // opaque from edge to edge.
+      canvas.drawRect(
+        const Rect.fromLTRB(100.0, 100.0, 300.0, 220.0),
+        Paint()..color = const Color.fromARGB(255, 230, 40, 40),
+      );
+      canvas.drawRect(
+        const Rect.fromLTRB(100.0, 180.0, 300.0, 300.0),
+        Paint()..color = const Color.fromARGB(255, 230, 40, 40),
+      );
+    } else {
+      // Content covers the top-left quarter only.
+      canvas.drawRect(
+        const Rect.fromLTRB(400.0, 300.0, 500.0, 370.0),
+        Paint()..color = const Color.fromARGB(255, 40, 120, 230),
+      );
+      canvas.drawRect(
+        const Rect.fromLTRB(400.0, 350.0, 500.0, 400.0),
+        Paint()..color = const Color.fromARGB(255, 40, 120, 230),
+      );
+    }
+    builder.addPicture(Offset.zero, recorder.endRecording());
+
+    builder.pop();
+    builder.pop();
+
+    frame++;
+    PlatformDispatcher.instance.views.first.render(builder.build());
+  };
+}
+
+// A scene with a backdrop filter at the root of every frame, and one small
+// rectangle underneath it that changes colour. The backdrop filter makes
+// Impeller raster the frame into an offscreen and copy that offscreen, whole,
+// over the target; the damage is small, so nothing else stops the engine from
+// asking for a partial repaint. Honoring that request would let the copy take
+// every preserved pixel outside the damage with it.
+//
+// The filter is clipped, and the changing rectangle sits inside the clip.
+// Both matter: an unclipped filter reads the whole frame and the damage
+// heuristic falls back to a full repaint on its own, and a change outside the
+// clip culls the filter out of the frame entirely. Either one would make this
+// test prove nothing.
+@pragma('vm:entry-point')
+// ignore: non_constant_identifier_names
+void render_partial_repaint_with_root_backdrop_filter() {
+  const Rect overlay = Rect.fromLTRB(300.0, 220.0, 460.0, 340.0);
+
+  OffsetEngineLayer? backgroundLayer;
+  OffsetEngineLayer? movingLayer;
+  ClipRectEngineLayer? clipLayer;
+  BackdropFilterEngineLayer? filterLayer;
+  int frame = 0;
+
+  // Hoisted so the retained layers holding them see the same picture every
+  // frame and contribute no damage of their own.
+  final backgroundRecorder = PictureRecorder();
+  final backgroundCanvas = Canvas(backgroundRecorder);
+  backgroundCanvas.drawRect(
+    const Rect.fromLTRB(0.0, 0.0, 800.0, 600.0),
+    Paint()..color = const Color.fromARGB(255, 25, 30, 45),
+  );
+  backgroundCanvas.drawRect(
+    const Rect.fromLTRB(150.0, 150.0, 650.0, 450.0),
+    Paint()..color = const Color.fromARGB(255, 90, 60, 200),
+  );
+  final backgroundPicture = backgroundRecorder.endRecording();
+
+  final overlayRecorder = PictureRecorder();
+  final overlayCanvas = Canvas(overlayRecorder);
+  overlayCanvas.drawRect(overlay, Paint()..color = const Color.fromARGB(90, 255, 255, 255));
+  final overlayPicture = overlayRecorder.endRecording();
+
+  PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
+    final builder = SceneBuilder();
+
+    backgroundLayer = builder.pushOffset(0.0, 0.0, oldLayer: backgroundLayer);
+    builder.addPicture(Offset.zero, backgroundPicture);
+    builder.pop();
+
+    movingLayer = builder.pushOffset(0.0, 0.0, oldLayer: movingLayer);
+    final movingRecorder = PictureRecorder();
+    final movingCanvas = Canvas(movingRecorder);
+    movingCanvas.drawRect(
+      const Rect.fromLTRB(320.0, 240.0, 380.0, 300.0),
+      Paint()
+        ..color = frame == 0
+            ? const Color.fromARGB(255, 30, 180, 90)
+            : const Color.fromARGB(255, 220, 120, 35),
+    );
+    builder.addPicture(Offset.zero, movingRecorder.endRecording());
+    builder.pop();
+
+    clipLayer = builder.pushClipRect(overlay, oldLayer: clipLayer);
+    filterLayer = builder.pushBackdropFilter(
+      ImageFilter.blur(sigmaX: 8.0, sigmaY: 8.0),
+      oldLayer: filterLayer,
+    );
+    builder.addPicture(Offset.zero, overlayPicture);
+    builder.pop();
+    builder.pop();
+
+    frame++;
+    PlatformDispatcher.instance.views.first.render(builder.build());
+  };
+}
+
 @pragma('vm:entry-point')
 // ignore: non_constant_identifier_names
 void render_impeller_test() {

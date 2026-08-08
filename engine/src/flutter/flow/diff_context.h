@@ -34,6 +34,13 @@ struct Damage {
   // upfront may be useful for tile based GPUs.
   // Corresponds to "buffer damage" from EGL_KHR_partial_update.
   DlRegion buffer_damage;
+
+  // Whether any layer in this frame reads back what is beneath it -- today,
+  // a backdrop filter. Impeller rasters such a frame into an offscreen and
+  // then copies that offscreen, whole, over the target, so the frame cannot
+  // be a partial repaint however small its damage is. Known before the tree
+  // is prerolled, which is when that has to be decided.
+  bool has_readback = false;
 };
 
 // Layer Unique Id to PaintRegion

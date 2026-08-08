@@ -153,6 +153,14 @@ static std::unique_ptr<EntityPassTarget> CreateRenderTarget(
   /// `RenderPasses` are created, so we just set them to `kDontCare` here.
   /// What's important is the `StorageMode` of the textures, which cannot be
   /// changed for the lifetime of the textures.
+  ///
+  /// `kDontCare` here is a statement that this code does not choose the load
+  /// action, not a statement that the target's contents are disposable. These
+  /// targets come from `RenderTargetCache`, which recycles textures within a
+  /// frame, so a fresh one arrives holding the previous tenant's pixels.
+  /// `InlinePassContext` must therefore clear the first pass over them; that
+  /// is why it is constructed with `honor_declared_load_action=false`
+  /// everywhere except the root pass over the caller's own render target.
 
   RenderTarget target;
   if (context->GetCapabilities()->SupportsOffscreenMSAA()) {
@@ -1623,15 +1631,20 @@ void Canvas::SetupRenderPass() {
                            color0.texture->GetSize(),  //
                            /*clear_color=*/Color::BlackTransparent());
     render_passes_.push_back(
-        LazyRenderingConfig(renderer_, std::move(entity_pass_target)));
+        LazyRenderingConfig(renderer_, std::move(entity_pass_target),
+                            /*honor_declared_load_action=*/false));
   } else {
     auto entity_pass_target = std::make_unique<EntityPassTarget>(
         render_target_,                                                    //
         renderer_.GetDeviceCapabilities().SupportsReadFromResolve(),       //
         renderer_.GetDeviceCapabilities().SupportsImplicitResolvingMSAA()  //
     );
+    // This is the one target the caller owns, so its declared load action is
+    // authoritative: an embedder doing partial repaint declares `kLoad` to
+    // keep the pixels it preserved outside the damage region.
     render_passes_.push_back(
-        LazyRenderingConfig(renderer_, std::move(entity_pass_target)));
+        LazyRenderingConfig(renderer_, std::move(entity_pass_target),
+                            /*honor_declared_load_action=*/true));
   }
 }
 
@@ -1886,12 +1899,14 @@ void Canvas::SaveLayer(const Paint& paint,
   paint_copy.color.alpha *= transform_stack_.back().distributed_opacity;
   transform_stack_.back().distributed_opacity = 1.0;
 
-  render_passes_.push_back(
-      LazyRenderingConfig(renderer_,                                    //
-                          CreateRenderTarget(renderer_,                 //
-                                             subpass_size,              //
-                                             Color::BlackTransparent()  //
-                                             )));
+  render_passes_.push_back(LazyRenderingConfig(
+      renderer_,                                    //
+      CreateRenderTarget(renderer_,                 //
+                         subpass_size,              //
+                         Color::BlackTransparent()  //
+                         ),                         //
+      /*honor_declared_load_action=*/false          //
+      ));
   save_layer_state_.push_back(SaveLayerState{
       paint_copy, subpass_coverage.Shift(-coverage_origin_adjustment)});
 
@@ -2459,8 +2474,11 @@ std::shared_ptr<Texture> Canvas::FlipBackdrop(Point global_pass_position,
         renderer_.GetDeviceCapabilities().SupportsReadFromResolve(),       //
         renderer_.GetDeviceCapabilities().SupportsImplicitResolvingMSAA()  //
     );
+    // The load action was just chosen for this target two statements above,
+    // against the backdrop restore that immediately follows.
     render_passes_.push_back(
-        LazyRenderingConfig(renderer_, std::move(entity_pass_target)));
+        LazyRenderingConfig(renderer_, std::move(entity_pass_target),
+                            /*honor_declared_load_action=*/true));
     requires_readback_ = false;
   } else {
     render_passes_.emplace_back(std::move(rendering_config));
@@ -2667,10 +2685,11 @@ bool Canvas::IsCompatibleWithSDFRendering(const Paint& paint) {
 
 LazyRenderingConfig::LazyRenderingConfig(
     ContentContext& renderer,
-    std::unique_ptr<EntityPassTarget> p_entity_pass_target)
+    std::unique_ptr<EntityPassTarget> p_entity_pass_target,
+    bool honor_declared_load_action)
     : entity_pass_target_(std::move(p_entity_pass_target)) {
-  inline_pass_context_ =
-      std::make_unique<InlinePassContext>(renderer, *entity_pass_target_);
+  inline_pass_context_ = std::make_unique<InlinePassContext>(
+      renderer, *entity_pass_target_, honor_declared_load_action);
 }
 
 bool LazyRenderingConfig::IsApplyingClearColor() const {

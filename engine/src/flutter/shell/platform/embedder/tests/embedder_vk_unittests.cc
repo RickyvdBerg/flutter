@@ -1224,6 +1224,233 @@ TEST_F(EmbedderTest, SelectedTargetDamageFullFallbackClearsPreservedTarget) {
   engine.reset();
 }
 
+TEST_F(EmbedderTest, SelectedTargetDamageClearsRecycledSaveLayerTargets) {
+  auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.AddCommandLineArgument("--enable-impeller");
+  builder.SetDartEntrypoint(
+      "render_partial_repaint_through_recycled_save_layers");
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      /*avoid_backing_store_cache=*/false,
+      kFlutterAvioExtensionFeatureRootRenderTarget |
+          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
+
+  SelectedTargetTestContext selected_target(context.GetCompositor());
+  builder.GetCompositor().user_data = &selected_target;
+  builder.GetCompositor().create_backing_store_callback =
+      [](const FlutterBackingStoreConfig* config,
+         FlutterBackingStore* backing_store_out, void* user_data) {
+        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
+            config, backing_store_out);
+      };
+  builder.GetCompositor().collect_backing_store_callback =
+      [](const FlutterBackingStore* backing_store, void* user_data) {
+        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
+            backing_store);
+      };
+  builder.GetCompositor().present_render_target_callback =
+      [](const FlutterPresentRenderTargetInfo* info) {
+        return reinterpret_cast<SelectedTargetTestContext*>(info->user_data)
+            ->Present(*info);
+      };
+
+  fml::AutoResetWaitableEvent result_ready;
+  fml::AutoResetWaitableEvent target_collected;
+  std::vector<FlutterPresentRenderTargetStatus> statuses;
+  std::vector<int64_t> buffer_damage_counts;
+  context.GetCompositor().AddOnCollectRenderTargetCallback(
+      [&] { target_collected.Signal(); });
+  selected_target.on_result = [&](const FlutterPresentRenderTargetInfo& info) {
+    statuses.push_back(info.status);
+    const auto* present_info = info.backing_store_present_info;
+    const FlutterRegion* buffer_damage =
+        present_info ? present_info->buffer_damage : nullptr;
+    buffer_damage_counts.push_back(
+        buffer_damage ? static_cast<int64_t>(buffer_damage->rects_count) : -1);
+    result_ready.Signal();
+    return true;
+  };
+
+  auto initial_scene = context.GetNextSceneImage();
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 800;
+  event.height = 600;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto initial_image = initial_scene.get();
+  ASSERT_TRUE(initial_image);
+
+  // The second frame retires the first frame's save layer offscreen into the
+  // render target cache and asks for a same-sized one, which it only partly
+  // paints.
+  selected_target.PreserveWithoutCatchUpDamage();
+  auto partial_scene = context.GetNextSceneImage();
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto partial_image = partial_scene.get();
+  ASSERT_TRUE(partial_image);
+
+  // Same scene, forced through the full-repaint path. Any pixel the partial
+  // frame inherited from a recycled offscreen shows up as a difference here.
+  selected_target.Invalidate();
+  auto full_reference_scene = context.GetNextSceneImage();
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto full_reference_image = full_reference_scene.get();
+  ASSERT_TRUE(full_reference_image);
+
+  EXPECT_FALSE(RasterImagesAreSame(initial_image, partial_image,
+                                   /*allowable_different_pixels=*/0));
+  EXPECT_TRUE(RasterImagesAreSame(partial_image, full_reference_image,
+                                  /*allowable_different_pixels=*/0));
+  EXPECT_EQ(statuses, (std::vector<FlutterPresentRenderTargetStatus>{
+                          kFlutterPresentRenderTargetStatusPresented,
+                          kFlutterPresentRenderTargetStatusPresented,
+                          kFlutterPresentRenderTargetStatusPresented,
+                      }));
+  // The middle frame has to have actually taken the partial path, or the
+  // comparison above proves nothing.
+  ASSERT_EQ(buffer_damage_counts.size(), 3u);
+  EXPECT_EQ(buffer_damage_counts[0], -1);
+  EXPECT_GE(buffer_damage_counts[1], 1);
+  EXPECT_EQ(buffer_damage_counts[2], -1);
+  engine.reset();
+}
+
+TEST_F(EmbedderTest, SelectedTargetDamageRefusedWhenRootPassNeedsReadback) {
+  auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.AddCommandLineArgument("--enable-impeller");
+  builder.SetDartEntrypoint("render_partial_repaint_with_root_backdrop_filter");
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      /*avoid_backing_store_cache=*/false,
+      kFlutterAvioExtensionFeatureRootRenderTarget |
+          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
+
+  SelectedTargetTestContext selected_target(context.GetCompositor());
+  builder.GetCompositor().user_data = &selected_target;
+  builder.GetCompositor().create_backing_store_callback =
+      [](const FlutterBackingStoreConfig* config,
+         FlutterBackingStore* backing_store_out, void* user_data) {
+        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
+            config, backing_store_out);
+      };
+  builder.GetCompositor().collect_backing_store_callback =
+      [](const FlutterBackingStore* backing_store, void* user_data) {
+        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
+            backing_store);
+      };
+  builder.GetCompositor().present_render_target_callback =
+      [](const FlutterPresentRenderTargetInfo* info) {
+        return reinterpret_cast<SelectedTargetTestContext*>(info->user_data)
+            ->Present(*info);
+      };
+
+  fml::AutoResetWaitableEvent result_ready;
+  fml::AutoResetWaitableEvent target_collected;
+  std::vector<FlutterPresentRenderTargetStatus> statuses;
+  std::vector<int64_t> buffer_damage_counts;
+  context.GetCompositor().AddOnCollectRenderTargetCallback(
+      [&] { target_collected.Signal(); });
+  selected_target.on_result = [&](const FlutterPresentRenderTargetInfo& info) {
+    statuses.push_back(info.status);
+    const auto* present_info = info.backing_store_present_info;
+    const FlutterRegion* buffer_damage =
+        present_info ? present_info->buffer_damage : nullptr;
+    buffer_damage_counts.push_back(
+        buffer_damage ? static_cast<int64_t>(buffer_damage->rects_count) : -1);
+    result_ready.Signal();
+    return true;
+  };
+
+  auto initial_scene = context.GetNextSceneImage();
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 800;
+  event.height = 600;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto initial_image = initial_scene.get();
+  ASSERT_TRUE(initial_image);
+
+  // The target is preserved and the frame damage is sparse, so the engine
+  // would ordinarily raster only the damage. It must not: the root backdrop
+  // filter makes Impeller copy a whole offscreen over this target.
+  selected_target.PreserveWithoutCatchUpDamage();
+  auto readback_scene = context.GetNextSceneImage();
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto readback_image = readback_scene.get();
+  ASSERT_TRUE(readback_image);
+
+  // Full catch-up damage rather than an invalidated target: the target stays
+  // preserved, so it keeps the same single-sample configuration as the frame
+  // above, and only the damage differs between the two.
+  selected_target.PreserveWithFullCatchUpDamage();
+  auto full_reference_scene = context.GetNextSceneImage();
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto full_reference_image = full_reference_scene.get();
+  ASSERT_TRUE(full_reference_image);
+
+  EXPECT_FALSE(RasterImagesAreSame(initial_image, readback_image,
+                                   /*allowable_different_pixels=*/0));
+  EXPECT_TRUE(RasterImagesAreSame(readback_image, full_reference_image,
+                                  /*allowable_different_pixels=*/0));
+  EXPECT_EQ(statuses, (std::vector<FlutterPresentRenderTargetStatus>{
+                          kFlutterPresentRenderTargetStatusPresented,
+                          kFlutterPresentRenderTargetStatusPresented,
+                          kFlutterPresentRenderTargetStatusPresented,
+                      }));
+  // No buffer damage on any of the three frames: the readback frame published
+  // a full repaint rather than a rectangle it did not honor.
+  EXPECT_EQ(buffer_damage_counts, (std::vector<int64_t>{-1, -1, -1}));
+  engine.reset();
+}
+
 }  // namespace testing
 }  // namespace flutter
 

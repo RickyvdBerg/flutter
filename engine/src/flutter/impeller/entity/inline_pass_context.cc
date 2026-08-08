@@ -17,9 +17,22 @@
 
 namespace impeller {
 
+LoadAction ColorLoadActionForPass(uint32_t pass_count,
+                                  bool is_msaa,
+                                  LoadAction declared_load_action,
+                                  bool honor_declared_load_action) {
+  if (pass_count > 0) {
+    return is_msaa ? LoadAction::kClear : LoadAction::kLoad;
+  }
+  return honor_declared_load_action ? declared_load_action : LoadAction::kClear;
+}
+
 InlinePassContext::InlinePassContext(const ContentContext& renderer,
-                                     EntityPassTarget& pass_target)
-    : renderer_(renderer), pass_target_(pass_target) {}
+                                     EntityPassTarget& pass_target,
+                                     bool honor_declared_load_action)
+    : renderer_(renderer),
+      pass_target_(pass_target),
+      honor_declared_load_action_(honor_declared_load_action) {}
 
 InlinePassContext::~InlinePassContext() {
   EndPass();
@@ -107,12 +120,8 @@ const std::shared_ptr<RenderPass>& InlinePassContext::GetRenderPass() {
   ColorAttachment color0 = pass_target_.GetRenderTarget().GetColorAttachment(0);
   bool is_msaa = color0.resolve_texture != nullptr;
 
-  // The first pass honors the render target's declared load action. Later
-  // passes load a single-sample attachment, but must clear a fresh MSAA
-  // attachment before resolving it.
-  if (pass_count_ > 0) {
-    color0.load_action = is_msaa ? LoadAction::kClear : LoadAction::kLoad;
-  }
+  color0.load_action = ColorLoadActionForPass(
+      pass_count_, is_msaa, color0.load_action, honor_declared_load_action_);
 
   color0.store_action =
       is_msaa ? StoreAction::kMultisampleResolve : StoreAction::kStore;

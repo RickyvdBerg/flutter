@@ -143,8 +143,19 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
       clip_bounds = raster_damage->bounds();
     }
 
+    // A frame containing a readback -- a backdrop filter -- cannot be a
+    // partial repaint under Impeller, however small its damage is. Impeller
+    // rasters such a frame into an offscreen and copies that offscreen, whole,
+    // over the target at the end of the pass, which replaces every pixel the
+    // target preserved outside the damage region.
+    //
+    // This has to be decided here, before the cull rect below narrows Preroll
+    // to the damage. Once the tree has been culled there is no way back: the
+    // frame would then clear the whole target and repaint only the part of the
+    // scene that intersected the damage.
     if (aiks_context_ &&
-        !ShouldPerformPartialRepaint(clip_bounds, layer_tree.frame_size())) {
+        (frame_damage->HasReadback() ||
+         !ShouldPerformPartialRepaint(clip_bounds, layer_tree.frame_size()))) {
       raster_damage.reset();
       clip_bounds = DlIRect::MakeLTRB(0, 0, 0, 0);
       frame_damage->Reset();

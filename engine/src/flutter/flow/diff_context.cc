@@ -126,6 +126,7 @@ Damage DiffContext::ComputeDamage(const DlRegion& additional_damage,
   DlRegion clip_region(frame_clip);
 
   Damage res;
+  res.has_readback = !readbacks_.empty();
   res.frame_damage = DlRegion::MakeIntersection(frame_damage, clip_region);
   res.buffer_damage = DlRegion::MakeIntersection(buffer_damage, clip_region);
 

@@ -99,8 +99,14 @@ enum class ContentBoundsPromise {
 
 class LazyRenderingConfig {
  public:
+  /// @param  honor_declared_load_action  Whether the target's existing
+  ///         contents are meaningful, so the first pass over it must not
+  ///         clear. See `InlinePassContext`. Only the root pass over the
+  ///         caller-supplied render target may pass true; every target
+  ///         produced by `CreateRenderTarget` is recycled and must clear.
   LazyRenderingConfig(ContentContext& renderer,
-                      std::unique_ptr<EntityPassTarget> p_entity_pass_target);
+                      std::unique_ptr<EntityPassTarget> p_entity_pass_target,
+                      bool honor_declared_load_action);
 
   LazyRenderingConfig(LazyRenderingConfig&&) = default;
 

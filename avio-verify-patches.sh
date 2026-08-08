@@ -145,7 +145,10 @@ need "root target is acquired before damage finalization" \
   $F/shell/common/rasterizer.cc 'AcquireRootRenderTarget'
 need "Impeller first pass honors a preserved target load" \
   $F/impeller/entity/inline_pass_context.cc \
-  'The first pass honors the render target'
+  'honor_declared_load_action \? declared_load_action : LoadAction::kClear'
+need "only the caller-owned root target opts out of the first-pass clear" \
+  $F/impeller/display_list/canvas.cc \
+  'honor_declared_load_action=\*/false'
 need "preserved foreign target acquire declares attachment reads" \
   $F/impeller/renderer/backend/vulkan/render_pass_vk.cc \
   'dstAccessMask \|= vk::AccessFlagBits::eColorAttachmentRead'

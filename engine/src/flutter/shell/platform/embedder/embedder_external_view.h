@@ -115,10 +115,35 @@ class EmbedderExternalView {
 
   void Render(DlCanvas& dl_canvas, bool clear_surface);
 
-  bool Render(const EmbedderRenderTarget& render_target,
-              const DlRect& render_target_bounds,
-              const std::optional<DlRegion>& buffer_damage = std::nullopt,
-              bool clear_surface = true);
+  /// @brief  What a render into an embedder render target actually did to that
+  ///         target. Every caller must branch on this: the three successful
+  ///         outcomes leave the target in three different states, and
+  ///         reporting the wrong one to the embedder poisons its record of
+  ///         what the target holds.
+  enum class RenderResult {
+    /// Nothing was rastered and the target is unusable for this frame.
+    kFailed,
+
+    /// Nothing was rastered because nothing in the target would change. The
+    /// target's pixels and its history are exactly what they were before the
+    /// call. This is not a present.
+    kNoVisualChange,
+
+    /// Exactly the requested buffer damage was rastered. Pixels outside it are
+    /// the contents the target already held.
+    kRenderedRequestedDamage,
+
+    /// The whole target was replaced, whichever damage was requested. The
+    /// caller must report full-target buffer damage and must not carry any
+    /// previous paint coverage forward.
+    kRenderedFullTarget,
+  };
+
+  RenderResult Render(
+      const EmbedderRenderTarget& render_target,
+      const DlRect& render_target_bounds,
+      const std::optional<DlRegion>& buffer_damage = std::nullopt,
+      bool clear_surface = true);
 
   const DlRegion& GetDlRegion() const;
 

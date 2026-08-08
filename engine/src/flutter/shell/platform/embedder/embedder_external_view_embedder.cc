@@ -385,6 +385,37 @@ static DlRegion ToDlRegion(const SkRegion& region) {
   return DlRegion(rects);
 }
 
+/// @brief  Everything this frame put on the target, in the physical-pixel
+///         space the root view records in.
+///
+///         The recorded region is the slice's rtree: a union of draw-op
+///         bounds. A compositor material emits no draw ops -- the compositor
+///         paints it -- so it never reaches the rtree, while
+///         `AvioCompositorMaterialLayer::Diff` does put its bounds into frame
+///         damage. Left alone the two disagree, and the published coverage
+///         claims every glass surface was never painted -- which is exactly
+///         the region a later partial frame would then decline to preserve.
+///
+///         The material rects arrive already transformed into that space and
+///         already clipped to the scene cull rect by
+///         `AvioCompositorMaterialLayer::Preroll`, which owns that bound.
+DlRegion PaintCoverageForFrame(
+    const EmbedderExternalView& root_view,
+    const std::vector<AvioCompositorMaterial>& materials) {
+  const DlRegion& recorded = root_view.GetDlRegion();
+  if (materials.empty()) {
+    return recorded;
+  }
+  std::vector<DlIRect> rects = recorded.getRects(/*deband=*/true);
+  for (const AvioCompositorMaterial& material : materials) {
+    if (material.rect.IsEmpty()) {
+      continue;
+    }
+    rects.push_back(DlIRect::RoundOut(material.rect));
+  }
+  return DlRegion(rects);
+}
+
 static DlRegion UpdateRetainedPaintCoverage(
     const std::optional<DlRegion>& previous,
     const DlRegion& current_recording,
@@ -1054,18 +1085,38 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
     return;
   }
 
+  // What the raster actually replaced, which is not always what was asked for.
+  // Everything downstream -- the retained coverage, the damage published to
+  // the embedder -- has to describe the raster that happened.
+  std::optional<DlRegion> rastered_damage = submit_info.buffer_damage;
   const auto render_bounds = DlRect::MakeSize(descriptor.surface_size);
-  if (!root_view->Render(*render_target, render_bounds,
-                         submit_info.buffer_damage)) {
-    FML_LOG(ERROR) << "Could not render Flutter contents into explicit "
-                      "render target for view "
-                   << flutter_view_id;
-    deferred_cleanup_render_targets.clear();
-    CompleteRootRenderTarget(
-        flutter_view_id, kFlutterPresentRenderTargetStatusRasterFailed,
-        selected_target_damage_ ? render_target->GetBackingStore() : nullptr);
-    frame->Submit();
-    return;
+  switch (root_view->Render(*render_target, render_bounds, rastered_damage)) {
+    case EmbedderExternalView::RenderResult::kFailed:
+      FML_LOG(ERROR) << "Could not render Flutter contents into explicit "
+                        "render target for view "
+                     << flutter_view_id;
+      deferred_cleanup_render_targets.clear();
+      CompleteRootRenderTarget(
+          flutter_view_id, kFlutterPresentRenderTargetStatusRasterFailed,
+          selected_target_damage_ ? render_target->GetBackingStore() : nullptr);
+      frame->Submit();
+      return;
+    case EmbedderExternalView::RenderResult::kNoVisualChange:
+      // No pass ran, so the target holds what it held before. Reporting a
+      // present here would tell the embedder this target now carries the
+      // current frame, and the next frame's damage would be computed against
+      // a frame that was never drawn.
+      CompleteRootRenderTarget(flutter_view_id,
+                               kFlutterPresentRenderTargetStatusNoVisualChange,
+                               render_target->GetBackingStore());
+      deferred_cleanup_render_targets.clear();
+      frame->Submit();
+      return;
+    case EmbedderExternalView::RenderResult::kRenderedFullTarget:
+      rastered_damage.reset();
+      break;
+    case EmbedderExternalView::RenderResult::kRenderedRequestedDamage:
+      break;
   }
 
   std::optional<DlRegion> previous_paint_region;
@@ -1074,8 +1125,9 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
     previous_paint_region = previous_paint->second;
   }
   DlRegion retained_paint_region = UpdateRetainedPaintCoverage(
-      previous_paint_region, root_view->GetDlRegion(),
-      submit_info.buffer_damage);
+      previous_paint_region,
+      PaintCoverageForFrame(*root_view, submit_info.avio_compositor_materials),
+      rastered_damage);
   root_paint_regions_[flutter_view_id] = retained_paint_region;
 
   if (aiks_context) {
@@ -1109,8 +1161,8 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
   };
 
   auto buffer_damage_rects =
-      submit_info.buffer_damage.has_value()
-          ? ToFlutterRects(submit_info.buffer_damage->getRects(
+      rastered_damage.has_value()
+          ? ToFlutterRects(rastered_damage->getRects(
                                /*deband=*/true),
                            pending_surface_transformation_)
           : std::vector<FlutterRect>{};
@@ -1127,9 +1179,8 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
       .frame_damage =
           submit_info.frame_damage.has_value() ? &frame_damage_region : nullptr,
       .render_complete_sync_fd = -1,
-      .buffer_damage = submit_info.buffer_damage.has_value()
-                           ? &buffer_damage_region
-                           : nullptr,
+      .buffer_damage =
+          rastered_damage.has_value() ? &buffer_damage_region : nullptr,
   };
 #if !FML_OS_WIN
   if (render_complete_sync_fd.is_valid()) {

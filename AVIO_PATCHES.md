@@ -252,6 +252,37 @@ around unchanged translucent content, initial empty-root suppression, and
 compare both partial and heuristic-full fallbacks byte-for-byte against a
 forced full repaint.
 
+Only the root pass over the embedder's own target may keep the load action its
+target declares. `InlinePassContext` clears the first pass over every other
+target, because every other target comes from `RenderTargetCache`, is recycled
+across frames, and declares `kDontCare` to mean "nobody chose", not "these
+pixels are disposable". The opt-in is an explicit constructor argument on
+`InlinePassContext` and `LazyRenderingConfig`, passed true at exactly the two
+sites in `Canvas` that wrap the caller's render target, so a save layer cannot
+inherit the preserved-root exemption and paint over another layer's leftovers.
+
+A frame whose diff records a readback cannot be a partial repaint however small
+its damage is: Impeller rasters such a frame into an offscreen and copies that
+offscreen, whole, over the target, replacing every preserved pixel outside the
+damage. `Damage::has_readback` carries that from the diff, and the frame falls
+back to a full repaint next to the existing partial-repaint cost heuristic --
+before the cull rect narrows Preroll, because a tree already culled to the
+damage cannot be promoted back to a full repaint without erasing the rest of
+the scene.
+
+`EmbedderExternalView::Render` returns a typed outcome rather than a bool. When
+every requested damage rectangle falls outside the target no pass runs, and
+that is reported as `NoVisualChange` rather than as a present: the target still
+holds its previous contents, and recording the frame as its history would
+compute the next frame's damage against a frame that was never drawn.
+
+Published paint coverage is the recorded draw-op region unioned with the
+frame's compositor material rects. A material emits no draw ops -- the
+compositor paints it -- so the recording's rtree omits it while the layer's
+`Diff` puts its bounds in damage; without the union, coverage claims every
+glass surface was never painted, which is exactly the region a later partial
+frame would then decline to preserve.
+
 ### Patch 33: bounded Impeller pipeline-cache I/O
 
 Impeller validates an already-open pipeline-cache file as a regular file and

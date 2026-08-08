@@ -29,6 +29,15 @@ ConvertAvioCompositorMaterialsToEmbedderCoordinates(
     const DlMatrix& surface_transformation,
     double device_pixel_ratio);
 
+/// Everything a frame put on its target, in the physical-pixel space the root
+/// view records in: the view's recorded draw-op bounds unioned with the rects
+/// of the compositor materials the same frame published. Materials carry no
+/// draw ops of their own, so the recording alone under-reports coverage by
+/// exactly the glass surfaces.
+DlRegion PaintCoverageForFrame(
+    const EmbedderExternalView& root_view,
+    const std::vector<AvioCompositorMaterial>& materials);
+
 //------------------------------------------------------------------------------
 /// @brief      The external view embedder used by the generic embedder API.
 ///             This class acts a proxy between the rasterizer and the embedder

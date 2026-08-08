@@ -93,6 +93,9 @@ class FrameDamage {
     return damage_ ? std::make_optional(damage_->frame_damage) : std::nullopt;
   }
 
+  // See Damage::has_readback. Meaningful only after `ComputeDamage`.
+  bool HasReadback() const { return damage_ && damage_->has_readback; }
+
   // The exact region replaced in the backing target by rasterization. This is
   // intentionally distinct from sparse logical frame damage.
   std::optional<DlRegion> GetBufferDamage() const {

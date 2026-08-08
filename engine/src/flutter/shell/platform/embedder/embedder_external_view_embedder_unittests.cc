@@ -34,6 +34,59 @@ TEST(EmbedderExternalViewEmbedderTest,
   EXPECT_EQ(converted[0].corner_scale, 1.5f);
 }
 
+AvioCompositorMaterial MakeMaterial(uint64_t id, const DlRect& rect) {
+  return AvioCompositorMaterial{
+      .id = id,
+      .rect = rect,
+      .recipe = AvioCompositorMaterialRecipe::kTiered,
+      .tier = 1u,
+      .corner_scale = 1.0f,
+      .corner_radius = 8.0f,
+      .corner_exponent = 2.0f,
+      .corner_mask = 0x0fu,
+  };
+}
+
+// Whether `region` covers every pixel of `rect`.
+bool RegionContains(const DlRegion& region, const DlIRect& rect) {
+  const DlRegion overlap = DlRegion::MakeIntersection(region, DlRegion(rect));
+  return overlap.getRects(/*deband=*/true) == std::vector<DlIRect>{rect};
+}
+
+TEST(EmbedderExternalViewEmbedderTest,
+     PaintCoverageIncludesMaterialThatDrewNothing) {
+  EmbedderExternalView view(DlISize(800, 600), DlMatrix());
+  // A compositor material layer paints no draw ops of its own; the compositor
+  // is what puts pixels in that rectangle.
+  ASSERT_FALSE(view.HasEngineRenderedContents());
+
+  const DlIRect material_rect = DlIRect::MakeLTRB(200, 100, 400, 300);
+  const DlRegion coverage = PaintCoverageForFrame(
+      view, {MakeMaterial(1u, DlRect::Make(material_rect))});
+
+  EXPECT_TRUE(RegionContains(coverage, material_rect));
+  EXPECT_EQ(coverage.bounds(), material_rect);
+}
+
+TEST(EmbedderExternalViewEmbedderTest,
+     PaintCoverageUnionsMaterialsWithRecordedDrawOps) {
+  EmbedderExternalView view(DlISize(800, 600), DlMatrix());
+  const DlIRect drawn_rect = DlIRect::MakeLTRB(10, 10, 60, 60);
+  view.GetCanvas()->DrawRect(DlRect::Make(drawn_rect),
+                             DlPaint(DlColor::kRed()));
+  ASSERT_TRUE(view.HasEngineRenderedContents());
+
+  const DlIRect material_rect = DlIRect::MakeLTRB(200, 100, 400, 300);
+  const DlRegion recorded_only = PaintCoverageForFrame(view, {});
+  EXPECT_TRUE(RegionContains(recorded_only, drawn_rect));
+  EXPECT_FALSE(recorded_only.intersects(material_rect));
+
+  const DlRegion coverage = PaintCoverageForFrame(
+      view, {MakeMaterial(1u, DlRect::Make(material_rect))});
+  EXPECT_TRUE(RegionContains(coverage, drawn_rect));
+  EXPECT_TRUE(RegionContains(coverage, material_rect));
+}
+
 }  // namespace
 }  // namespace testing
 }  // namespace flutter

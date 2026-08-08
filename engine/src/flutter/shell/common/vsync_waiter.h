@@ -66,6 +66,16 @@ class VsyncWaiter : public std::enable_shared_from_this<VsyncWaiter> {
   /// `AsyncWaitForVsync(kDefaultDisplayId, callback)`.
   void AsyncWaitForVsync(const Callback& callback);
 
+  /// Whether this waiter can arm and fire a latch per display.
+  ///
+  /// This is one half of the per-display frame-scheduling opt-in the Animator
+  /// consults (see `Animator::IsPerDisplayMode`). Waiters that ignore the
+  /// display id — the timer fallback and the platform waiters, whose
+  /// `AwaitVSync(DisplayId)` collapses onto the global `AwaitVSync()` — cannot
+  /// own a per-display frame clock, no matter how many displays the platform
+  /// reports through `NotifyDisplayUpdate`.
+  virtual bool SupportsPerDisplayVsync() const { return false; }
+
   /// Add a secondary callback for key |id| for the next vsync.
   ///
   /// See also |PointerDataDispatcher::ScheduleSecondaryVsyncCallback| and

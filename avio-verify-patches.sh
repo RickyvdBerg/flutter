@@ -332,6 +332,31 @@ need "pipeline cache uses profile byte ceiling" \
   $F/impeller/renderer/backend/vulkan/pipeline_cache_vk.cc \
   'max_data_bytes_'
 
+echo "--- Per-display scheduling opt-in ---"
+need "waiter reports whether it can drive display-scoped batons" \
+  $F/shell/common/vsync_waiter.h 'virtual bool SupportsPerDisplayVsync'
+need "embedder opt-in derives from the per-display vsync callback" \
+  $F/shell/platform/embedder/vsync_waiter_embedder.cc \
+  'return static_cast<bool>\(vsync_for_display_callback_\)'
+need "per-display mode requires that opt-in" \
+  $F/shell/common/animator.cc \
+  'per_display_opt_in_ && !display_states_\.empty\(\)'
+need "unscoped requests fall through to the global frame clock" \
+  $F/shell/common/animator.cc \
+  'display_owns_a_view && default_state_\.view_ids\.empty\(\)'
+need "display-registration starvation regression" \
+  $F/shell/common/animator_unittests.cc \
+  'DisplayRegistrationAloneDoesNotEnterPerDisplayMode'
+need "unhomed-view starvation regressions" \
+  $F/shell/common/animator_unittests.cc \
+  'RegisteredDisplaysWithoutHomedViewsStillScheduleFrames'
+absent_in "display registration alone flipping frame semantics" \
+  $F/shell/common/animator.cc 'return !display_states_\.empty\(\);'
+absent_in "Linux desktop embedder opting into per-display scheduling" \
+  $F/shell/platform/linux/fl_engine.cc 'SetViewDisplay'
+absent_in "Linux desktop view opting into per-display scheduling" \
+  $F/shell/platform/linux/fl_view.cc 'SetViewDisplay'
+
 echo "--- Cross-display pipeline conservation ---"
 need "display frames reserve the shared raster pipeline" \
   $F/shell/common/animator.cc \

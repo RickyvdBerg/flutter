@@ -81,6 +81,36 @@ terminalize the affected scoped request exactly once. The intermediate
 revert/reapply commits preserve review history but do not define separate
 runtime contracts.
 
+### Patch 5: per-display scheduling is an embedder opt-in
+
+Display-scoped frame driving belongs only to embedders that can consume a
+baton naming a display. Two signals grant it, and only these two: a
+`vsync_for_display_callback` supplied at engine start, which the waiter owns
+and reports through `VsyncWaiter::SupportsPerDisplayVsync`, or the first
+`FlutterEngineSetViewDisplay` homing a view on a display. Display registration
+is deliberately not a signal. `FlutterEngineNotifyDisplayUpdate` is stock
+upstream API describing topology, and every GTK application calls it through
+`fl_display_monitor`; letting it flip the frame-driving mode moved those
+embedders onto a clock no display drives, so each `scheduleFrame` was dropped
+by the per-display loop and the app painted once and froze.
+
+The unscoped `RequestFrame` path additionally falls through to the global vsync
+path whenever the display states cannot speak for every view — views parked in
+`default_state_`, or displays registered while no view is homed. Suppression
+stays exact: the fall-through keys on view ownership, not on whether a display
+accepted the request, so a display whose views are all non-renderable keeps its
+deliberate refusal instead of having a global frame resurrect it. Together the
+opt-in and the fall-through make silent frame starvation unrepresentable rather
+than merely unlikely. The regressions are
+`DisplayRegistrationAloneDoesNotEnterPerDisplayMode`,
+`RegisteredDisplaysWithoutHomedViewsStillScheduleFrames`, and
+`UnhomedViewsKeepTheGlobalFrameClockInPerDisplayMode`.
+
+Never make the GTK embedder call `FlutterEngineSetViewDisplay` to work around
+this. That opts it into per-display frame opportunities
+(`RequestFrameForDisplayInternal`) whose baton, target, and completion
+obligations `fl_view`/`fl_engine` cannot satisfy.
+
 ### Patch 11: Vulkan completion and upstream buffer recycling
 
 Avio replaces per-submit fences with one persistent timeline semaphore. A

@@ -121,6 +121,7 @@ Animator::Animator(Delegate& delegate,
               : 2)),
 #endif  // SHELL_ENABLE_METAL
       pending_frame_semaphore_(1),
+      per_display_opt_in_(waiter_->SupportsPerDisplayVsync()),
       weak_factory_(this) {
 }
 
@@ -395,12 +396,26 @@ void Animator::RequestFrame(bool regenerate_layer_trees) {
     // scheduling can get pinned to a titlebar/chrome subset and starve dock,
     // spotlight, menu, or overlay views until some unrelated event widens the
     // request.
+    bool display_owns_a_view = false;
     for (auto& [display_id, state] : display_states_) {
       if (!state.view_ids.empty()) {
+        display_owns_a_view = true;
         RequestFrameForDisplay(display_id, regenerate_layer_trees);
       }
     }
-    return;
+
+    // Views the display states cannot speak for still need a frame clock, so
+    // the request falls through to the global path rather than being dropped.
+    // Two cases reach here: views parked in `default_state_`, which keeps
+    // serving them in per-display mode (mirroring GetDisplayState and
+    // HasRenderableViews), and an embedder that registered displays while
+    // every view remains unhomed. Note the condition is view ownership, not
+    // whether a display accepted the request: a display whose views are all
+    // non-renderable declined on purpose, and a global frame must not
+    // resurrect that suppressed demand.
+    if (display_owns_a_view && default_state_.view_ids.empty()) {
+      return;
+    }
   }
 
   if (regenerate_layer_trees && !regenerate_layer_trees_) {
@@ -562,6 +577,10 @@ void Animator::RemoveStaleDisplays(const std::set<int64_t>& active_ids) {
 void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
   TRACE_EVENT2_INT("flutter", "Animator::SetViewDisplay", "view_id", view_id,
                    "display_id", display_id);
+  // Homing a view on a display is the embedder asserting that it drives that
+  // display's frames, so it opts into display-scoped scheduling even when the
+  // waiter has no per-display callback.
+  per_display_opt_in_ = true;
   // Preserve render relevance while moving the view between displays. A new
   // view is visible by default until the embedder supplies an explicit state.
   bool is_renderable = true;
@@ -833,7 +852,7 @@ void Animator::ScheduleDisplayVsync(DisplayFrameState& state) {
 }
 
 bool Animator::IsPerDisplayMode() const {
-  return !display_states_.empty();
+  return per_display_opt_in_ && !display_states_.empty();
 }
 
 void Animator::OnDisplayVsync(int64_t display_id,

@@ -67,9 +67,34 @@ class ManualDisplayVsyncWaiter final : public VsyncWaiter {
 
   size_t request_count() const { return request_count_; }
 
+  // |VsyncWaiter|
+  bool SupportsPerDisplayVsync() const override { return true; }
+
  protected:
   void AwaitVSync() override { request_count_++; }
   void AwaitVSync(DisplayId) override { request_count_++; }
+
+ private:
+  size_t request_count_ = 0;
+};
+
+/// A waiter with no per-display support, matching every stock platform waiter
+/// (the timer fallback, Android, and an embedder that supplied only the
+/// legacy vsync callback).
+class GlobalOnlyVsyncWaiter final : public VsyncWaiter {
+ public:
+  explicit GlobalOnlyVsyncWaiter(const TaskRunners& task_runners)
+      : VsyncWaiter(task_runners) {}
+
+  void Fire() {
+    const auto now = fml::TimePoint::Now();
+    FireCallback(now, now, /*pause_secondary_tasks=*/true);
+  }
+
+  size_t request_count() const { return request_count_; }
+
+ protected:
+  void AwaitVSync() override { request_count_++; }
 
  private:
   size_t request_count_ = 0;
@@ -891,6 +916,123 @@ TEST_F(ShellTest, PipelineBackpressureTerminatesThenRearmsDemand) {
     PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   }
 
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
+}
+
+TEST_F(ShellTest, DisplayRegistrationAloneDoesNotEnterPerDisplayMode) {
+  FakeAnimatorDelegate delegate;
+  TaskRunners task_runners = {"test", CreateNewThread(), CreateNewThread(),
+                              CreateNewThread(), CreateNewThread()};
+  std::shared_ptr<Animator> animator;
+  GlobalOnlyVsyncWaiter* waiter = nullptr;
+  bool per_display_mode = true;
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    auto owned_waiter = std::make_unique<GlobalOnlyVsyncWaiter>(task_runners);
+    waiter = owned_waiter.get();
+    animator = std::make_unique<Animator>(delegate, task_runners,
+                                          std::move(owned_waiter));
+    // Stock `FlutterEngineNotifyDisplayUpdate` reaches the animator as bare
+    // display registration. It describes topology only.
+    animator->AddDisplay(31, 60.0);
+    per_display_mode = animator->IsPerDisplayMode();
+  });
+  EXPECT_FALSE(per_display_mode);
+
+  // An embedder that never opted in keeps the global frame clock, so a
+  // scheduleFrame still arms a baton and still builds a frame.
+  EXPECT_CALL(delegate, OnAnimatorBeginFrame(::testing::_, ::testing::_));
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [&] { animator->RequestFrame(); });
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [&] { EXPECT_EQ(waiter->request_count(), 1u); });
+  PostTaskSync(task_runners.GetUITaskRunner(), [waiter] { waiter->Fire(); });
+  PostTaskSync(task_runners.GetUITaskRunner(), [] {});
+
+  // Homing a view on a display is the other opt-in signal.
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    animator->SetViewDisplay(131, 31);
+    per_display_mode = animator->IsPerDisplayMode();
+  });
+  EXPECT_TRUE(per_display_mode);
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
+}
+
+TEST_F(ShellTest, RegisteredDisplaysWithoutHomedViewsStillScheduleFrames) {
+  FakeAnimatorDelegate delegate;
+  TaskRunners task_runners = {"test", CreateNewThread(), CreateNewThread(),
+                              CreateNewThread(), CreateNewThread()};
+  std::shared_ptr<Animator> animator;
+  ManualDisplayVsyncWaiter* waiter = nullptr;
+  bool per_display_mode = false;
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    auto owned_waiter =
+        std::make_unique<ManualDisplayVsyncWaiter>(task_runners);
+    waiter = owned_waiter.get();
+    animator = std::make_unique<Animator>(delegate, task_runners,
+                                          std::move(owned_waiter));
+    animator->AddDisplay(32, 60.0);
+    per_display_mode = animator->IsPerDisplayMode();
+  });
+  // The waiter can service display-scoped batons, so per-display mode is on
+  // even though no view is homed yet.
+  EXPECT_TRUE(per_display_mode);
+
+  // No display owns a view, so the unscoped request must fall through to the
+  // global path instead of being dropped by the per-display loop.
+  EXPECT_CALL(delegate, OnAnimatorBeginFrame(::testing::_, ::testing::_));
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [&] { animator->RequestFrame(); });
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [&] { EXPECT_EQ(waiter->request_count(), 1u); });
+  PostTaskSync(task_runners.GetUITaskRunner(), [waiter] {
+    waiter->FireDisplay(VsyncWaiter::kDefaultDisplayId);
+  });
+  PostTaskSync(task_runners.GetUITaskRunner(), [] {});
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
+}
+
+TEST_F(ShellTest, UnhomedViewsKeepTheGlobalFrameClockInPerDisplayMode) {
+  class MixedDelegate final : public FakeAnimatorDelegate {
+   public:
+    MOCK_METHOD(void,
+                OnAnimatorBeginFrameForDisplay,
+                (fml::TimePoint frame_target_time,
+                 uint64_t frame_number,
+                 int64_t display_id,
+                 const std::set<int64_t>& view_ids),
+                (override));
+  } delegate;
+
+  TaskRunners task_runners = {"test", CreateNewThread(), CreateNewThread(),
+                              CreateNewThread(), CreateNewThread()};
+  std::shared_ptr<Animator> animator;
+  ManualDisplayVsyncWaiter* waiter = nullptr;
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    auto owned_waiter =
+        std::make_unique<ManualDisplayVsyncWaiter>(task_runners);
+    waiter = owned_waiter.get();
+    animator = std::make_unique<Animator>(delegate, task_runners,
+                                          std::move(owned_waiter));
+    animator->AddDisplay(33, 60.0);
+    animator->SetViewDisplay(133, 33);
+    // Display 99 is not registered, so this view parks in the default state.
+    animator->SetViewDisplay(233, 99);
+  });
+
+  EXPECT_CALL(delegate, OnAnimatorBeginFrameForDisplay(
+                            ::testing::_, ::testing::_, 33, ::testing::_))
+      .Times(::testing::AtLeast(1));
+  EXPECT_CALL(delegate, OnAnimatorBeginFrame(::testing::_, ::testing::_));
+
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [&] { animator->RequestFrame(); });
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [waiter] { waiter->FireDisplay(33); });
+  PostTaskSync(task_runners.GetUITaskRunner(), [] {});
+  PostTaskSync(task_runners.GetUITaskRunner(), [waiter] {
+    waiter->FireDisplay(VsyncWaiter::kDefaultDisplayId);
+  });
+  PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
 }
 

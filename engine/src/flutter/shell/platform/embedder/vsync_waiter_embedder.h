@@ -35,6 +35,11 @@ class VsyncWaiterEmbedder final : public VsyncWaiter {
 
   ~VsyncWaiterEmbedder() override;
 
+  // |VsyncWaiter| The embedder opts into per-display frame scheduling by
+  // supplying `vsync_for_display_callback`; only then can it service a baton
+  // that names a display.
+  bool SupportsPerDisplayVsync() const override;
+
   // |VsyncWaiter|
   bool ReturnVsync(
       DisplayId display_id,

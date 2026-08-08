@@ -30,6 +30,11 @@ VsyncWaiterEmbedder::VsyncWaiterEmbedder(
 
 VsyncWaiterEmbedder::~VsyncWaiterEmbedder() = default;
 
+// |VsyncWaiter|
+bool VsyncWaiterEmbedder::SupportsPerDisplayVsync() const {
+  return static_cast<bool>(vsync_for_display_callback_);
+}
+
 intptr_t VsyncWaiterEmbedder::RegisterBaton(DisplayId display_id) {
   std::scoped_lock lock(baton_mutex_);
   FML_CHECK(batons_by_display_.find(display_id) == batons_by_display_.end())

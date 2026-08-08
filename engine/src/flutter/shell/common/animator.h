@@ -216,6 +216,11 @@ class Animator final {
                               VsyncWaiter::CancellationReason reason);
 
   /// Returns true if per-display mode is active.
+  ///
+  /// Per-display mode is opt-in: it requires both a registered display and an
+  /// embedder that can service display-scoped batons. Registering displays
+  /// alone (stock `FlutterEngineNotifyDisplayUpdate`) only describes topology
+  /// and never changes how frames are driven.
   bool IsPerDisplayMode() const;
 
   //--------------------------------------------------------------------------
@@ -344,6 +349,17 @@ class Animator final {
   // -----------------------------------------------------------------------
   // Per-Display State
   // -----------------------------------------------------------------------
+
+  /// Whether the embedder opted into display-scoped frame driving.
+  ///
+  /// Two signals set it, and only these two: a per-display vsync callback
+  /// supplied at engine start (read once from the waiter, which owns that
+  /// fact), or the first `SetViewDisplay` homing a view on a display. Both
+  /// prove the embedder can consume a baton that names a display. Display
+  /// registration is deliberately not a signal — `NotifyDisplayUpdate` is
+  /// stock upstream API that every GTK app calls, and treating it as an opt-in
+  /// silently moves such apps onto a frame clock no display drives.
+  bool per_display_opt_in_ = false;
 
   /// Per-display frame states. Empty when in single-display mode.
   std::unordered_map<int64_t, DisplayFrameState> display_states_;

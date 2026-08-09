@@ -139,6 +139,9 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
       const std::shared_ptr<impeller::AiksContext>& aiks_context) override;
 
   // |ExternalViewEmbedder|
+  bool DidRefuseRootRenderTarget(int64_t flutter_view_id) const override;
+
+  // |ExternalViewEmbedder|
   bool SupportsMetadataFrameDamageForCurrentFrame() const override;
 
   // |ExternalViewEmbedder|
@@ -201,6 +204,10 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
   std::unique_ptr<EmbedderRenderTarget> pending_root_render_target_;
   std::set<std::unique_ptr<EmbedderRenderTarget>>
       pending_root_deferred_cleanup_render_targets_;
+  // Views the embedder refused a root target for during the current frame,
+  // whether it declined the early selected-target acquire or the late
+  // submit-time one. Cleared at every frame boundary.
+  std::set<int64_t> refused_root_target_view_ids_;
   // The render target caches for views. Each key is a view ID.
   std::unordered_map<int64_t, EmbedderRenderTargetCache> render_target_caches_;
   // Full logical paint coverage for each root view. Partial EVE recordings

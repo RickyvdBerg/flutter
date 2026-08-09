@@ -4,6 +4,7 @@
 
 #define FML_USED_ON_EMBEDDER
 
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1107,6 +1108,194 @@ TEST_F(EmbedderTest, RootRenderTargetReportsUnavailableBackingStore) {
   ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
             kSuccess);
   ASSERT_FALSE(latch.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+}
+
+//------------------------------------------------------------------------------
+/// A view whose target the embedder refused must be tried again on its own.
+/// Nothing else dirties this view: one metrics event schedules one frame, and
+/// the entrypoint never reschedules, so a presented frame can only come from
+/// the engine re-arming the demand the refusal consumed.
+///
+TEST_F(EmbedderTest, RefusedRootRenderTargetRearmsDemandForTheNextFrame) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor();
+  builder.SetDartEntrypoint("render_implicit_view");
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kSoftwareBuffer);
+
+  struct StarvedHost {
+    EmbedderTestCompositor* compositor = nullptr;
+    // Touched only from the raster thread.
+    size_t refusals_remaining = 1u;
+    std::mutex mutex;
+    std::vector<FlutterPresentRenderTargetStatus> statuses;
+    fml::AutoResetWaitableEvent presented;
+  } host;
+  host.compositor = &context.GetCompositor();
+
+  builder.GetCompositor().user_data = &host;
+  builder.GetCompositor().create_backing_store_callback =
+      [](const FlutterBackingStoreConfig* config,
+         FlutterBackingStore* backing_store_out, void* user_data) {
+        auto& host = *reinterpret_cast<StarvedHost*>(user_data);
+        if (host.refusals_remaining > 0u) {
+          host.refusals_remaining--;
+          return false;
+        }
+        return host.compositor->CreateBackingStore(config, backing_store_out);
+      };
+  builder.GetCompositor().collect_backing_store_callback =
+      [](const FlutterBackingStore* backing_store, void* user_data) {
+        return reinterpret_cast<StarvedHost*>(user_data)
+            ->compositor->CollectBackingStore(backing_store);
+      };
+  builder.GetCompositor().present_render_target_callback =
+      [](const FlutterPresentRenderTargetInfo* info) {
+        auto& host = *reinterpret_cast<StarvedHost*>(info->user_data);
+        {
+          std::scoped_lock lock(host.mutex);
+          host.statuses.push_back(info->status);
+        }
+        if (info->status == kFlutterPresentRenderTargetStatusPresented) {
+          host.presented.Signal();
+        }
+        return true;
+      };
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 300;
+  event.height = 200;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(host.presented.WaitWithTimeout(fml::TimeDelta::FromSeconds(10)));
+
+  std::scoped_lock lock(host.mutex);
+  ASSERT_GE(host.statuses.size(), 2u);
+  EXPECT_EQ(host.statuses.front(),
+            kFlutterPresentRenderTargetStatusRenderTargetUnavailable);
+  EXPECT_EQ(host.statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+}
+
+//------------------------------------------------------------------------------
+/// The retry is demand, not a promise. A view being withdrawn refuses every
+/// target it is asked for, and once the view is gone the engine must stop
+/// asking rather than spin on a target that will never come back.
+///
+TEST_F(EmbedderTest, RefusedRootRenderTargetStopsRearmingOnceTheViewIsGone) {
+  constexpr FlutterViewId kWithdrawnViewId = 123;
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor();
+  builder.SetDartEntrypoint("render_all_views");
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kSoftwareBuffer);
+
+  struct WithdrawingHost {
+    EmbedderTestCompositor* compositor = nullptr;
+    std::mutex mutex;
+    size_t withdrawn_view_requests = 0u;
+    size_t withdrawn_view_refusals = 0u;
+    fml::AutoResetWaitableEvent refused_twice;
+
+    size_t WithdrawnViewRequests() {
+      std::scoped_lock lock(mutex);
+      return withdrawn_view_requests;
+    }
+  } host;
+  host.compositor = &context.GetCompositor();
+
+  builder.GetCompositor().user_data = &host;
+  builder.GetCompositor().create_backing_store_callback =
+      [](const FlutterBackingStoreConfig* config,
+         FlutterBackingStore* backing_store_out, void* user_data) {
+        auto& host = *reinterpret_cast<WithdrawingHost*>(user_data);
+        if (config->view_id == kWithdrawnViewId) {
+          bool refused_twice = false;
+          {
+            std::scoped_lock lock(host.mutex);
+            host.withdrawn_view_requests++;
+            refused_twice = host.withdrawn_view_requests == 2u;
+          }
+          if (refused_twice) {
+            host.refused_twice.Signal();
+          }
+          return false;
+        }
+        return host.compositor->CreateBackingStore(config, backing_store_out);
+      };
+  builder.GetCompositor().collect_backing_store_callback =
+      [](const FlutterBackingStore* backing_store, void* user_data) {
+        return reinterpret_cast<WithdrawingHost*>(user_data)
+            ->compositor->CollectBackingStore(backing_store);
+      };
+  builder.GetCompositor().present_render_target_callback =
+      [](const FlutterPresentRenderTargetInfo* info) {
+        auto& host = *reinterpret_cast<WithdrawingHost*>(info->user_data);
+        if (info->target_id == kWithdrawnViewId) {
+          EXPECT_EQ(info->status,
+                    kFlutterPresentRenderTargetStatusRenderTargetUnavailable);
+          std::scoped_lock lock(host.mutex);
+          host.withdrawn_view_refusals++;
+        }
+        return true;
+      };
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent metrics = {};
+  metrics.struct_size = sizeof(FlutterWindowMetricsEvent);
+  metrics.width = 800;
+  metrics.height = 600;
+  metrics.pixel_ratio = 1.0;
+  metrics.view_id = kWithdrawnViewId;
+
+  FlutterAddViewInfo add_info = {};
+  add_info.struct_size = sizeof(FlutterAddViewInfo);
+  add_info.view_id = kWithdrawnViewId;
+  add_info.view_metrics = &metrics;
+  add_info.add_view_callback = [](const FlutterAddViewResult* result) {
+    EXPECT_TRUE(result->added);
+  };
+  ASSERT_EQ(FlutterEngineAddView(engine.get(), &add_info), kSuccess);
+
+  // Two refusals prove the retry is alive rather than a single stray frame.
+  ASSERT_FALSE(
+      host.refused_twice.WaitWithTimeout(fml::TimeDelta::FromSeconds(10)));
+
+  fml::AutoResetWaitableEvent removed;
+  FlutterRemoveViewInfo remove_info = {};
+  remove_info.struct_size = sizeof(FlutterRemoveViewInfo);
+  remove_info.view_id = kWithdrawnViewId;
+  remove_info.user_data = &removed;
+  remove_info.remove_view_callback = [](const FlutterRemoveViewResult* result) {
+    EXPECT_TRUE(result->removed);
+    reinterpret_cast<fml::AutoResetWaitableEvent*>(result->user_data)->Signal();
+  };
+  ASSERT_EQ(FlutterEngineRemoveView(engine.get(), &remove_info), kSuccess);
+  removed.Wait();
+
+  // Frames already in flight may still name the view, so settle first and then
+  // require the retries to have stopped.
+  fml::AutoResetWaitableEvent settle;
+  settle.WaitWithTimeout(fml::TimeDelta::FromMilliseconds(250));
+  const size_t settled = host.WithdrawnViewRequests();
+  settle.WaitWithTimeout(fml::TimeDelta::FromMilliseconds(750));
+  EXPECT_EQ(host.WithdrawnViewRequests(), settled);
+  {
+    std::scoped_lock lock(host.mutex);
+    EXPECT_EQ(host.withdrawn_view_refusals, host.withdrawn_view_requests);
+  }
 }
 
 TEST_F(EmbedderTest, ExactVsyncCancellationRequiresPerDisplayVsync) {

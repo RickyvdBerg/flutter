@@ -87,6 +87,11 @@ enum class DrawSurfaceStatus {
   // presentation callback owns the terminal outcome, so this is neither a GPU
   // failure nor a successful tree eligible for retained promotion.
   kRejected,
+  // The embedder had no render target to give. The typed presentation callback
+  // already terminalized this frame, but no pixels were written, so the tree
+  // cannot become the damage baseline and the demand behind it must be armed
+  // again for the next vsync.
+  kTargetUnavailable,
   // Layer tree was discarded because its size does not match the view size.
   // This typically occurs during resizing.
   kDiscarded,
@@ -783,9 +788,12 @@ class Rasterizer final : public SnapshotDelegate,
       std::vector<std::unique_ptr<LayerTreeTask>> tasks);
 
   // This method pushes the frame timing recorder from build end to raster end.
-  DoDrawResult DrawToSurfaces(
-      FrameTimingsRecorder& frame_timings_recorder,
-      std::vector<std::unique_ptr<LayerTreeTask>> tasks);
+  //
+  // `tasks_are_retained` marks trees that came from the retained cache rather
+  // than a freshly built frame; they are already the baseline the targets hold.
+  DoDrawResult DrawToSurfaces(FrameTimingsRecorder& frame_timings_recorder,
+                              std::vector<std::unique_ptr<LayerTreeTask>> tasks,
+                              bool tasks_are_retained = false);
 
   // Draws the specified layer trees to views, assuming we have access to the
   // GPU.
@@ -799,7 +807,8 @@ class Rasterizer final : public SnapshotDelegate,
   // This method pushes the frame timing recorder from build end to raster end.
   std::unique_ptr<FrameItem> DrawToSurfacesUnsafe(
       FrameTimingsRecorder& frame_timings_recorder,
-      std::vector<std::unique_ptr<LayerTreeTask>> tasks);
+      std::vector<std::unique_ptr<LayerTreeTask>> tasks,
+      bool tasks_are_retained);
 
   bool CompleteFrameOpportunity(const FrameTimingsRecorder& recorder,
                                 int64_t target_id,
@@ -808,6 +817,11 @@ class Rasterizer final : public SnapshotDelegate,
       const FrameItem& item,
       FrameOpportunityOutcome outcome);
   void CompleteBackpressuredFrameItem(const FrameItem& item);
+
+  // Re-arms frame demand for targets the embedder had no buffer for. Their
+  // opportunity is already terminal; this only asks for the next one.
+  void RearmUnavailableTargets(const FrameTimingsRecorder& recorder,
+                               const std::set<int64_t>& target_ids);
 
   // Draws the layer tree to the specified view, assuming we have access to the
   // GPU.

@@ -73,6 +73,7 @@ already ancestors of the selected main target under their original commits.
 | 35 | Negotiate exact resource profiles and principal-scoped pipeline-cache access | permanent ABI/lifecycle extension | none |
 | 36 | Suppress raster demand with exact per-view visibility | permanent ABI/lifecycle extension | none |
 | 37 | Carry retained compositor-material nodes with the exact Flutter frame | permanent ABI/scene extension | none |
+| 38 | Keep a refused render target's frame demand instead of stranding the view | permanent lifecycle correctness fix | none |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -401,6 +402,42 @@ frame. This patch does not precompile shaders or allocate material render
 targets: non-material trees keep the stock preroll path and all GPU resources
 remain demand-driven in Avio.
 
+### Patch 38: a refused target keeps its demand
+
+An embedder may decline to hand over a root render target, either at the
+selected-target acquire or at submit time. Declining is an ordinary answer: the
+compositor may hold every buffer for that view in flight, or may be withdrawing
+the view while a frame is open. The engine cannot tell those apart and does not
+try to; the typed `RenderTargetUnavailable` terminal reaches the embedder,
+whose own outcome rewrite is the only place that distinction exists. Neither
+refusal site logs at `ERROR` for that reason — an ordinary dock hide used to
+cost two error lines per frame and hours of misreading.
+
+What a refusal must not do is consume the demand that produced the frame. Both
+sites record the view on the external view embedder, `Rasterizer` reads it back
+after submission as the distinct `kTargetUnavailable` draw status, and demand is
+armed again through the same edge pipeline backpressure uses. This is the one
+mechanism: an engine-side terminal plus fresh demand, never a resubmit into the
+raster pipeline, which would spin the raster thread against a host that frees
+buffers on its own cadence, and never a second terminal, which the conservation
+ledger would reject and silently drop the retry with.
+
+Terminality and demand stay separate, so nothing here decides whether the view
+should render again — the `Animator` does, from renderability. A withdrawn or
+obscured view is absent from `renderable_view_ids`, `LatchDisplayFrameRequest`
+drops the request, and the revoke tail stays terminal without the engine
+needing to know it was a teardown.
+
+A refused frame also never becomes the damage baseline. Its pixels were never
+written, so promoting its tree would make the next attempt diff against a frame
+the target never received, compute empty damage, and strand the view exactly as
+before. A tree drawn from the retained cache is the one exception: it already
+was the baseline, so a refused redraw puts it back rather than leaving the view
+with none. The regressions are `RefusedRootRenderTargetRearmsDemandForTheNextFrame`,
+`RefusedRootRenderTargetStopsRearmingOnceTheViewIsGone`,
+`refusedRootRenderTargetKeepsBaselineAndRearmsDemand`, and
+`refusedRootRenderTargetKeepsTheRetainedTree`.
+
 ## Known baseline debt
 
 - ~~Generic embedder compositor and platform-view tests required broad
@@ -412,12 +449,22 @@ remain demand-driven in Avio.
   abandoning a callback latch.
 - `embedder_unittests`: the **GL present-info damage family**
   (`EmbedderTest.PresentInfo*` and related populate-existing-damage render
-  tests) hangs after rendering one frame — the OpenGL `present_with_info`
-  damage contract diverges under the fork's damage rework. Avio is
-  Vulkan-only and never exercises the GL present path, so this is
-  unused-path debt; the damage behavior Avio does rely on is gated by
-  integration telemetry (`flutter_full_damage_fallback_total`). Investigate
-  only if a GL deployment ever becomes relevant.
+  tests) hangs after rendering one frame. The mechanism is exact and is not a
+  flake: patch #3 made a zero-damage frame skip submission entirely
+  (`Rasterizer::DrawToSurfaceUnsafe` returns `kNoVisualChange`), while these
+  four upstream tests render identical content twice and then block forever on
+  an untimed latch waiting for the second frame's *present* to arrive carrying
+  empty damage. They hang identically in isolation; only
+  `PresentInfoReceivesFullScreenDamageWhenPopulateExistingDamageIsNotProvided`
+  passes, because without `populate_existing_damage` there is no buffer damage
+  and the skip cannot engage. The 300 s per-test timeout then aborts the whole
+  binary, which is why the runbook excludes the family rather than tolerating
+  failures. Avio is Vulkan-only and never exercises the GL present path, so
+  this is unused-path debt; the damage behavior Avio does rely on is gated by
+  integration telemetry (`flutter_full_damage_fallback_total`). Fixing it means
+  rewriting the four tests against the fork's contract (no present for a
+  zero-damage frame), not changing the engine. Investigate only if a GL
+  deployment ever becomes relevant.
 - `flow_unittests`: the three performance-overlay golden variants
   (`PerformanceOverlayLayerDefault.Gold`,
   `PerformanceOverlayLayer90fps.Gold`, and

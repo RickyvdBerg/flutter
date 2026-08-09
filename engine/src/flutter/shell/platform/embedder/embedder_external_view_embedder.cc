@@ -92,6 +92,7 @@ void EmbedderExternalViewEmbedder::BeginFrame(
     GrDirectContext* context,
     const fml::RefPtr<fml::RasterThreadMerger>& raster_thread_merger) {
   pending_frame_opportunity_ = std::nullopt;
+  refused_root_target_view_ids_.clear();
 }
 
 void EmbedderExternalViewEmbedder::SetFrameOpportunity(
@@ -215,6 +216,7 @@ EmbedderExternalViewEmbedder::AcquireRootRenderTarget(
       render_target_cache.ClearAllRenderTargetsInCache();
 
   if (pending_root_render_target_ == nullptr) {
+    refused_root_target_view_ids_.insert(flutter_view_id);
     SurfaceFrame::FramebufferInfo unavailable_info;
     unavailable_info.supports_readback = true;
     unavailable_info.supports_partial_repaint = true;
@@ -225,6 +227,11 @@ EmbedderExternalViewEmbedder::AcquireRootRenderTarget(
   return ReadSelectedTargetFramebufferInfo(*pending_root_render_target_,
                                            pending_surface_transformation_,
                                            pending_frame_size_);
+}
+
+bool EmbedderExternalViewEmbedder::DidRefuseRootRenderTarget(
+    int64_t flutter_view_id) const {
+  return refused_root_target_view_ids_.count(flutter_view_id) > 0;
 }
 
 bool EmbedderExternalViewEmbedder::SupportsMetadataFrameDamageForCurrentFrame()
@@ -1060,8 +1067,15 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
         render_target_cache.ClearAllRenderTargetsInCache();
   }
   if (render_target == nullptr) {
-    FML_LOG(ERROR) << "Could not acquire an embedder render target for view "
-                   << flutter_view_id;
+    // The embedder declined to hand over a target. Only the embedder knows
+    // why: every buffer for this view may be in flight, or the view may be
+    // going away while this frame was open. Both are ordinary, and the
+    // embedder's own outcome rewrite is what separates them, so this is not
+    // an engine-side error.
+    FML_LOG(INFO) << "Embedder refused a render target for view "
+                  << flutter_view_id
+                  << " (buffers in flight, or the view is being withdrawn).";
+    refused_root_target_view_ids_.insert(flutter_view_id);
     CompleteRootRenderTarget(
         flutter_view_id,
         kFlutterPresentRenderTargetStatusRenderTargetUnavailable);

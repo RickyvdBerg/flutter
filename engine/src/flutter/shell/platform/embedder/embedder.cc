@@ -1831,7 +1831,13 @@ CreateEmbedderRenderTarget(
   {
     TRACE_EVENT0("flutter", "FlutterCompositorCreateBackingStore");
     if (!c_create_callback(&config, &backing_store, compositor->user_data)) {
-      FML_LOG(ERROR) << "Could not create the embedder backing store.";
+      // Declining is a normal answer, not a failure: the embedder may have
+      // every buffer for this view in flight, or may be withdrawing the view
+      // while a frame is open. The engine cannot tell those apart; the
+      // embedder can, and receives the typed terminal that says so.
+      FML_LOG(INFO) << "Embedder declined a backing store for view "
+                    << config.view_id
+                    << " (buffers in flight, or the view is being withdrawn).";
       return nullptr;
     }
   }

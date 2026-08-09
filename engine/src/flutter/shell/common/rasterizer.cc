@@ -17,6 +17,7 @@
 #include "flutter/fml/time/time_point.h"
 #include "flutter/shell/common/base64.h"
 #include "flutter/shell/common/serialization_callbacks.h"
+#include "flutter/shell/common/vsync_waiter.h"
 #include "fml/closure.h"
 #include "fml/make_copyable.h"
 #include "fml/synchronization/waitable_event.h"
@@ -268,7 +269,8 @@ void Rasterizer::DrawLastLayerTreesForViews(
   }
 
   DoDrawResult result =
-      DrawToSurfaces(*frame_timings_recorder, std::move(tasks));
+      DrawToSurfaces(*frame_timings_recorder, std::move(tasks),
+                     /*tasks_are_retained=*/true);
 
   if (result.resubmitted_item) {
     CompleteBackpressuredFrameItem(*result.resubmitted_item);
@@ -323,6 +325,23 @@ void Rasterizer::CompleteBackpressuredFrameItem(const FrameItem& item) {
     delegate_.OnFrameOpportunityBackpressured(frame_opportunity->display_id,
                                               retry_targets);
   }
+}
+
+void Rasterizer::RearmUnavailableTargets(const FrameTimingsRecorder& recorder,
+                                         const std::set<int64_t>& target_ids) {
+  if (target_ids.empty()) {
+    return;
+  }
+  // The refusal reached its terminal inside the presentation callback, so
+  // nothing here claims a target; this is purely new demand. Naming the
+  // display keeps the request scoped when per-display scheduling is on, and
+  // the animator drops it for any target that is no longer renderable, which
+  // is what keeps a withdrawn view's revoke tail terminal.
+  const auto frame_opportunity = recorder.GetFrameOpportunity();
+  delegate_.OnFrameOpportunityBackpressured(
+      frame_opportunity.has_value() ? frame_opportunity->display_id
+                                    : VsyncWaiter::kDefaultDisplayId,
+      target_ids);
 }
 
 DrawStatus Rasterizer::Draw(const std::shared_ptr<FramePipeline>& pipeline) {
@@ -707,7 +726,8 @@ Rasterizer::DoDrawResult Rasterizer::DoDraw(
 
 Rasterizer::DoDrawResult Rasterizer::DrawToSurfaces(
     FrameTimingsRecorder& frame_timings_recorder,
-    std::vector<std::unique_ptr<LayerTreeTask>> tasks) {
+    std::vector<std::unique_ptr<LayerTreeTask>> tasks,
+    bool tasks_are_retained) {
   TRACE_EVENT0("flutter", "Rasterizer::DrawToSurfaces");
   FML_DCHECK(surface_);
   frame_timings_recorder.AssertInState(FrameTimingsRecorder::State::kBuildEnd);
@@ -716,8 +736,8 @@ Rasterizer::DoDrawResult Rasterizer::DrawToSurfaces(
       .status = DoDrawStatus::kDone,
   };
   if (surface_->AllowsDrawingWhenGpuDisabled()) {
-    result.resubmitted_item =
-        DrawToSurfacesUnsafe(frame_timings_recorder, std::move(tasks));
+    result.resubmitted_item = DrawToSurfacesUnsafe(
+        frame_timings_recorder, std::move(tasks), tasks_are_retained);
   } else {
     delegate_.GetIsGpuDisabledSyncSwitch()->Execute(
         fml::SyncSwitch::Handlers()
@@ -733,7 +753,7 @@ Rasterizer::DoDrawResult Rasterizer::DrawToSurfaces(
             })
             .SetIfFalse([&] {
               result.resubmitted_item = DrawToSurfacesUnsafe(
-                  frame_timings_recorder, std::move(tasks));
+                  frame_timings_recorder, std::move(tasks), tasks_are_retained);
             }));
   }
   frame_timings_recorder.AssertInState(FrameTimingsRecorder::State::kRasterEnd);
@@ -743,7 +763,8 @@ Rasterizer::DoDrawResult Rasterizer::DrawToSurfaces(
 
 std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
     FrameTimingsRecorder& frame_timings_recorder,
-    std::vector<std::unique_ptr<LayerTreeTask>> tasks) {
+    std::vector<std::unique_ptr<LayerTreeTask>> tasks,
+    bool tasks_are_retained) {
   compositor_context_->ui_time().SetLapTime(
       frame_timings_recorder.GetBuildDuration());
 
@@ -792,6 +813,7 @@ std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
 
   // Second traverse: draw all layer trees.
   std::vector<std::unique_ptr<LayerTreeTask>> resubmitted_tasks;
+  std::set<int64_t> unavailable_target_ids;
   for (std::unique_ptr<LayerTreeTask>& task : tasks) {
     int64_t view_id = task->view_id;
     std::unique_ptr<LayerTree> layer_tree = std::move(task->layer_tree);
@@ -821,8 +843,21 @@ std::unique_ptr<FrameItem> Rasterizer::DrawToSurfacesUnsafe(
       // The selected-target presentation callback already terminalized this
       // exact opportunity with its typed pre-raster rejection. Repeating that
       // terminal here would violate the one-opportunity/one-terminal contract.
+    } else if (status == DrawSurfaceStatus::kTargetUnavailable) {
+      // The embedder had no buffer to give. Its presentation callback owns the
+      // terminal, so nothing is completed here. A freshly built tree never
+      // reached a target, so promoting it would make the next frame diff
+      // against pixels that were never written; the retained slot keeps the
+      // tree the target actually holds. A retained tree, on the other hand,
+      // already was that baseline and only needs to be put back.
+      if (tasks_are_retained) {
+        view_record.last_successful_task = std::make_unique<LayerTreeTask>(
+            view_id, std::move(layer_tree), device_pixel_ratio);
+      }
+      unavailable_target_ids.insert(view_id);
     }
   }
+  RearmUnavailableTargets(frame_timings_recorder, unavailable_target_ids);
   // TODO(dkwingsmt): Pass in raster cache(s) for all views.
   // See https://github.com/flutter/flutter/issues/135530, item 4.
   frame_timings_recorder.RecordRasterEnd(
@@ -1030,6 +1065,13 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
       return DrawSurfaceStatus::kRejected;
     } else {
       FML_CHECK(frame_status == RasterStatus::kSuccess);
+      // The embedder can refuse a root target either at the early
+      // selected-target acquire above or at submit time. The raster succeeded
+      // either way, but there was no buffer to succeed into.
+      if (external_view_embedder_ &&
+          external_view_embedder_->DidRefuseRootRenderTarget(view_id)) {
+        return DrawSurfaceStatus::kTargetUnavailable;
+      }
       return DrawSurfaceStatus::kSuccess;
     }
   }

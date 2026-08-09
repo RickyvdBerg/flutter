@@ -484,6 +484,8 @@ TEST_F(EmbedderTest,
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
 
   struct FailureState {
+    // Written only from the raster thread; read after the engine is joined.
+    size_t create_count = 0u;
     size_t collect_count = 0u;
     fml::AutoResetWaitableEvent collected;
     fml::AutoResetWaitableEvent terminal;
@@ -492,6 +494,7 @@ TEST_F(EmbedderTest,
   builder.GetCompositor().create_backing_store_callback =
       [](const FlutterBackingStoreConfig*, FlutterBackingStore* backing_store,
          void* user_data) {
+        reinterpret_cast<FailureState*>(user_data)->create_count++;
         *backing_store = {};
         backing_store->struct_size = sizeof(FlutterBackingStore);
         backing_store->user_data = user_data;
@@ -533,9 +536,13 @@ TEST_F(EmbedderTest,
             kSuccess);
   state.collected.Wait();
   state.terminal.Wait();
-  EXPECT_EQ(state.collect_count, 1u);
   engine.reset();
-  EXPECT_EQ(state.collect_count, 1u);
+  // A refusal re-arms this view's demand, so the engine may have attempted
+  // more frames before shutdown. What must hold is the invariant this test is
+  // named for: every store the embedder handed over came back exactly once,
+  // never twice and never leaked.
+  EXPECT_GE(state.create_count, 1u);
+  EXPECT_EQ(state.collect_count, state.create_count);
 }
 
 TEST_F(EmbedderTest,

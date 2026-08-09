@@ -503,6 +503,16 @@ class ExternalViewEmbedder {
     return std::nullopt;
   }
 
+  // Whether the embedder refused to hand over a root render target for this
+  // view during the frame that is being drawn. A refusal is a transient
+  // resource verdict, not a rendering error: the frame still reaches its typed
+  // terminal, but no pixels are written, so the tree must not become the
+  // damage baseline and the demand that produced it has to outlive the frame.
+  // Valid between |BeginFrame| and the next |BeginFrame|.
+  virtual bool DidRefuseRootRenderTarget(int64_t flutter_view_id) const {
+    return false;
+  }
+
   // Whether metadata-only frame-damage diffing is safe for the current frame.
   // Embedders that introduce synthetic platform-view boundaries can opt out of
   // this path while still using the normal full-repaint external-view flow.

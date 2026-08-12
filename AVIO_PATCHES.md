@@ -413,7 +413,8 @@ that ambiguity and the blanket rearm mechanism.
 Root-target mode uses `FlutterRenderTargetAcquisitionCallback`, never the stock
 boolean backing-store create callback. Every request carries its exact
 `FlutterFrameOpportunityId`, display, and target configuration and returns one
-of `Granted`, `Backpressured`, `Withdrawn`, `Removed`, or `EpochStale`.
+of `Granted`, `Backpressured`, `Withdrawn`, `Removed`, `EpochStale`, or
+`HostRejected`.
 Unavailable acquisition never reaches the presentation callback: the
 opportunity ledger terminalizes the target directly with the same typed cause.
 

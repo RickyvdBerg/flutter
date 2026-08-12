@@ -2676,6 +2676,7 @@ typedef enum {
   kFlutterRenderTargetAcquisitionWithdrawn,
   kFlutterRenderTargetAcquisitionRemoved,
   kFlutterRenderTargetAcquisitionEpochStale,
+  kFlutterRenderTargetAcquisitionHostRejected,
 } FlutterRenderTargetAcquisition;
 
 typedef struct {

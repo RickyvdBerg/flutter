@@ -2031,6 +2031,8 @@ AcquireEmbedderRenderTarget(
       return {.status = Acquisition::kRemoved, .target = nullptr};
     case kFlutterRenderTargetAcquisitionEpochStale:
       return {.status = Acquisition::kEpochStale, .target = nullptr};
+    case kFlutterRenderTargetAcquisitionHostRejected:
+      return {.status = Acquisition::kInvalid, .target = nullptr};
   }
   return {.status = Acquisition::kInvalid, .target = nullptr};
 }

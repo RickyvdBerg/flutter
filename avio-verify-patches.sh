@@ -202,6 +202,9 @@ need "animator pending-serial reuse gate" \
 need "typed exact root-target acquisition ABI" \
   $F/shell/platform/embedder/embedder.h \
   'FlutterRenderTargetAcquisitionCallback'
+need "typed host rejection at target acquisition" \
+  $F/shell/platform/embedder/embedder.h \
+  'kFlutterRenderTargetAcquisitionHostRejected'
 need "typed acquisition crosses the exact opportunity" \
   $F/shell/platform/embedder/embedder_external_view_embedder.cc \
   'pending_frame_opportunity_->id'

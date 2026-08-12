@@ -199,33 +199,25 @@ need "configure_serial resize gating (metrics event)" \
   $F/shell/platform/embedder/embedder.h 'configure_serial'
 need "animator pending-serial reuse gate" \
   $F/shell/common/animator.cc 'pending_configure_serial_'
-need "a refused root target is reported to the owning rasterizer" \
+need "typed exact root-target acquisition ABI" \
+  $F/shell/platform/embedder/embedder.h \
+  'FlutterRenderTargetAcquisitionCallback'
+need "typed acquisition crosses the exact opportunity" \
+  $F/shell/platform/embedder/embedder_external_view_embedder.cc \
+  'pending_frame_opportunity_->id'
+need "only exact backpressure rearms demand" \
+  $F/shell/common/rasterizer.cc 'backpressured_target_ids'
+need "every non-backpressure acquisition terminal is tested" \
+  $F/shell/common/rasterizer_unittests.cc \
+  'ExactOutcomeTerminalizesWithoutRearmingDemand'
+absent_in "blanket unavailable-target rearm" \
+  $F/shell/common/rasterizer.cc 'RearmUnavailableTargets'
+absent_in "null target ambiguity" \
+  $F/shell/platform/embedder/embedder.h \
+  'RenderTargetUnavailable'
+absent_in "boolean refusal query" \
   $F/shell/platform/embedder/embedder_external_view_embedder.cc \
   'DidRefuseRootRenderTarget'
-need "a refused target is neither success nor raster failure" \
-  $F/shell/common/rasterizer.h 'kTargetUnavailable'
-need "a refused target re-arms its frame demand" \
-  $F/shell/common/rasterizer.cc 'RearmUnavailableTargets'
-need "a refused fresh tree never becomes the damage baseline" \
-  $F/shell/common/rasterizer.cc 'if \(tasks_are_retained\)'
-absent_in "refused backing store logged as an engine error" \
-  $F/shell/platform/embedder/embedder.cc \
-  'Could not create the embedder backing store'
-absent_in "refused render target logged as an engine error" \
-  $F/shell/platform/embedder/embedder_external_view_embedder.cc \
-  'Could not acquire an embedder render target'
-need "refused-target retry regression test" \
-  $F/shell/platform/embedder/tests/embedder_unittests.cc \
-  'RefusedRootRenderTargetRearmsDemandForTheNextFrame'
-need "withdrawn-view refusal stays terminal regression test" \
-  $F/shell/platform/embedder/tests/embedder_unittests.cc \
-  'RefusedRootRenderTargetStopsRearmingOnceTheViewIsGone'
-need "refused-target damage-baseline regression test" \
-  $F/shell/common/rasterizer_unittests.cc \
-  'refusedRootRenderTargetKeepsBaselineAndRearmsDemand'
-need "refused retained-tree custody regression test" \
-  $F/shell/common/rasterizer_unittests.cc \
-  'refusedRootRenderTargetKeepsTheRetainedTree'
 
 echo "--- Framework scoped-frame authority ---"
 need "scoped renderer consumes only active view ids" \

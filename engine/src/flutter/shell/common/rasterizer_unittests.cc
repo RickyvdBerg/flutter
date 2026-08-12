@@ -72,6 +72,10 @@ class MockDelegate : public Rasterizer::Delegate {
               OnFrameOpportunityBackpressured,
               (int64_t display_id, (const std::set<int64_t>&)target_ids),
               (override));
+  MOCK_METHOD(bool,
+              OnFrameOpportunityOutcome,
+              (FrameOpportunityId, int64_t, int64_t, FrameOpportunityOutcome),
+              (override));
 };
 
 class MockSurface : public Surface {
@@ -135,7 +139,10 @@ class MockExternalViewEmbedder : public ExternalViewEmbedder {
                GrDirectContext*,
                const std::shared_ptr<impeller::AiksContext>&),
               (override));
-  MOCK_METHOD(bool, DidRefuseRootRenderTarget, (int64_t), (const, override));
+  MOCK_METHOD(std::optional<RootRenderTargetAcquisition>,
+              GetRootRenderTargetAcquisition,
+              (int64_t),
+              (const, override));
 };
 }  // namespace
 
@@ -365,7 +372,7 @@ TEST(RasterizerTest,
   latch.Wait();
 }
 
-TEST(RasterizerTest, refusedRootRenderTargetKeepsBaselineAndRearmsDemand) {
+TEST(RasterizerTest, backpressuredRootTargetKeepsBaselineAndRearmsDemand) {
   std::string test_name =
       ::testing::UnitTest::GetInstance()->current_test_info()->name();
   ThreadHost thread_host("io.flutter.test." + test_name + ".",
@@ -382,11 +389,12 @@ TEST(RasterizerTest, refusedRootRenderTargetKeepsBaselineAndRearmsDemand) {
   EXPECT_CALL(delegate, GetTaskRunners())
       .WillRepeatedly(ReturnRef(task_runners));
   EXPECT_CALL(delegate, OnFrameRasterized(_));
-  // The refusal is not a terminal of its own: the embedder's presentation
-  // callback already made this opportunity terminal. What must survive it is
-  // the demand.
+  EXPECT_CALL(delegate, OnFrameOpportunityOutcome(
+                            71, 7, kImplicitViewId,
+                            FrameOpportunityOutcome::kBackpressured))
+      .WillOnce(Return(true));
   EXPECT_CALL(delegate, OnFrameOpportunityBackpressured(
-                            0, std::set<int64_t>{kImplicitViewId}));
+                            7, std::set<int64_t>{kImplicitViewId}));
 
   auto rasterizer = std::make_unique<Rasterizer>(delegate);
   auto surface = std::make_unique<NiceMock<MockSurface>>();
@@ -410,8 +418,9 @@ TEST(RasterizerTest, refusedRootRenderTargetKeepsBaselineAndRearmsDemand) {
               AcquireRootRenderTarget(kImplicitViewId, nullptr, _))
       .WillOnce(Return(framebuffer_info));
   EXPECT_CALL(*external_view_embedder,
-              DidRefuseRootRenderTarget(kImplicitViewId))
-      .WillRepeatedly(Return(true));
+              GetRootRenderTargetAcquisition(kImplicitViewId))
+      .WillRepeatedly(Return(
+          ExternalViewEmbedder::RootRenderTargetAcquisition::kBackpressured));
   EXPECT_CALL(*external_view_embedder,
               SubmitFlutterView(kImplicitViewId, nullptr, _, _));
 
@@ -420,17 +429,19 @@ TEST(RasterizerTest, refusedRootRenderTargetKeepsBaselineAndRearmsDemand) {
   thread_host.raster_thread->GetTaskRunner()->PostTask([&] {
     auto pipeline = std::make_shared<FramePipeline>(/*depth=*/10);
     auto layer_tree = std::make_unique<LayerTree>(nullptr, frame_size);
+    auto recorder = CreateFinishedBuildRecorder();
+    recorder->SetFrameOpportunity(71, 7, {kImplicitViewId});
     auto layer_tree_item = std::make_unique<FrameItem>(
         SingleLayerTreeList(kImplicitViewId, std::move(layer_tree),
                             kDevicePixelRatio),
-        CreateFinishedBuildRecorder());
+        std::move(recorder));
     EXPECT_TRUE(
         pipeline->Produce().Complete(std::move(layer_tree_item)).success);
     ON_CALL(delegate, ShouldDiscardLayerTree).WillByDefault(Return(false));
 
     EXPECT_EQ(rasterizer->Draw(pipeline), DrawStatus::kDone);
     EXPECT_EQ(rasterizer->GetLastDrawStatus(kImplicitViewId),
-              DrawSurfaceStatus::kTargetUnavailable);
+              DrawSurfaceStatus::kTargetBackpressured);
     // No pixels were written, so the next frame must still diff against what
     // the target actually holds, not against this tree.
     EXPECT_EQ(rasterizer->GetLastLayerTree(kImplicitViewId), nullptr);
@@ -439,7 +450,108 @@ TEST(RasterizerTest, refusedRootRenderTargetKeepsBaselineAndRearmsDemand) {
   latch.Wait();
 }
 
-TEST(RasterizerTest, refusedRootRenderTargetKeepsTheRetainedTree) {
+class TerminalRootTargetAcquisitionTest
+    : public ::testing::TestWithParam<
+          std::tuple<ExternalViewEmbedder::RootRenderTargetAcquisition,
+                     DrawSurfaceStatus,
+                     FrameOpportunityOutcome>> {};
+
+TEST_P(TerminalRootTargetAcquisitionTest,
+       ExactOutcomeTerminalizesWithoutRearmingDemand) {
+  const auto [acquisition, draw_status, outcome] = GetParam();
+  std::string test_name =
+      ::testing::UnitTest::GetInstance()->current_test_info()->name();
+  ThreadHost thread_host("io.flutter.test." + test_name + ".",
+                         ThreadHost::Type::kPlatform |
+                             ThreadHost::Type::kRaster | ThreadHost::Type::kIo |
+                             ThreadHost::Type::kUi);
+  TaskRunners task_runners("test", thread_host.platform_thread->GetTaskRunner(),
+                           thread_host.raster_thread->GetTaskRunner(),
+                           thread_host.ui_thread->GetTaskRunner(),
+                           thread_host.io_thread->GetTaskRunner());
+  NiceMock<MockDelegate> delegate;
+  Settings settings;
+  ON_CALL(delegate, GetSettings()).WillByDefault(ReturnRef(settings));
+  EXPECT_CALL(delegate, GetTaskRunners())
+      .WillRepeatedly(ReturnRef(task_runners));
+  EXPECT_CALL(delegate, OnFrameRasterized(_));
+  EXPECT_CALL(delegate,
+              OnFrameOpportunityOutcome(81, 9, kImplicitViewId, outcome))
+      .WillOnce(Return(true));
+  EXPECT_CALL(delegate, OnFrameOpportunityBackpressured(_, _)).Times(0);
+
+  auto rasterizer = std::make_unique<Rasterizer>(delegate);
+  auto surface = std::make_unique<NiceMock<MockSurface>>();
+  auto external_view_embedder =
+      std::make_shared<NiceMock<MockExternalViewEmbedder>>();
+  rasterizer->SetExternalViewEmbedder(external_view_embedder);
+
+  const DlISize frame_size(64, 64);
+  SurfaceFrame::FramebufferInfo framebuffer_info;
+  framebuffer_info.supports_readback = true;
+  auto surface_frame = std::make_unique<SurfaceFrame>(
+      nullptr, framebuffer_info,
+      /*encode_callback=*/[](const SurfaceFrame&, DlCanvas*) { return true; },
+      /*submit_callback=*/[](const SurfaceFrame&) { return true; }, frame_size);
+  EXPECT_CALL(*surface, AllowsDrawingWhenGpuDisabled()).WillOnce(Return(true));
+  EXPECT_CALL(*surface, AcquireFrame(frame_size))
+      .WillOnce(Return(ByMove(std::move(surface_frame))));
+  EXPECT_CALL(*surface, MakeRenderContextCurrent())
+      .WillOnce(Return(ByMove(std::make_unique<GLContextDefaultResult>(true))));
+  EXPECT_CALL(*external_view_embedder,
+              AcquireRootRenderTarget(kImplicitViewId, nullptr, _))
+      .WillOnce(Return(framebuffer_info));
+  EXPECT_CALL(*external_view_embedder,
+              GetRootRenderTargetAcquisition(kImplicitViewId))
+      .WillRepeatedly(Return(acquisition));
+  EXPECT_CALL(*external_view_embedder,
+              SubmitFlutterView(kImplicitViewId, nullptr, _, _));
+
+  rasterizer->Setup(std::move(surface));
+  fml::AutoResetWaitableEvent latch;
+  thread_host.raster_thread->GetTaskRunner()->PostTask([&] {
+    auto pipeline = std::make_shared<FramePipeline>(/*depth=*/10);
+    auto layer_tree = std::make_unique<LayerTree>(nullptr, frame_size);
+    auto recorder = CreateFinishedBuildRecorder();
+    recorder->SetFrameOpportunity(81, 9, {kImplicitViewId});
+    auto layer_tree_item = std::make_unique<FrameItem>(
+        SingleLayerTreeList(kImplicitViewId, std::move(layer_tree),
+                            kDevicePixelRatio),
+        std::move(recorder));
+    EXPECT_TRUE(
+        pipeline->Produce().Complete(std::move(layer_tree_item)).success);
+    ON_CALL(delegate, ShouldDiscardLayerTree).WillByDefault(Return(false));
+
+    EXPECT_EQ(rasterizer->Draw(pipeline), DrawStatus::kDone);
+    EXPECT_EQ(rasterizer->GetLastDrawStatus(kImplicitViewId), draw_status);
+    EXPECT_EQ(rasterizer->GetLastLayerTree(kImplicitViewId), nullptr);
+    latch.Signal();
+  });
+  latch.Wait();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ExactTerminality,
+    TerminalRootTargetAcquisitionTest,
+    ::testing::Values(
+        std::make_tuple(
+            ExternalViewEmbedder::RootRenderTargetAcquisition::kWithdrawn,
+            DrawSurfaceStatus::kTargetWithdrawn,
+            FrameOpportunityOutcome::kTargetWithdrawn),
+        std::make_tuple(
+            ExternalViewEmbedder::RootRenderTargetAcquisition::kRemoved,
+            DrawSurfaceStatus::kTargetRemoved,
+            FrameOpportunityOutcome::kTargetRemoved),
+        std::make_tuple(
+            ExternalViewEmbedder::RootRenderTargetAcquisition::kEpochStale,
+            DrawSurfaceStatus::kTargetEpochStale,
+            FrameOpportunityOutcome::kEpochStale),
+        std::make_tuple(
+            ExternalViewEmbedder::RootRenderTargetAcquisition::kInvalid,
+            DrawSurfaceStatus::kTargetAcquisitionInvalid,
+            FrameOpportunityOutcome::kHostRejected)));
+
+TEST(RasterizerTest, backpressuredRootTargetKeepsTheRetainedTree) {
   std::string test_name =
       ::testing::UnitTest::GetInstance()->current_test_info()->name();
   ThreadHost thread_host("io.flutter.test." + test_name + ".",
@@ -482,11 +594,19 @@ TEST(RasterizerTest, refusedRootRenderTargetKeepsTheRetainedTree) {
       .WillOnce(Return(ByMove(std::make_unique<GLContextDefaultResult>(true))));
   EXPECT_CALL(*external_view_embedder, SupportsDynamicThreadMerging)
       .WillRepeatedly(Return(true));
-  // The first frame lands; the redraw of the retained tree is refused.
+  // The first frame lands; the redraw of the retained tree is backpressured.
   EXPECT_CALL(*external_view_embedder,
-              DidRefuseRootRenderTarget(kImplicitViewId))
-      .WillOnce(Return(false))
-      .WillRepeatedly(Return(true));
+              GetRootRenderTargetAcquisition(kImplicitViewId))
+      .WillOnce(
+          Return(ExternalViewEmbedder::RootRenderTargetAcquisition::kGranted))
+      .WillRepeatedly(Return(
+          ExternalViewEmbedder::RootRenderTargetAcquisition::kBackpressured));
+  EXPECT_CALL(delegate, OnFrameOpportunityOutcome(
+                            72, 8, kImplicitViewId,
+                            FrameOpportunityOutcome::kBackpressured))
+      .WillOnce(Return(true));
+  EXPECT_CALL(delegate, OnFrameOpportunityBackpressured(
+                            8, std::set<int64_t>{kImplicitViewId}));
 
   rasterizer->Setup(std::move(surface));
 
@@ -503,9 +623,11 @@ TEST(RasterizerTest, refusedRootRenderTargetKeepsTheRetainedTree) {
   rasterizer->Draw(pipeline);
   ASSERT_NE(rasterizer->GetLastLayerTree(kImplicitViewId), nullptr);
 
-  rasterizer->DrawLastLayerTrees(CreateFinishedBuildRecorder());
+  auto recorder = CreateFinishedBuildRecorder();
+  recorder->SetFrameOpportunity(72, 8, {kImplicitViewId});
+  rasterizer->DrawLastLayerTrees(std::move(recorder));
   EXPECT_EQ(rasterizer->GetLastDrawStatus(kImplicitViewId),
-            DrawSurfaceStatus::kTargetUnavailable);
+            DrawSurfaceStatus::kTargetBackpressured);
   // A retained tree was already the baseline the target holds, so a refused
   // redraw of it must put it back rather than leave the view with none.
   EXPECT_NE(rasterizer->GetLastLayerTree(kImplicitViewId), nullptr);

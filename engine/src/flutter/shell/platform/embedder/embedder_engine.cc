@@ -416,7 +416,7 @@ bool EmbedderEngine::CancelFrameOpportunity(
   const FrameOpportunityOutcome outcome =
       reason == VsyncWaiter::CancellationReason::kTargetRemoved
           ? FrameOpportunityOutcome::kTargetRemoved
-          : FrameOpportunityOutcome::kCancelledByEpoch;
+          : FrameOpportunityOutcome::kEpochStale;
   if (!frame_opportunity_registry_->Cancel(frame_opportunity_id, display_id,
                                            outcome)) {
     return false;

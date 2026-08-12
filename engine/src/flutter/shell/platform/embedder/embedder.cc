@@ -189,7 +189,8 @@ static constexpr FlutterAvioExtensionFeatures kAvioSupportedFeatures =
     kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
     kFlutterAvioExtensionFeatureSelectedTargetDamage |
     kFlutterAvioExtensionFeatureViewVisibility |
-    kFlutterAvioExtensionFeatureAtomicCompositorMaterials
+    kFlutterAvioExtensionFeatureAtomicCompositorMaterials |
+    kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition
 #if FML_OS_LINUX && defined(SHELL_ENABLE_VULKAN) && \
     defined(IMPELLER_SUPPORTS_RENDERING)
     | kFlutterAvioExtensionFeatureResourceLifecycleConfig
@@ -241,6 +242,15 @@ static const char* ValidateAvioExtensionRequest(
       (request->required_features &
        kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) == 0) {
     return "Per-view visibility requires exact frame opportunity outcomes.";
+  }
+  if ((request->required_features &
+       kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition) != 0 &&
+      ((request->required_features &
+        kFlutterAvioExtensionFeatureRootRenderTarget) == 0 ||
+       (request->required_features &
+        kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) == 0)) {
+    return "Typed target acquisition requires root targets and exact frame "
+           "outcomes.";
   }
   return nullptr;
 }
@@ -337,8 +347,10 @@ static FlutterFrameOpportunityOutcome ToPublicFrameOpportunityOutcome(
       return kFlutterFrameOpportunityOutcomeBackpressured;
     case flutter::FrameOpportunityOutcome::kTargetRemoved:
       return kFlutterFrameOpportunityOutcomeTargetRemoved;
-    case flutter::FrameOpportunityOutcome::kCancelledByEpoch:
-      return kFlutterFrameOpportunityOutcomeCancelledByEpoch;
+    case flutter::FrameOpportunityOutcome::kTargetWithdrawn:
+      return kFlutterFrameOpportunityOutcomeTargetWithdrawn;
+    case flutter::FrameOpportunityOutcome::kEpochStale:
+      return kFlutterFrameOpportunityOutcomeEpochStale;
     case flutter::FrameOpportunityOutcome::kRasterFailed:
       return kFlutterFrameOpportunityOutcomeRasterFailed;
     case flutter::FrameOpportunityOutcome::kHostRejected:
@@ -1812,35 +1824,17 @@ MakeRenderTargetFromSkSurface(FlutterBackingStore backing_store,
                                        std::move(on_release), nullptr, nullptr);
 }
 
-static std::unique_ptr<flutter::EmbedderRenderTarget>
-CreateEmbedderRenderTarget(
+static std::unique_ptr<flutter::EmbedderRenderTarget> MakeEmbedderRenderTarget(
     const FlutterCompositor* compositor,
+    FlutterBackingStore backing_store,
     const FlutterBackingStoreConfig& config,
     GrDirectContext* context,
     const std::shared_ptr<impeller::AiksContext>& aiks_context,
     bool enable_impeller,
     bool selected_target_damage) {
-  FlutterBackingStore backing_store = {};
-  backing_store.struct_size = sizeof(backing_store);
-
   // Safe access checks on the compositor struct have been performed in
   // InferExternalViewEmbedderFromArgs and are not necessary here.
-  auto c_create_callback = compositor->create_backing_store_callback;
   auto c_collect_callback = compositor->collect_backing_store_callback;
-
-  {
-    TRACE_EVENT0("flutter", "FlutterCompositorCreateBackingStore");
-    if (!c_create_callback(&config, &backing_store, compositor->user_data)) {
-      // Declining is a normal answer, not a failure: the embedder may have
-      // every buffer for this view in flight, or may be withdrawing the view
-      // while a frame is open. The engine cannot tell those apart; the
-      // embedder can, and receives the typed terminal that says so.
-      FML_LOG(INFO) << "Embedder declined a backing store for view "
-                    << config.view_id
-                    << " (buffers in flight, or the view is being withdrawn).";
-      return nullptr;
-    }
-  }
 
   if (backing_store.struct_size != sizeof(backing_store)) {
     FML_LOG(ERROR) << "Embedder modified the backing store struct size.";
@@ -1977,6 +1971,70 @@ CreateEmbedderRenderTarget(
   return render_target;
 }
 
+static std::unique_ptr<flutter::EmbedderRenderTarget>
+CreateEmbedderRenderTarget(
+    const FlutterCompositor* compositor,
+    const FlutterBackingStoreConfig& config,
+    GrDirectContext* context,
+    const std::shared_ptr<impeller::AiksContext>& aiks_context,
+    bool enable_impeller,
+    bool selected_target_damage) {
+  FlutterBackingStore backing_store = {};
+  backing_store.struct_size = sizeof(backing_store);
+  TRACE_EVENT0("flutter", "FlutterCompositorCreateBackingStore");
+  if (!compositor->create_backing_store_callback(&config, &backing_store,
+                                                 compositor->user_data)) {
+    return nullptr;
+  }
+  return MakeEmbedderRenderTarget(compositor, backing_store, config, context,
+                                  aiks_context, enable_impeller,
+                                  selected_target_damage);
+}
+
+static flutter::EmbedderExternalViewEmbedder::RenderTargetAcquisition
+AcquireEmbedderRenderTarget(
+    const FlutterCompositor* compositor,
+    const FlutterBackingStoreConfig& config,
+    FlutterFrameOpportunityId opportunity_id,
+    FlutterEngineDisplayId display_id,
+    GrDirectContext* context,
+    const std::shared_ptr<impeller::AiksContext>& aiks_context,
+    bool enable_impeller,
+    bool selected_target_damage) {
+  using Acquisition =
+      flutter::ExternalViewEmbedder::RootRenderTargetAcquisition;
+  FlutterBackingStore backing_store = {};
+  backing_store.struct_size = sizeof(backing_store);
+  FlutterRenderTargetAcquisitionInfo info = {
+      .struct_size = sizeof(FlutterRenderTargetAcquisitionInfo),
+      .config = &config,
+      .opportunity_id = opportunity_id,
+      .display_id = display_id,
+      .user_data = compositor->user_data,
+  };
+  TRACE_EVENT0("flutter", "FlutterCompositorAcquireRenderTarget");
+  const auto result =
+      compositor->acquire_render_target_callback(&info, &backing_store);
+  switch (result) {
+    case kFlutterRenderTargetAcquisitionGranted: {
+      auto target = MakeEmbedderRenderTarget(
+          compositor, backing_store, config, context, aiks_context,
+          enable_impeller, selected_target_damage);
+      return {.status = target ? Acquisition::kGranted : Acquisition::kInvalid,
+              .target = std::move(target)};
+    }
+    case kFlutterRenderTargetAcquisitionBackpressured:
+      return {.status = Acquisition::kBackpressured, .target = nullptr};
+    case kFlutterRenderTargetAcquisitionWithdrawn:
+      return {.status = Acquisition::kWithdrawn, .target = nullptr};
+    case kFlutterRenderTargetAcquisitionRemoved:
+      return {.status = Acquisition::kRemoved, .target = nullptr};
+    case kFlutterRenderTargetAcquisitionEpochStale:
+      return {.status = Acquisition::kEpochStale, .target = nullptr};
+  }
+  return {.status = Acquisition::kInvalid, .target = nullptr};
+}
+
 /// Creates an EmbedderExternalViewEmbedder.
 ///
 /// When a non-OK status is returned, engine startup should be halted.
@@ -1996,6 +2054,8 @@ InferExternalViewEmbedderFromArgs(
       SAFE_ACCESS(compositor, create_backing_store_callback, nullptr);
   auto c_collect_callback =
       SAFE_ACCESS(compositor, collect_backing_store_callback, nullptr);
+  auto c_acquire_render_target_callback =
+      SAFE_ACCESS(compositor, acquire_render_target_callback, nullptr);
   auto c_present_callback =
       SAFE_ACCESS(compositor, present_layers_callback, nullptr);
   auto c_present_view_callback =
@@ -2018,12 +2078,18 @@ InferExternalViewEmbedderFromArgs(
   }
 
   // Make sure the required callbacks are present
-  if (!c_create_callback || !c_collect_callback) {
+  if (!c_collect_callback) {
     return fml::Status(fml::StatusCode::kInvalidArgument,
-                       "Required compositor callbacks absent.");
+                       "Backing-store collection callback absent.");
   }
   switch (compositor_mode) {
     case kFlutterCompositorModeGeneric:
+      if (!c_create_callback || c_acquire_render_target_callback) {
+        return fml::Status(
+            fml::StatusCode::kInvalidArgument,
+            "Generic compositor mode requires only the untyped create "
+            "callback.");
+      }
       if ((!c_present_view_callback && !c_present_callback) ||
           (c_present_view_callback && c_present_callback)) {
         return fml::Status(fml::StatusCode::kInvalidArgument,
@@ -2048,6 +2114,14 @@ InferExternalViewEmbedderFromArgs(
                            "present_render_target_callback.");
       }
       if ((negotiated_avio_features &
+           kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition) == 0 ||
+          !c_acquire_render_target_callback || c_create_callback) {
+        return fml::Status(
+            fml::StatusCode::kInvalidArgument,
+            "Root-target compositor mode requires only the typed acquisition "
+            "callback.");
+      }
+      if ((negotiated_avio_features &
            kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) != 0 &&
           SAFE_ACCESS(compositor, frame_opportunity_outcome_callback,
                       nullptr) == nullptr) {
@@ -2070,15 +2144,33 @@ InferExternalViewEmbedderFromArgs(
   FlutterCompositor captured_compositor = *compositor;
 
   flutter::EmbedderExternalViewEmbedder::CreateRenderTargetCallback
-      create_render_target_callback =
-          [captured_compositor, enable_impeller, selected_target_damage](
-              GrDirectContext* context,
-              const std::shared_ptr<impeller::AiksContext>& aiks_context,
-              const auto& config) {
-            return CreateEmbedderRenderTarget(
-                &captured_compositor, config, context, aiks_context,
-                enable_impeller, selected_target_damage);
-          };
+      create_render_target_callback;
+  if (compositor_mode == kFlutterCompositorModeGeneric) {
+    create_render_target_callback =
+        [captured_compositor, enable_impeller, selected_target_damage](
+            GrDirectContext* context,
+            const std::shared_ptr<impeller::AiksContext>& aiks_context,
+            const auto& config) {
+          return CreateEmbedderRenderTarget(
+              &captured_compositor, config, context, aiks_context,
+              enable_impeller, selected_target_damage);
+        };
+  }
+
+  flutter::EmbedderExternalViewEmbedder::AcquireRenderTargetCallback
+      acquire_render_target_callback;
+  if (compositor_mode == kFlutterCompositorModeRootRenderTarget) {
+    acquire_render_target_callback =
+        [captured_compositor, enable_impeller, selected_target_damage](
+            GrDirectContext* context,
+            const std::shared_ptr<impeller::AiksContext>& aiks_context,
+            const auto& config, FlutterFrameOpportunityId opportunity_id,
+            FlutterEngineDisplayId display_id) {
+          return AcquireEmbedderRenderTarget(
+              &captured_compositor, config, opportunity_id, display_id, context,
+              aiks_context, enable_impeller, selected_target_damage);
+        };
+  }
 
   flutter::EmbedderExternalViewEmbedder::PresentCallback present_callback;
   if (c_present_callback) {
@@ -2166,8 +2258,8 @@ InferExternalViewEmbedderFromArgs(
 
   return std::make_unique<flutter::EmbedderExternalViewEmbedder>(
       compositor_mode, selected_target_damage, avoid_backing_store_cache,
-      create_render_target_callback, present_callback,
-      present_render_target_callback);
+      create_render_target_callback, acquire_render_target_callback,
+      present_callback, present_render_target_callback);
 }
 
 // Translates embedder metrics to engine metrics, or returns a string on error.

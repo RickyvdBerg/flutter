@@ -503,14 +503,21 @@ class ExternalViewEmbedder {
     return std::nullopt;
   }
 
-  // Whether the embedder refused to hand over a root render target for this
-  // view during the frame that is being drawn. A refusal is a transient
-  // resource verdict, not a rendering error: the frame still reaches its typed
-  // terminal, but no pixels are written, so the tree must not become the
-  // damage baseline and the demand that produced it has to outlive the frame.
-  // Valid between |BeginFrame| and the next |BeginFrame|.
-  virtual bool DidRefuseRootRenderTarget(int64_t flutter_view_id) const {
-    return false;
+  enum class RootRenderTargetAcquisition {
+    kGranted,
+    kBackpressured,
+    kWithdrawn,
+    kRemoved,
+    kEpochStale,
+    kInvalid,
+  };
+
+  // Exact acquisition result for this view during the current frame. Root
+  // embedders return one typed result after selection; generic embedders return
+  // nullopt. Valid between |BeginFrame| and the next |BeginFrame|.
+  virtual std::optional<RootRenderTargetAcquisition>
+  GetRootRenderTargetAcquisition(int64_t flutter_view_id) const {
+    return std::nullopt;
   }
 
   // Whether metadata-only frame-damage diffing is safe for the current frame.

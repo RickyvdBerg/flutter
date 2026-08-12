@@ -271,19 +271,20 @@ TEST_F(EmbedderTest, RootRenderTargetReportsRasterFailure) {
   builder.SetDartEntrypoint("render_implicit_view");
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kOpenGLSurface);
-  builder.GetCompositor().create_backing_store_callback =
-      [](const FlutterBackingStoreConfig* config,
-         FlutterBackingStore* backing_store_out, void* user_data) {
-        auto* compositor = reinterpret_cast<EmbedderTestCompositor*>(user_data);
-        if (!compositor->CreateBackingStore(config, backing_store_out)) {
-          return false;
+  builder.GetCompositor().acquire_render_target_callback =
+      [](const FlutterRenderTargetAcquisitionInfo* info,
+         FlutterBackingStore* backing_store_out) {
+        auto* compositor =
+            reinterpret_cast<EmbedderTestCompositor*>(info->user_data);
+        if (!compositor->CreateBackingStore(info->config, backing_store_out)) {
+          return kFlutterRenderTargetAcquisitionBackpressured;
         }
         backing_store_out->open_gl.surface.make_current_callback =
             [](void* context, bool* invalidate_state) {
               *invalidate_state = false;
               return false;
             };
-        return true;
+        return kFlutterRenderTargetAcquisitionGranted;
       };
 
   fml::AutoResetWaitableEvent latch;

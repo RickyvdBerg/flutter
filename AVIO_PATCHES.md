@@ -402,41 +402,27 @@ frame. This patch does not precompile shaders or allocate material render
 targets: non-material trees keep the stock preroll path and all GPU resources
 remain demand-driven in Avio.
 
-### Patch 38: a refused target keeps its demand
+### Patch 38: refused-target demand retention (superseded)
 
-An embedder may decline to hand over a root render target, either at the
-selected-target acquire or at submit time. Declining is an ordinary answer: the
-compositor may hold every buffer for that view in flight, or may be withdrawing
-the view while a frame is open. The engine cannot tell those apart and does not
-try to; the typed `RenderTargetUnavailable` terminal reaches the embedder,
-whose own outcome rewrite is the only place that distinction exists. Neither
-refusal site logs at `ERROR` for that reason — an ordinary dock hide used to
-cost two error lines per frame and hours of misreading.
+This patch proved that scarcity must not consume demand, but its null target
+collapsed scarcity, withdrawal, removal, and stale authority. Patch 39 removes
+that ambiguity and the blanket rearm mechanism.
 
-What a refusal must not do is consume the demand that produced the frame. Both
-sites record the view on the external view embedder, `Rasterizer` reads it back
-after submission as the distinct `kTargetUnavailable` draw status, and demand is
-armed again through the same edge pipeline backpressure uses. This is the one
-mechanism: an engine-side terminal plus fresh demand, never a resubmit into the
-raster pipeline, which would spin the raster thread against a host that frees
-buffers on its own cadence, and never a second terminal, which the conservation
-ledger would reject and silently drop the retry with.
+### Patch 39: exact typed render-target acquisition
 
-Terminality and demand stay separate, so nothing here decides whether the view
-should render again — the `Animator` does, from renderability. A withdrawn or
-obscured view is absent from `renderable_view_ids`, `LatchDisplayFrameRequest`
-drops the request, and the revoke tail stays terminal without the engine
-needing to know it was a teardown.
+Root-target mode uses `FlutterRenderTargetAcquisitionCallback`, never the stock
+boolean backing-store create callback. Every request carries its exact
+`FlutterFrameOpportunityId`, display, and target configuration and returns one
+of `Granted`, `Backpressured`, `Withdrawn`, `Removed`, or `EpochStale`.
+Unavailable acquisition never reaches the presentation callback: the
+opportunity ledger terminalizes the target directly with the same typed cause.
 
-A refused frame also never becomes the damage baseline. Its pixels were never
-written, so promoting its tree would make the next attempt diff against a frame
-the target never received, compute empty damage, and strand the view exactly as
-before. A tree drawn from the retained cache is the one exception: it already
-was the baseline, so a refused redraw puts it back rather than leaving the view
-with none. The regressions are `RefusedRootRenderTargetRearmsDemandForTheNextFrame`,
-`RefusedRootRenderTargetStopsRearmingOnceTheViewIsGone`,
-`refusedRootRenderTargetKeepsBaselineAndRearmsDemand`, and
-`refusedRootRenderTargetKeepsTheRetainedTree`.
+Only `Backpressured` preserves the retained pixel baseline and asks the
+Animator for later demand. Withdrawal, removal, stale authority, and invalid
+host results are terminal without rearm. A freshly built tree that acquired no
+lease never becomes the damage baseline. The extension ABI is version 2 and
+negotiates `kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition`; root
+mode rejects the old untyped callback.
 
 ## Known baseline debt
 

@@ -32,7 +32,8 @@ enum class FrameOpportunityOutcome : uint32_t {
   kNoVisualChange,
   kBackpressured,
   kTargetRemoved,
-  kCancelledByEpoch,
+  kTargetWithdrawn,
+  kEpochStale,
   kRasterFailed,
   kHostRejected,
 };

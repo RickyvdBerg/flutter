@@ -88,7 +88,7 @@ bool FrameOpportunityRegistry::Cancel(FrameOpportunityId opportunity_id,
                                       int64_t display_id,
                                       FrameOpportunityOutcome outcome) {
   if (outcome != FrameOpportunityOutcome::kTargetRemoved &&
-      outcome != FrameOpportunityOutcome::kCancelledByEpoch) {
+      outcome != FrameOpportunityOutcome::kEpochStale) {
     return false;
   }
 

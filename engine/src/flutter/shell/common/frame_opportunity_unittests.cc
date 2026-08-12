@@ -57,10 +57,8 @@ TEST(FrameOpportunityRegistryTest, CancellationClaimsOnlyPendingTargets) {
   ASSERT_TRUE(registry.Open(8, 4, {43, 41, 42}));
   ASSERT_TRUE(
       registry.Complete(8, 4, 42, FrameOpportunityOutcome::kNoVisualChange));
-  EXPECT_TRUE(
-      registry.Cancel(8, 4, FrameOpportunityOutcome::kCancelledByEpoch));
-  EXPECT_FALSE(
-      registry.Cancel(8, 4, FrameOpportunityOutcome::kCancelledByEpoch));
+  EXPECT_TRUE(registry.Cancel(8, 4, FrameOpportunityOutcome::kEpochStale));
+  EXPECT_FALSE(registry.Cancel(8, 4, FrameOpportunityOutcome::kEpochStale));
   ASSERT_EQ(outcomes.size(), 3u);
   EXPECT_EQ(std::get<2>(outcomes[0]), 42);
   EXPECT_EQ(std::get<2>(outcomes[1]), 41);

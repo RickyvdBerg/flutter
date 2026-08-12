@@ -13,6 +13,8 @@
 
 namespace flutter::testing {
 
+struct ExactFramePump;
+
 struct UniqueEngineTraits {
   static FlutterEngine InvalidValue() { return nullptr; }
 
@@ -93,7 +95,11 @@ class EmbedderConfigBuilder {
   void SetRootRenderTargetCompositor(
       bool avoid_backing_store_cache = false,
       FlutterAvioExtensionFeatures required_features =
-          kFlutterAvioExtensionFeatureRootRenderTarget);
+          kFlutterAvioExtensionFeaturePerDisplayVsync |
+          kFlutterAvioExtensionFeatureRootRenderTarget |
+          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+          kFlutterAvioExtensionFeatureExactVsyncCancellation |
+          kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
 
   FlutterCompositor& GetCompositor();
 
@@ -125,6 +131,7 @@ class EmbedderConfigBuilder {
   std::vector<std::string> command_line_arguments_;
   std::vector<std::string> dart_entrypoint_arguments_;
   std::string log_tag_;
+  std::shared_ptr<ExactFramePump> exact_frame_pump_;
 
   UniqueEngine SetupEngine(bool run) const;
 

@@ -87,11 +87,13 @@ enum class DrawSurfaceStatus {
   // presentation callback owns the terminal outcome, so this is neither a GPU
   // failure nor a successful tree eligible for retained promotion.
   kRejected,
-  // The embedder had no render target to give. The typed presentation callback
-  // already terminalized this frame, but no pixels were written, so the tree
-  // cannot become the damage baseline and the demand behind it must be armed
-  // again for the next vsync.
-  kTargetUnavailable,
+  // Exact typed results from root render-target acquisition. No pixels were
+  // written; only backpressure preserves demand for a later opportunity.
+  kTargetBackpressured,
+  kTargetWithdrawn,
+  kTargetRemoved,
+  kTargetEpochStale,
+  kTargetAcquisitionInvalid,
   // Layer tree was discarded because its size does not match the view size.
   // This typically occurs during resizing.
   kDiscarded,
@@ -817,11 +819,6 @@ class Rasterizer final : public SnapshotDelegate,
       const FrameItem& item,
       FrameOpportunityOutcome outcome);
   void CompleteBackpressuredFrameItem(const FrameItem& item);
-
-  // Re-arms frame demand for targets the embedder had no buffer for. Their
-  // opportunity is already terminal; this only asks for the next one.
-  void RearmUnavailableTargets(const FrameTimingsRecorder& recorder,
-                               const std::set<int64_t>& target_ids);
 
   // Draws the layer tree to the specified view, assuming we have access to the
   // GPU.

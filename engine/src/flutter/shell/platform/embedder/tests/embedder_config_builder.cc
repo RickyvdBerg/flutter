@@ -4,6 +4,9 @@
 
 #include "flutter/shell/platform/embedder/tests/embedder_config_builder.h"
 
+#include <atomic>
+#include <mutex>
+
 #include "flutter/common/constants.h"
 #include "flutter/runtime/dart_vm.h"
 #include "flutter/shell/platform/embedder/embedder.h"
@@ -11,6 +14,51 @@
 #include "third_party/skia/include/core/SkImage.h"
 
 namespace flutter::testing {
+
+struct ExactFramePump {
+  void OnBaton(intptr_t baton, FlutterEngineDisplayId display_id) {
+    FlutterEngine attached_engine = nullptr;
+    {
+      std::scoped_lock lock(mutex);
+      attached_engine = engine;
+      if (attached_engine == nullptr) {
+        pending_batons.emplace_back(baton, display_id);
+        return;
+      }
+    }
+    ReturnBaton(attached_engine, baton, display_id);
+  }
+
+  void Attach(FlutterEngine attached_engine) {
+    std::vector<std::pair<intptr_t, FlutterEngineDisplayId>> pending;
+    {
+      std::scoped_lock lock(mutex);
+      engine = attached_engine;
+      pending.swap(pending_batons);
+    }
+    for (const auto& [baton, display_id] : pending) {
+      ReturnBaton(attached_engine, baton, display_id);
+    }
+  }
+
+ private:
+  void ReturnBaton(FlutterEngine attached_engine,
+                   intptr_t baton,
+                   FlutterEngineDisplayId display_id) {
+    const FlutterViewId target = kFlutterImplicitViewId;
+    const uint64_t now = FlutterEngineGetCurrentTime();
+    const FlutterFrameOpportunityId opportunity_id =
+        next_opportunity_id.fetch_add(1u);
+    FML_CHECK(FlutterEngineOnVsyncForDisplayWithOpportunity(
+                  attached_engine, baton, display_id, opportunity_id, &target,
+                  1u, now, now + 16'666'667u) == kSuccess);
+  }
+
+  std::mutex mutex;
+  FlutterEngine engine = nullptr;
+  std::vector<std::pair<intptr_t, FlutterEngineDisplayId>> pending_batons;
+  std::atomic<FlutterFrameOpportunityId> next_opportunity_id = 1u;
+};
 
 EmbedderConfigBuilder::EmbedderConfigBuilder(
     EmbedderTestContext& context,
@@ -256,11 +304,13 @@ void EmbedderConfigBuilder::SetRootRenderTargetCompositor(
   auto& compositor = context_.GetCompositor();
   compositor_.struct_size = sizeof(compositor_);
   compositor_.user_data = &compositor;
-  compositor_.create_backing_store_callback =
-      [](const FlutterBackingStoreConfig* config,
-         FlutterBackingStore* backing_store_out, void* user_data) {
-        return reinterpret_cast<EmbedderTestCompositor*>(user_data)
-            ->CreateBackingStore(config, backing_store_out);
+  compositor_.acquire_render_target_callback =
+      [](const FlutterRenderTargetAcquisitionInfo* info,
+         FlutterBackingStore* backing_store_out) {
+        return reinterpret_cast<EmbedderTestCompositor*>(info->user_data)
+                       ->CreateBackingStore(info->config, backing_store_out)
+                   ? kFlutterRenderTargetAcquisitionGranted
+                   : kFlutterRenderTargetAcquisitionBackpressured;
       };
   compositor_.collect_backing_store_callback =
       [](const FlutterBackingStore* backing_store, void* user_data) {
@@ -297,6 +347,27 @@ void EmbedderConfigBuilder::SetRootRenderTargetCompositor(
       };
   compositor_.avoid_backing_store_cache = avoid_backing_store_cache;
   compositor_.compositor_mode = kFlutterCompositorModeRootRenderTarget;
+  required_features |= kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition;
+  const FlutterAvioExtensionFeatures exact_features =
+      kFlutterAvioExtensionFeaturePerDisplayVsync |
+      kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+      kFlutterAvioExtensionFeatureExactVsyncCancellation |
+      kFlutterAvioExtensionFeatureFrameOpportunityOutcomes;
+  if ((required_features & exact_features) == exact_features) {
+    exact_frame_pump_ = std::make_shared<ExactFramePump>();
+    context_.SetVsyncForDisplayCallback(
+        [pump = exact_frame_pump_](intptr_t baton,
+                                   FlutterEngineDisplayId display_id) {
+          pump->OnBaton(baton, display_id);
+        });
+    project_args_.vsync_for_display_callback =
+        [](void* user_data, intptr_t baton, FlutterEngineDisplayId display_id) {
+          reinterpret_cast<EmbedderTestContext*>(user_data)
+              ->RunVsyncForDisplayCallback(baton, display_id);
+        };
+    compositor_.frame_opportunity_outcome_callback =
+        [](const FlutterFrameOpportunityOutcomeInfo*) {};
+  }
   avio_extension_request_ = {
       .struct_size = sizeof(FlutterAvioExtensionRequest),
       .version = FLUTTER_AVIO_EXTENSION_VERSION,
@@ -371,6 +442,10 @@ UniqueEngine EmbedderConfigBuilder::SetupEngine(bool run) const {
 
   if (result != kSuccess) {
     return {};
+  }
+
+  if (exact_frame_pump_) {
+    exact_frame_pump_->Attach(engine);
   }
 
   return UniqueEngine{engine};

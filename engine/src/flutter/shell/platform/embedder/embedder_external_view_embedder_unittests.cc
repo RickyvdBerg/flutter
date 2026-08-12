@@ -87,6 +87,54 @@ TEST(EmbedderExternalViewEmbedderTest,
   EXPECT_TRUE(RegionContains(coverage, material_rect));
 }
 
+TEST(EmbedderExternalViewEmbedderTest,
+     RootTargetAcquisitionCarriesExactOpportunityIdentity) {
+  FlutterFrameOpportunityId observed_opportunity = 0u;
+  FlutterEngineDisplayId observed_display = 0u;
+  FlutterViewId observed_view = -1;
+  EmbedderExternalViewEmbedder embedder(
+      kFlutterCompositorModeRootRenderTarget,
+      /*selected_target_damage=*/true,
+      /*avoid_backing_store_cache=*/true,
+      /*create_render_target_callback=*/nullptr,
+      [&](GrDirectContext*, const std::shared_ptr<impeller::AiksContext>&,
+          const FlutterBackingStoreConfig& config,
+          FlutterFrameOpportunityId opportunity_id,
+          FlutterEngineDisplayId display_id) {
+        observed_opportunity = opportunity_id;
+        observed_display = display_id;
+        observed_view = config.view_id;
+        return EmbedderExternalViewEmbedder::RenderTargetAcquisition{
+            .status =
+                ExternalViewEmbedder::RootRenderTargetAcquisition::kWithdrawn,
+            .target = nullptr,
+        };
+      },
+      /*present_callback=*/nullptr,
+      [](FlutterViewId, FlutterFrameOpportunityId, FlutterEngineDisplayId,
+         FlutterPresentRenderTargetStatus, const FlutterBackingStore*,
+         const FlutterBackingStorePresentInfo*,
+         const std::vector<FlutterAvioCompositorMaterial>&,
+         bool) { return true; });
+  ExternalViewEmbedder& boundary = embedder;
+  boundary.BeginFrame(nullptr, nullptr);
+  boundary.SetFrameOpportunity(FrameOpportunityContext{
+      .id = 73u,
+      .display_id = 11,
+      .target_ids = {29},
+  });
+  boundary.PrepareFlutterView(DlISize(800, 600), 1.0);
+  const auto target_info =
+      boundary.AcquireRootRenderTarget(29, nullptr, nullptr);
+
+  ASSERT_TRUE(target_info.has_value());
+  EXPECT_EQ(observed_opportunity, 73u);
+  EXPECT_EQ(observed_display, 11u);
+  EXPECT_EQ(observed_view, 29);
+  EXPECT_EQ(boundary.GetRootRenderTargetAcquisition(29),
+            ExternalViewEmbedder::RootRenderTargetAcquisition::kWithdrawn);
+}
+
 }  // namespace
 }  // namespace testing
 }  // namespace flutter

@@ -73,7 +73,7 @@ extern "C" {
 // Flutter embedder ABI. The engine reports supported semantics through
 // FlutterEngineGetAvioExtensionCapabilities and validates the request again
 // during initialization, before creating a view or GPU resource.
-#define FLUTTER_AVIO_EXTENSION_VERSION 1u
+#define FLUTTER_AVIO_EXTENSION_VERSION 2u
 
 typedef uint64_t FlutterAvioExtensionFeatures;
 
@@ -90,6 +90,8 @@ typedef uint64_t FlutterAvioExtensionFeatures;
 #define kFlutterAvioExtensionFeatureViewVisibility 0x0000000000000080ULL
 #define kFlutterAvioExtensionFeatureAtomicCompositorMaterials \
   0x0000000000000100ULL
+#define kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition \
+  0x0000000000000200ULL
 
 /// Hard transaction bound shared by retained scene collection and embedders.
 #define FLUTTER_AVIO_MAX_COMPOSITOR_MATERIALS 64u
@@ -2576,9 +2578,6 @@ typedef enum {
   /// Root-target mode rejected an embedded platform view.
   kFlutterPresentRenderTargetStatusUnsupportedPlatformView,
 
-  /// The embedder did not provide a usable render target.
-  kFlutterPresentRenderTargetStatusRenderTargetUnavailable,
-
   /// Rasterization into an acquired render target failed.
   kFlutterPresentRenderTargetStatusRasterFailed,
 
@@ -2600,8 +2599,10 @@ typedef enum {
   kFlutterFrameOpportunityOutcomeBackpressured,
   /// The target disappeared before it could produce a render job.
   kFlutterFrameOpportunityOutcomeTargetRemoved,
-  /// The transport or authority epoch which admitted the work was replaced.
-  kFlutterFrameOpportunityOutcomeCancelledByEpoch,
+  /// The target was deliberately withdrawn while retaining its identity.
+  kFlutterFrameOpportunityOutcomeTargetWithdrawn,
+  /// The exact opportunity belongs to a superseded authority epoch.
+  kFlutterFrameOpportunityOutcomeEpochStale,
   /// Rasterization failed before a render target reached the host.
   kFlutterFrameOpportunityOutcomeRasterFailed,
   /// The host rejected a produced render target.
@@ -2665,6 +2666,36 @@ typedef bool (*FlutterBackingStoreCreateCallback)(
     FlutterBackingStore* backing_store_out,
     void* user_data);
 
+/// Exact result of acquiring one compositor-owned render target. A granted
+/// backing store is a lease for only the named opportunity, display, and
+/// target. Every unavailable result terminalizes that exact target; only
+/// `Backpressured` asks the engine to preserve demand for a later opportunity.
+typedef enum {
+  kFlutterRenderTargetAcquisitionGranted = 0,
+  kFlutterRenderTargetAcquisitionBackpressured,
+  kFlutterRenderTargetAcquisitionWithdrawn,
+  kFlutterRenderTargetAcquisitionRemoved,
+  kFlutterRenderTargetAcquisitionEpochStale,
+} FlutterRenderTargetAcquisition;
+
+typedef struct {
+  /// The size of this struct.
+  size_t struct_size;
+  /// Backing-store requirements for this exact target.
+  const FlutterBackingStoreConfig* config;
+  /// Exact scheduled opportunity which owns the lease request.
+  FlutterFrameOpportunityId opportunity_id;
+  /// Physical display clock which admitted the opportunity.
+  FlutterEngineDisplayId display_id;
+  /// The |FlutterCompositor.user_data|.
+  void* user_data;
+} FlutterRenderTargetAcquisitionInfo;
+
+typedef FlutterRenderTargetAcquisition (
+    *FlutterRenderTargetAcquisitionCallback)(
+    const FlutterRenderTargetAcquisitionInfo* info,
+    FlutterBackingStore* backing_store_out);
+
 typedef bool (*FlutterBackingStoreCollectCallback)(
     const FlutterBackingStore* renderer,
     void* user_data);
@@ -2705,6 +2736,7 @@ typedef struct {
   size_t struct_size;
   /// A baton that in not interpreted by the engine in any way. If it passed
   /// back to the embedder in `FlutterCompositor.create_backing_store_callback`,
+  /// `FlutterCompositor.acquire_render_target_callback`,
   /// `FlutterCompositor.collect_backing_store_callback`,
   /// `FlutterCompositor.present_layers_callback`,
   /// `FlutterCompositor.present_view_callback`, and
@@ -2793,6 +2825,11 @@ typedef struct {
   /// render-target callbacks carry their opportunity id directly; this
   /// callback covers exits that occur before a target reaches that path.
   FlutterFrameOpportunityOutcomeCallback frame_opportunity_outcome_callback;
+
+  /// Acquires the exact backing-store lease for root-target mode. Generic
+  /// compositor mode uses `create_backing_store_callback` instead. Root-target
+  /// mode requires this callback and forbids the untyped create callback.
+  FlutterRenderTargetAcquisitionCallback acquire_render_target_callback;
 } FlutterCompositor;
 
 typedef struct {
@@ -4049,7 +4086,7 @@ FlutterEngineResult FlutterEngineCancelVsyncForDisplay(
 ///             baton was returned.
 ///
 /// Cancellation claims every target that has not already terminalized and
-/// reports TargetRemoved or CancelledByEpoch before acknowledging UI-state
+/// reports TargetRemoved or EpochStale before acknowledging UI-state
 /// settlement. Work which already reached a terminal edge wins the race and
 /// is not reported again.
 FLUTTER_EXPORT

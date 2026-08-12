@@ -28,21 +28,26 @@ EmbedderExternalViewEmbedder::EmbedderExternalViewEmbedder(
     bool selected_target_damage,
     bool avoid_backing_store_cache,
     const CreateRenderTargetCallback& create_render_target_callback,
+    const AcquireRenderTargetCallback& acquire_render_target_callback,
     const PresentCallback& present_callback,
     const PresentRenderTargetCallback& present_render_target_callback)
     : compositor_mode_(compositor_mode),
       selected_target_damage_(selected_target_damage),
       avoid_backing_store_cache_(avoid_backing_store_cache),
       create_render_target_callback_(create_render_target_callback),
+      acquire_render_target_callback_(acquire_render_target_callback),
       present_callback_(present_callback),
       present_render_target_callback_(present_render_target_callback) {
-  FML_DCHECK(create_render_target_callback_);
   switch (compositor_mode_) {
     case kFlutterCompositorModeGeneric:
+      FML_DCHECK(create_render_target_callback_);
+      FML_DCHECK(!acquire_render_target_callback_);
       FML_DCHECK(present_callback_);
       FML_DCHECK(!present_render_target_callback_);
       break;
     case kFlutterCompositorModeRootRenderTarget:
+      FML_DCHECK(!create_render_target_callback_);
+      FML_DCHECK(acquire_render_target_callback_);
       FML_DCHECK(!present_callback_);
       FML_DCHECK(present_render_target_callback_);
       break;
@@ -92,7 +97,7 @@ void EmbedderExternalViewEmbedder::BeginFrame(
     GrDirectContext* context,
     const fml::RefPtr<fml::RasterThreadMerger>& raster_thread_merger) {
   pending_frame_opportunity_ = std::nullopt;
-  refused_root_target_view_ids_.clear();
+  root_target_acquisitions_.clear();
 }
 
 void EmbedderExternalViewEmbedder::SetFrameOpportunity(
@@ -210,13 +215,29 @@ EmbedderExternalViewEmbedder::AcquireRootRenderTarget(
   auto config = MakeBackingStoreConfig(flutter_view_id, descriptor.surface_size,
                                        descriptor.request_type,
                                        descriptor.shell_visual_identifier);
-  pending_root_render_target_ =
-      create_render_target_callback_(context, aiks_context, config);
+  RenderTargetAcquisition acquisition = {
+      .status = ExternalViewEmbedder::RootRenderTargetAcquisition::kInvalid,
+      .target = nullptr,
+  };
+  if (pending_frame_opportunity_.has_value()) {
+    acquisition = acquire_render_target_callback_(
+        context, aiks_context, config, pending_frame_opportunity_->id,
+        static_cast<FlutterEngineDisplayId>(
+            pending_frame_opportunity_->display_id));
+  }
+  pending_root_render_target_ = std::move(acquisition.target);
+  if ((acquisition.status ==
+       ExternalViewEmbedder::RootRenderTargetAcquisition::kGranted) !=
+      (pending_root_render_target_ != nullptr)) {
+    acquisition.status =
+        ExternalViewEmbedder::RootRenderTargetAcquisition::kInvalid;
+    pending_root_render_target_.reset();
+  }
+  root_target_acquisitions_[flutter_view_id] = acquisition.status;
   pending_root_deferred_cleanup_render_targets_ =
       render_target_cache.ClearAllRenderTargetsInCache();
 
   if (pending_root_render_target_ == nullptr) {
-    refused_root_target_view_ids_.insert(flutter_view_id);
     SurfaceFrame::FramebufferInfo unavailable_info;
     unavailable_info.supports_readback = true;
     unavailable_info.supports_partial_repaint = true;
@@ -229,9 +250,14 @@ EmbedderExternalViewEmbedder::AcquireRootRenderTarget(
                                            pending_frame_size_);
 }
 
-bool EmbedderExternalViewEmbedder::DidRefuseRootRenderTarget(
+std::optional<ExternalViewEmbedder::RootRenderTargetAcquisition>
+EmbedderExternalViewEmbedder::GetRootRenderTargetAcquisition(
     int64_t flutter_view_id) const {
-  return refused_root_target_view_ids_.count(flutter_view_id) > 0;
+  const auto found = root_target_acquisitions_.find(flutter_view_id);
+  return found == root_target_acquisitions_.end()
+             ? std::nullopt
+             : std::optional<ExternalViewEmbedder::RootRenderTargetAcquisition>(
+                   found->second);
 }
 
 bool EmbedderExternalViewEmbedder::SupportsMetadataFrameDamageForCurrentFrame()
@@ -982,6 +1008,16 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
     return;
   }
 
+  if (selected_target_damage_ &&
+      GetRootRenderTargetAcquisition(flutter_view_id) !=
+          ExternalViewEmbedder::RootRenderTargetAcquisition::kGranted) {
+    // The exact acquisition result owns this target's terminal. Nothing was
+    // leased, so no render/presentation callback may claim the opportunity.
+    ResetPendingRootRenderTarget();
+    frame->Submit();
+    return;
+  }
+
   for (const auto& view_id : composition_order_) {
     if (view_id.platform_view_id.has_value()) {
       FML_LOG(ERROR)
@@ -1060,25 +1096,33 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
       auto config = MakeBackingStoreConfig(
           flutter_view_id, descriptor.surface_size, descriptor.request_type,
           descriptor.shell_visual_identifier);
-      render_target =
-          create_render_target_callback_(context, aiks_context, config);
+      RenderTargetAcquisition acquisition = {
+          .status = ExternalViewEmbedder::RootRenderTargetAcquisition::kInvalid,
+          .target = nullptr,
+      };
+      if (pending_frame_opportunity_.has_value()) {
+        acquisition = acquire_render_target_callback_(
+            context, aiks_context, config, pending_frame_opportunity_->id,
+            static_cast<FlutterEngineDisplayId>(
+                pending_frame_opportunity_->display_id));
+      }
+      render_target = std::move(acquisition.target);
+      if ((acquisition.status ==
+           ExternalViewEmbedder::RootRenderTargetAcquisition::kGranted) !=
+          (render_target != nullptr)) {
+        acquisition.status =
+            ExternalViewEmbedder::RootRenderTargetAcquisition::kInvalid;
+        render_target.reset();
+      }
+      root_target_acquisitions_[flutter_view_id] = acquisition.status;
     }
     deferred_cleanup_render_targets =
         render_target_cache.ClearAllRenderTargetsInCache();
   }
   if (render_target == nullptr) {
-    // The embedder declined to hand over a target. Only the embedder knows
-    // why: every buffer for this view may be in flight, or the view may be
-    // going away while this frame was open. Both are ordinary, and the
-    // embedder's own outcome rewrite is what separates them, so this is not
-    // an engine-side error.
-    FML_LOG(INFO) << "Embedder refused a render target for view "
-                  << flutter_view_id
-                  << " (buffers in flight, or the view is being withdrawn).";
-    refused_root_target_view_ids_.insert(flutter_view_id);
-    CompleteRootRenderTarget(
-        flutter_view_id,
-        kFlutterPresentRenderTargetStatusRenderTargetUnavailable);
+    // Acquisition terminalizes through the exact opportunity ledger in the
+    // rasterizer. No presentation callback is emitted because no target lease
+    // crossed into the engine.
     frame->Submit();
     return;
   }

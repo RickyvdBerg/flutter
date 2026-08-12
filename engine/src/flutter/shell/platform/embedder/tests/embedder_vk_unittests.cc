@@ -29,6 +29,14 @@ namespace testing {
 
 using EmbedderTest = testing::EmbedderTest;
 
+constexpr FlutterAvioExtensionFeatures kExactSelectedTargetFeatures =
+    kFlutterAvioExtensionFeaturePerDisplayVsync |
+    kFlutterAvioExtensionFeatureRootRenderTarget |
+    kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+    kFlutterAvioExtensionFeatureExactVsyncCancellation |
+    kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+    kFlutterAvioExtensionFeatureSelectedTargetDamage;
+
 ////////////////////////////////////////////////////////////////////////////////
 // Notice: Other Vulkan unit tests exist in embedder_gl_unittests.cc.
 //         See https://github.com/flutter/flutter/issues/134322
@@ -202,6 +210,15 @@ struct SelectedTargetTestContext {
   std::vector<DlISize> requested_sizes;
   std::function<bool(const FlutterPresentRenderTargetInfo&)> on_result;
 };
+
+FlutterRenderTargetAcquisition AcquireSelectedTarget(
+    const FlutterRenderTargetAcquisitionInfo* info,
+    FlutterBackingStore* backing_store_out) {
+  return reinterpret_cast<SelectedTargetTestContext*>(info->user_data)
+                 ->Create(info->config, backing_store_out)
+             ? kFlutterRenderTargetAcquisitionGranted
+             : kFlutterRenderTargetAcquisitionBackpressured;
+}
 
 static_assert(std::is_trivially_destructible_v<VulkanProcInfo>);
 
@@ -468,84 +485,6 @@ TEST_F(EmbedderTest, VulkanImpellerCompositorSkipsRootSurfaceAcquisition) {
 }
 
 TEST_F(EmbedderTest,
-       SelectedTargetDamageCollectsAnUnusableBackingStoreExactlyOnce) {
-  auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
-
-  EmbedderConfigBuilder builder(context);
-  builder.AddCommandLineArgument("--enable-impeller");
-  builder.SetDartEntrypoint("render_gradient_retained");
-  builder.SetSurface(DlISize(800, 600));
-  builder.SetRootRenderTargetCompositor(
-      /*avoid_backing_store_cache=*/false,
-      kFlutterAvioExtensionFeatureRootRenderTarget |
-          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
-          kFlutterAvioExtensionFeatureSelectedTargetDamage);
-  builder.SetRenderTargetType(
-      EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
-
-  struct FailureState {
-    // Written only from the raster thread; read after the engine is joined.
-    size_t create_count = 0u;
-    size_t collect_count = 0u;
-    fml::AutoResetWaitableEvent collected;
-    fml::AutoResetWaitableEvent terminal;
-  } state;
-  builder.GetCompositor().user_data = &state;
-  builder.GetCompositor().create_backing_store_callback =
-      [](const FlutterBackingStoreConfig*, FlutterBackingStore* backing_store,
-         void* user_data) {
-        reinterpret_cast<FailureState*>(user_data)->create_count++;
-        *backing_store = {};
-        backing_store->struct_size = sizeof(FlutterBackingStore);
-        backing_store->user_data = user_data;
-        backing_store->type = kFlutterBackingStoreTypeVulkan;
-        backing_store->vulkan.struct_size = sizeof(FlutterVulkanBackingStore);
-        // Creation succeeds, but target construction must reject this image.
-        backing_store->vulkan.image = nullptr;
-        backing_store->vulkan.image_view = 0u;
-        return true;
-      };
-  builder.GetCompositor().collect_backing_store_callback =
-      [](const FlutterBackingStore* backing_store, void* user_data) {
-        auto& state = *reinterpret_cast<FailureState*>(user_data);
-        EXPECT_EQ(backing_store->user_data, user_data);
-        state.collect_count++;
-        state.collected.Signal();
-        return true;
-      };
-  builder.GetCompositor().present_render_target_callback =
-      [](const FlutterPresentRenderTargetInfo* info) {
-        auto& state = *reinterpret_cast<FailureState*>(info->user_data);
-        EXPECT_EQ(info->status,
-                  kFlutterPresentRenderTargetStatusRenderTargetUnavailable);
-        EXPECT_EQ(info->backing_store, nullptr);
-        EXPECT_EQ(info->backing_store_present_info, nullptr);
-        state.terminal.Signal();
-        return true;
-      };
-
-  auto engine = builder.LaunchEngine();
-  ASSERT_TRUE(engine.is_valid());
-
-  FlutterWindowMetricsEvent event = {};
-  event.struct_size = sizeof(event);
-  event.width = 800;
-  event.height = 600;
-  event.pixel_ratio = 1.0;
-  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
-            kSuccess);
-  state.collected.Wait();
-  state.terminal.Wait();
-  engine.reset();
-  // A refusal re-arms this view's demand, so the engine may have attempted
-  // more frames before shutdown. What must hold is the invariant this test is
-  // named for: every store the embedder handed over came back exactly once,
-  // never twice and never leaked.
-  EXPECT_GE(state.create_count, 1u);
-  EXPECT_EQ(state.collect_count, state.create_count);
-}
-
-TEST_F(EmbedderTest,
        SelectedTargetDamageReacquiresAndRepaintsExactRetainedTarget) {
   auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
 
@@ -554,21 +493,14 @@ TEST_F(EmbedderTest,
   builder.SetDartEntrypoint("render_gradient_retained");
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
-      /*avoid_backing_store_cache=*/false,
-      kFlutterAvioExtensionFeatureRootRenderTarget |
-          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
-          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+      /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
 
   SelectedTargetTestContext selected_target(context.GetCompositor(), 3u);
   builder.GetCompositor().user_data = &selected_target;
-  builder.GetCompositor().create_backing_store_callback =
-      [](const FlutterBackingStoreConfig* config,
-         FlutterBackingStore* backing_store_out, void* user_data) {
-        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
-            config, backing_store_out);
-      };
+  builder.GetCompositor().acquire_render_target_callback =
+      AcquireSelectedTarget;
   builder.GetCompositor().collect_backing_store_callback =
       [](const FlutterBackingStore* backing_store, void* user_data) {
         return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
@@ -684,21 +616,14 @@ TEST_F(EmbedderTest,
   builder.SetDartEntrypoint("render_partial_repaint_clear_and_blur");
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
-      /*avoid_backing_store_cache=*/false,
-      kFlutterAvioExtensionFeatureRootRenderTarget |
-          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
-          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+      /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
 
   SelectedTargetTestContext selected_target(context.GetCompositor());
   builder.GetCompositor().user_data = &selected_target;
-  builder.GetCompositor().create_backing_store_callback =
-      [](const FlutterBackingStoreConfig* config,
-         FlutterBackingStore* backing_store_out, void* user_data) {
-        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
-            config, backing_store_out);
-      };
+  builder.GetCompositor().acquire_render_target_callback =
+      AcquireSelectedTarget;
   builder.GetCompositor().collect_backing_store_callback =
       [](const FlutterBackingStore* backing_store, void* user_data) {
         return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
@@ -799,21 +724,14 @@ TEST_F(EmbedderTest,
   builder.SetDartEntrypoint("render_then_clear_to_empty");
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
-      /*avoid_backing_store_cache=*/false,
-      kFlutterAvioExtensionFeatureRootRenderTarget |
-          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
-          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+      /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
 
   SelectedTargetTestContext selected_target(context.GetCompositor());
   builder.GetCompositor().user_data = &selected_target;
-  builder.GetCompositor().create_backing_store_callback =
-      [](const FlutterBackingStoreConfig* config,
-         FlutterBackingStore* backing_store_out, void* user_data) {
-        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
-            config, backing_store_out);
-      };
+  builder.GetCompositor().acquire_render_target_callback =
+      AcquireSelectedTarget;
   builder.GetCompositor().collect_backing_store_callback =
       [](const FlutterBackingStore* backing_store, void* user_data) {
         return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
@@ -924,21 +842,14 @@ TEST_F(EmbedderTest,
   builder.SetDartEntrypoint("empty_scene_posts_zero_layers_to_compositor");
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
-      /*avoid_backing_store_cache=*/false,
-      kFlutterAvioExtensionFeatureRootRenderTarget |
-          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
-          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+      /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
 
   SelectedTargetTestContext selected_target(context.GetCompositor());
   builder.GetCompositor().user_data = &selected_target;
-  builder.GetCompositor().create_backing_store_callback =
-      [](const FlutterBackingStoreConfig* config,
-         FlutterBackingStore* backing_store_out, void* user_data) {
-        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
-            config, backing_store_out);
-      };
+  builder.GetCompositor().acquire_render_target_callback =
+      AcquireSelectedTarget;
   builder.GetCompositor().collect_backing_store_callback =
       [](const FlutterBackingStore* backing_store, void* user_data) {
         return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
@@ -994,21 +905,14 @@ TEST_F(EmbedderTest, SelectedTargetDamageBoundsActualRasterForTranslucentGap) {
       "render_disjoint_partial_repaint_with_translucent_gap");
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
-      /*avoid_backing_store_cache=*/false,
-      kFlutterAvioExtensionFeatureRootRenderTarget |
-          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
-          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+      /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
 
   SelectedTargetTestContext selected_target(context.GetCompositor());
   builder.GetCompositor().user_data = &selected_target;
-  builder.GetCompositor().create_backing_store_callback =
-      [](const FlutterBackingStoreConfig* config,
-         FlutterBackingStore* backing_store_out, void* user_data) {
-        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
-            config, backing_store_out);
-      };
+  builder.GetCompositor().acquire_render_target_callback =
+      AcquireSelectedTarget;
   builder.GetCompositor().collect_backing_store_callback =
       [](const FlutterBackingStore* backing_store, void* user_data) {
         return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
@@ -1134,21 +1038,14 @@ TEST_F(EmbedderTest, SelectedTargetDamageFullFallbackClearsPreservedTarget) {
   builder.SetDartEntrypoint("render_partial_repaint_clear_and_blur");
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
-      /*avoid_backing_store_cache=*/false,
-      kFlutterAvioExtensionFeatureRootRenderTarget |
-          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
-          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+      /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
 
   SelectedTargetTestContext selected_target(context.GetCompositor());
   builder.GetCompositor().user_data = &selected_target;
-  builder.GetCompositor().create_backing_store_callback =
-      [](const FlutterBackingStoreConfig* config,
-         FlutterBackingStore* backing_store_out, void* user_data) {
-        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
-            config, backing_store_out);
-      };
+  builder.GetCompositor().acquire_render_target_callback =
+      AcquireSelectedTarget;
   builder.GetCompositor().collect_backing_store_callback =
       [](const FlutterBackingStore* backing_store, void* user_data) {
         return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
@@ -1240,21 +1137,14 @@ TEST_F(EmbedderTest, SelectedTargetDamageClearsRecycledSaveLayerTargets) {
       "render_partial_repaint_through_recycled_save_layers");
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
-      /*avoid_backing_store_cache=*/false,
-      kFlutterAvioExtensionFeatureRootRenderTarget |
-          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
-          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+      /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
 
   SelectedTargetTestContext selected_target(context.GetCompositor());
   builder.GetCompositor().user_data = &selected_target;
-  builder.GetCompositor().create_backing_store_callback =
-      [](const FlutterBackingStoreConfig* config,
-         FlutterBackingStore* backing_store_out, void* user_data) {
-        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
-            config, backing_store_out);
-      };
+  builder.GetCompositor().acquire_render_target_callback =
+      AcquireSelectedTarget;
   builder.GetCompositor().collect_backing_store_callback =
       [](const FlutterBackingStore* backing_store, void* user_data) {
         return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
@@ -1354,21 +1244,14 @@ TEST_F(EmbedderTest, SelectedTargetDamageRefusedWhenRootPassNeedsReadback) {
   builder.SetDartEntrypoint("render_partial_repaint_with_root_backdrop_filter");
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
-      /*avoid_backing_store_cache=*/false,
-      kFlutterAvioExtensionFeatureRootRenderTarget |
-          kFlutterAvioExtensionFeatureExplicitRenderCompletion |
-          kFlutterAvioExtensionFeatureSelectedTargetDamage);
+      /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
   builder.SetRenderTargetType(
       EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
 
   SelectedTargetTestContext selected_target(context.GetCompositor());
   builder.GetCompositor().user_data = &selected_target;
-  builder.GetCompositor().create_backing_store_callback =
-      [](const FlutterBackingStoreConfig* config,
-         FlutterBackingStore* backing_store_out, void* user_data) {
-        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Create(
-            config, backing_store_out);
-      };
+  builder.GetCompositor().acquire_render_target_callback =
+      AcquireSelectedTarget;
   builder.GetCompositor().collect_backing_store_callback =
       [](const FlutterBackingStore* backing_store, void* user_data) {
         return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(

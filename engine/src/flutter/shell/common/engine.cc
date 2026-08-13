@@ -346,7 +346,7 @@ void Engine::AddView(int64_t view_id,
                      std::function<void(bool added)> callback) {
   const bool registered_initial_display =
       animator_->IsPerDisplayMode() &&
-      animator_->RegisterViewDisplay(
+      animator_->RegisterInitialViewDisplay(
           view_id, static_cast<int64_t>(view_metrics.display_id));
   runtime_controller_->AddView(
       view_id, view_metrics,

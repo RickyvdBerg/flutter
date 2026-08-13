@@ -194,9 +194,12 @@ need "animator empty-frame delegate" \
 need "ScheduleFrame request-kind family" \
   $F/shell/platform/embedder/embedder.h 'FlutterEngineScheduleFrameForDisplayViewsWithRequestKind'
 need "new views publish initial display ownership before Dart AddView" \
-  $F/shell/common/engine.cc 'animator_->RegisterViewDisplay'
+  $F/shell/common/engine.cc 'animator_->RegisterInitialViewDisplay'
 need "initial display registration does not manufacture frame demand" \
-  $F/shell/common/animator.cc 'bool Animator::RegisterViewDisplay'
+  $F/shell/common/animator.cc 'bool Animator::RegisterInitialViewDisplay'
+need "initial display registration is one-shot and demand-free in tests" \
+  $F/shell/common/animator_unittests.cc \
+  'InitialViewDisplayRegistrationIsOneShotAndDemandFree'
 need "metrics-time display ownership is covered at the public embedder boundary" \
   $F/shell/platform/embedder/tests/embedder_unittests.cc \
   'AddViewPublishesInitialDisplayBeforeMetricsScheduleFrame'

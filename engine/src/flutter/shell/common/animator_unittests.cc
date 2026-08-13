@@ -957,6 +957,33 @@ TEST_F(ShellTest, DisplayRegistrationAloneDoesNotEnterPerDisplayMode) {
   PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
 }
 
+TEST_F(ShellTest, InitialViewDisplayRegistrationIsOneShotAndDemandFree) {
+  FakeAnimatorDelegate delegate;
+  TaskRunners task_runners = {"test", CreateNewThread(), CreateNewThread(),
+                              CreateNewThread(), CreateNewThread()};
+  std::shared_ptr<Animator> animator;
+  ManualDisplayVsyncWaiter* waiter = nullptr;
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    auto owned_waiter =
+        std::make_unique<ManualDisplayVsyncWaiter>(task_runners);
+    waiter = owned_waiter.get();
+    animator = std::make_unique<Animator>(delegate, task_runners,
+                                          std::move(owned_waiter));
+    animator->AddDisplay(41, 60.0);
+    animator->AddDisplay(42, 60.0);
+
+    EXPECT_TRUE(animator->RegisterInitialViewDisplay(141, 41));
+    EXPECT_EQ(waiter->request_count(), 0u);
+
+    EXPECT_FALSE(animator->RegisterInitialViewDisplay(141, 42));
+    EXPECT_EQ(waiter->request_count(), 0u);
+
+    animator->RequestFrameForDisplayViews(41, {141});
+    EXPECT_EQ(waiter->request_count(), 1u);
+  });
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
+}
+
 TEST_F(ShellTest, RegisteredDisplaysWithoutHomedViewsStillScheduleFrames) {
   FakeAnimatorDelegate delegate;
   TaskRunners task_runners = {"test", CreateNewThread(), CreateNewThread(),

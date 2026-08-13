@@ -586,9 +586,10 @@ void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
   }
 }
 
-bool Animator::RegisterViewDisplay(int64_t view_id, int64_t display_id) {
-  TRACE_EVENT2_INT("flutter", "Animator::RegisterViewDisplay", "view_id",
-                   view_id, "display_id", display_id);
+bool Animator::RegisterInitialViewDisplay(int64_t view_id,
+                                          int64_t display_id) {
+  TRACE_EVENT2_INT("flutter", "Animator::RegisterInitialViewDisplay",
+                   "view_id", view_id, "display_id", display_id);
   per_display_opt_in_ = true;
   if (view_to_display_.find(view_id) != view_to_display_.end() ||
       default_state_.view_ids.count(view_id) > 0) {

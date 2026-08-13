@@ -195,7 +195,8 @@ class Animator final {
   /// The caller must do this before publishing the view to Dart, then request
   /// the first frame only after publication succeeds. Returns false without
   /// changing ownership when the view is already registered.
-  bool RegisterViewDisplay(int64_t view_id, int64_t display_id);
+  [[nodiscard]] bool RegisterInitialViewDisplay(int64_t view_id,
+                                                int64_t display_id);
 
   /// Changes whether a registered view may create future raster demand.
   /// Returns true only when this update transitions the engine from at least

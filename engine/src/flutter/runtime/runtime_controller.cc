@@ -138,10 +138,14 @@ bool RuntimeController::FlushRuntimeStateToIsolate() {
     bool added = platform_configuration->AddView(view_id, viewport_metrics);
 
     // Callbacks will have been already invoked if the engine was restarted.
-    if (pending_add_view_callbacks_.find(view_id) !=
-        pending_add_view_callbacks_.end()) {
-      pending_add_view_callbacks_[view_id](added);
-      pending_add_view_callbacks_.erase(view_id);
+    auto pending = pending_add_views_.find(view_id);
+    if (pending != pending_add_views_.end()) {
+      PendingAddView callbacks = std::move(pending->second);
+      pending_add_views_.erase(pending);
+      if (added && callbacks.schedule_frame) {
+        callbacks.schedule_frame();
+      }
+      callbacks.callback(added);
     }
 
     if (!added) {
@@ -150,7 +154,7 @@ bool RuntimeController::FlushRuntimeStateToIsolate() {
     }
   }
 
-  FML_DCHECK(pending_add_view_callbacks_.empty());
+  FML_DCHECK(pending_add_views_.empty());
   return SetLocales(platform_data_.locale_data) &&
          SetSemanticsEnabled(platform_data_.semantics_enabled) &&
          SetAccessibilityFeatures(
@@ -162,31 +166,38 @@ bool RuntimeController::FlushRuntimeStateToIsolate() {
 
 void RuntimeController::AddView(int64_t view_id,
                                 const ViewportMetrics& view_metrics,
-                                AddViewCallback callback) {
+                                AddViewCallback callback,
+                                fml::closure schedule_frame) {
   // If the Dart isolate is not running, |FlushRuntimeStateToIsolate| will
   // add the view and invoke the callback when the isolate is started.
   auto* platform_configuration = GetPlatformConfigurationIfAvailable();
   if (!platform_configuration) {
     FML_DCHECK(has_flushed_runtime_state_ == false);
 
-    if (pending_add_view_callbacks_.find(view_id) !=
-        pending_add_view_callbacks_.end()) {
+    if (pending_add_views_.find(view_id) != pending_add_views_.end()) {
       FML_LOG(ERROR) << "View #" << view_id << " is already pending creation.";
       callback(false);
       return;
     }
 
     platform_data_.viewport_metrics_for_views[view_id] = view_metrics;
-    pending_add_view_callbacks_[view_id] = std::move(callback);
+    pending_add_views_[view_id] = PendingAddView{
+        .callback = std::move(callback),
+        .schedule_frame = std::move(schedule_frame),
+    };
     return;
   }
 
-  FML_DCHECK(has_flushed_runtime_state_ || pending_add_view_callbacks_.empty());
+  FML_DCHECK(has_flushed_runtime_state_ || pending_add_views_.empty());
 
   platform_data_.viewport_metrics_for_views[view_id] = view_metrics;
   bool added = platform_configuration->AddView(view_id, view_metrics);
   if (added) {
-    ScheduleFrame();
+    if (schedule_frame) {
+      schedule_frame();
+    } else {
+      ScheduleFrame();
+    }
   }
 
   callback(added);
@@ -201,10 +212,11 @@ bool RuntimeController::RemoveView(int64_t view_id) {
   auto* platform_configuration = GetPlatformConfigurationIfAvailable();
   if (!platform_configuration) {
     FML_DCHECK(has_flushed_runtime_state_ == false);
-    if (pending_add_view_callbacks_.find(view_id) !=
-        pending_add_view_callbacks_.end()) {
-      pending_add_view_callbacks_[view_id](false);
-      pending_add_view_callbacks_.erase(view_id);
+    auto pending = pending_add_views_.find(view_id);
+    if (pending != pending_add_views_.end()) {
+      AddViewCallback callback = std::move(pending->second.callback);
+      pending_add_views_.erase(pending);
+      callback(false);
     }
 
     return false;

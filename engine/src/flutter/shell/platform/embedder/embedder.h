@@ -3628,6 +3628,9 @@ FlutterEngineResult FlutterEngineRunInitialized(
 ///             but be ready to clean up on failure.
 ///
 ///             A frame is scheduled if the operation succeeds.
+///             When per-display vsync is active, the view is assigned to
+///             `info.view_metrics.display_id` before that first frame is
+///             requested and before `info.add_view_callback` runs.
 ///
 ///             The callback is invoked on a thread managed by the engine. The
 ///             embedder should re-thread if needed.
@@ -4120,8 +4123,10 @@ FlutterEngineResult FlutterEngineGetAvioExtensionCapabilities(
 ///             display's vsync events. The display must have been previously
 ///             registered via `FlutterEngineNotifyDisplayUpdate`.
 ///
-///             A view can be reassigned to a different display at any time
-///             (e.g., when a window is dragged between monitors).
+///             `FlutterEngineAddView` establishes the initial assignment from
+///             its view metrics when per-display vsync is active. This call
+///             reassigns an existing view later (e.g., when a window is
+///             dragged between monitors).
 ///
 /// @param[in]  engine      A running engine instance.
 /// @param[in]  view_id     The view to assign.

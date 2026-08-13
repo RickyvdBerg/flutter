@@ -344,7 +344,21 @@ tonic::DartErrorHandleType Engine::GetUIIsolateLastError() {
 void Engine::AddView(int64_t view_id,
                      const ViewportMetrics& view_metrics,
                      std::function<void(bool added)> callback) {
-  runtime_controller_->AddView(view_id, view_metrics, std::move(callback));
+  fml::closure schedule_frame;
+  if (animator_->IsPerDisplayMode()) {
+    schedule_frame = [engine = GetWeakPtr(), view_id,
+                      display_id =
+                          static_cast<int64_t>(view_metrics.display_id)] {
+      if (engine) {
+        // View creation and initial display ownership are one UI-thread
+        // operation. SetViewDisplay requests the exact display frame; no
+        // global request may run while this view is still unhomed.
+        engine->animator_->SetViewDisplay(view_id, display_id);
+      }
+    };
+  }
+  runtime_controller_->AddView(view_id, view_metrics, std::move(callback),
+                               std::move(schedule_frame));
 }
 
 bool Engine::RemoveView(int64_t view_id) {

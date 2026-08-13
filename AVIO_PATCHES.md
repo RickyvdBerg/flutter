@@ -74,6 +74,8 @@ already ancestors of the selected main target under their original commits.
 | 36 | Suppress raster demand with exact per-view visibility | permanent ABI/lifecycle extension | none |
 | 37 | Carry retained compositor-material nodes with the exact Flutter frame | permanent ABI/scene extension | none |
 | 38 | Keep a refused render target's frame demand instead of stranding the view | permanent lifecycle correctness fix | none |
+| 39 | Replace ambiguous target refusal with exact typed acquisition outcomes | permanent lifecycle correctness fix | none |
+| 40 | Bind a newly added view to its initial display before first-frame scheduling | permanent per-display lifecycle fix | none |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -424,6 +426,20 @@ host results are terminal without rearm. A freshly built tree that acquired no
 lease never becomes the damage baseline. The extension ABI is version 2 and
 negotiates `kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition`; root
 mode rejects the old untyped callback.
+
+### Patch 40: atomic initial view/display ownership
+
+When per-display vsync is active, a successful `FlutterEngineAddView` binds
+the new view to `FlutterWindowMetricsEvent.display_id` before requesting its
+first frame and before reporting add completion. The binding itself requests
+that display's exact frame; the runtime controller does not also issue a
+global request. This prevents a global first-frame request from consuming an
+exact output opportunity while the animator still considers the new view
+unhomed. `FlutterEngineSetViewDisplay` remains the later reassignment API.
+
+Generic embedders that have not opted into per-display vsync retain the stock
+global `ScheduleFrame` behavior. The regression is
+`EmbedderTest.AddViewHomesInitialDisplayBeforeSchedulingFrame`.
 
 ## Known baseline debt
 

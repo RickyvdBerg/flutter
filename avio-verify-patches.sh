@@ -193,6 +193,11 @@ need "animator empty-frame delegate" \
   $F/shell/common/animator.cc 'EmptyFrameForDisplay'
 need "ScheduleFrame request-kind family" \
   $F/shell/platform/embedder/embedder.h 'FlutterEngineScheduleFrameForDisplayViewsWithRequestKind'
+need "new views bind their initial display before first-frame scheduling" \
+  $F/shell/common/engine.cc 'animator_->SetViewDisplay\(view_id, display_id\)'
+need "initial display binding is covered at the public embedder boundary" \
+  $F/shell/platform/embedder/tests/embedder_unittests.cc \
+  'AddViewHomesInitialDisplayBeforeSchedulingFrame'
 need "dart:ui scheduleFrameForDisplayViews" \
   $F/lib/ui/platform_dispatcher.dart 'scheduleFrameForDisplayViews'
 need "configure_serial resize gating (metrics event)" \

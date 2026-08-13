@@ -1311,6 +1311,78 @@ TEST_F(EmbedderTest, ReturnedFrameOpportunityCancelsThroughPublicAbi) {
             kInternalInconsistency);
 }
 
+TEST_F(EmbedderTest, AddViewHomesInitialDisplayBeforeSchedulingFrame) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      false, kFlutterAvioExtensionFeaturePerDisplayVsync |
+                 kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureExplicitRenderCompletion |
+                 kFlutterAvioExtensionFeatureExactVsyncCancellation |
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+
+  struct AddViewState {
+    fml::AutoResetWaitableEvent added;
+    fml::AutoResetWaitableEvent display_vsync;
+    std::atomic_bool display_vsync_requested = false;
+  } state;
+  context.SetVsyncForDisplayCallback(
+      [&](intptr_t, FlutterEngineDisplayId display_id) {
+        if (display_id == 19) {
+          state.display_vsync_requested = true;
+          state.display_vsync.Signal();
+        }
+      });
+  builder.GetProjectArgs().vsync_for_display_callback =
+      [](void* user_data, intptr_t baton, FlutterEngineDisplayId display_id) {
+        reinterpret_cast<EmbedderTestContext*>(user_data)
+            ->RunVsyncForDisplayCallback(baton, display_id);
+      };
+  builder.GetCompositor().frame_opportunity_outcome_callback =
+      [](const FlutterFrameOpportunityOutcomeInfo*) {};
+
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterEngineDisplay display = {};
+  display.struct_size = sizeof(FlutterEngineDisplay);
+  display.display_id = 19;
+  display.single_display = true;
+  display.refresh_rate = 60.0;
+  display.width = 800;
+  display.height = 600;
+  display.device_pixel_ratio = 1.0;
+  ASSERT_EQ(
+      FlutterEngineNotifyDisplayUpdate(
+          engine.get(), kFlutterEngineDisplaysUpdateTypeStartup, &display, 1),
+      kSuccess);
+
+  FlutterWindowMetricsEvent metrics = {};
+  metrics.struct_size = sizeof(FlutterWindowMetricsEvent);
+  metrics.width = 800;
+  metrics.height = 600;
+  metrics.pixel_ratio = 1.0;
+  metrics.display_id = display.display_id;
+  metrics.view_id = 123;
+  FlutterAddViewInfo add_view = {};
+  add_view.struct_size = sizeof(FlutterAddViewInfo);
+  add_view.view_id = metrics.view_id;
+  add_view.view_metrics = &metrics;
+  add_view.user_data = &state;
+  add_view.add_view_callback = [](const FlutterAddViewResult* result) {
+    EXPECT_TRUE(result->added);
+    auto* state = reinterpret_cast<AddViewState*>(result->user_data);
+    EXPECT_TRUE(state->display_vsync_requested);
+    state->added.Signal();
+  };
+
+  ASSERT_EQ(FlutterEngineAddView(engine.get(), &add_view), kSuccess);
+  ASSERT_FALSE(state.added.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_FALSE(
+      state.display_vsync.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+}
+
 //------------------------------------------------------------------------------
 /// Test the layer structure and pixels rendered when using a custom software
 /// compositor.

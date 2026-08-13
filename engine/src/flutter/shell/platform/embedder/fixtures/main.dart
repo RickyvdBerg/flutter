@@ -1406,6 +1406,20 @@ void add_view_schedules_frame() {
   signalNativeTest();
 }
 
+@pragma('vm:entry-point')
+// ignore: non_constant_identifier_names
+void add_view_schedules_frame_from_metrics() {
+  PlatformDispatcher.instance.onMetricsChanged = () {
+    if (!PlatformDispatcher.instance.views.any((view) => view.viewId == 123)) {
+      return;
+    }
+    signalNativeMessage('before-schedule');
+    PlatformDispatcher.instance.scheduleFrame();
+    signalNativeMessage('after-schedule');
+  };
+  signalNativeTest();
+}
+
 void drawSolidColor(Color c) {
   PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
     final builder = SceneBuilder();

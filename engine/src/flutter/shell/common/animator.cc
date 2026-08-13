@@ -581,6 +581,24 @@ void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
   // display's frames, so it opts into display-scoped scheduling even when the
   // waiter has no per-display callback.
   per_display_opt_in_ = true;
+  if (BindViewToDisplay(view_id, display_id)) {
+    RequestFrameForDisplay(display_id);
+  }
+}
+
+bool Animator::RegisterViewDisplay(int64_t view_id, int64_t display_id) {
+  TRACE_EVENT2_INT("flutter", "Animator::RegisterViewDisplay", "view_id",
+                   view_id, "display_id", display_id);
+  per_display_opt_in_ = true;
+  if (view_to_display_.find(view_id) != view_to_display_.end() ||
+      default_state_.view_ids.count(view_id) > 0) {
+    return false;
+  }
+  BindViewToDisplay(view_id, display_id);
+  return true;
+}
+
+bool Animator::BindViewToDisplay(int64_t view_id, int64_t display_id) {
   // Preserve render relevance while moving the view between displays. A new
   // view is visible by default until the embedder supplies an explicit state.
   bool is_renderable = true;
@@ -635,12 +653,7 @@ void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
     }
     view_to_display_[view_id] = display_id;
 
-    // Kick off the frame loop for the new display. If the display had no
-    // views before, its loop will have stopped. This ensures the moved
-    // view starts rendering immediately at the new display's refresh rate.
-    if (!was_registered || is_renderable) {
-      RequestFrameForDisplay(display_id);
-    }
+    return !was_registered || is_renderable;
   } else {
     // Display not registered yet; record the intended display so that
     // AddDisplay can move this view when the display arrives.
@@ -649,6 +662,7 @@ void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
     if (!was_registered || is_renderable) {
       default_state_.renderable_view_ids.insert(view_id);
     }
+    return false;
   }
 }
 

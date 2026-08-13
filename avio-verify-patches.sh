@@ -193,11 +193,18 @@ need "animator empty-frame delegate" \
   $F/shell/common/animator.cc 'EmptyFrameForDisplay'
 need "ScheduleFrame request-kind family" \
   $F/shell/platform/embedder/embedder.h 'FlutterEngineScheduleFrameForDisplayViewsWithRequestKind'
-need "new views bind their initial display before first-frame scheduling" \
-  $F/shell/common/engine.cc 'animator_->SetViewDisplay\(view_id, display_id\)'
-need "initial display binding is covered at the public embedder boundary" \
+need "new views publish initial display ownership before Dart AddView" \
+  $F/shell/common/engine.cc 'animator_->RegisterViewDisplay'
+need "initial display registration does not manufacture frame demand" \
+  $F/shell/common/animator.cc 'bool Animator::RegisterViewDisplay'
+need "metrics-time display ownership is covered at the public embedder boundary" \
   $F/shell/platform/embedder/tests/embedder_unittests.cc \
-  'AddViewHomesInitialDisplayBeforeSchedulingFrame'
+  'AddViewPublishesInitialDisplayBeforeMetricsScheduleFrame'
+need "the regression schedules inside synchronous metrics publication" \
+  $F/shell/platform/embedder/fixtures/main.dart \
+  'add_view_schedules_frame_from_metrics'
+absent_in "RuntimeController-owned alternate first-frame scheduler" \
+  $F/runtime/runtime_controller.h 'schedule_frame'
 need "dart:ui scheduleFrameForDisplayViews" \
   $F/lib/ui/platform_dispatcher.dart 'scheduleFrameForDisplayViews'
 need "configure_serial resize gating (metrics event)" \

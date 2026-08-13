@@ -191,6 +191,12 @@ class Animator final {
   /// Assigns a view to a display for per-display vsync rendering.
   void SetViewDisplay(int64_t view_id, int64_t display_id);
 
+  /// Registers a new view's initial display ownership without scheduling.
+  /// The caller must do this before publishing the view to Dart, then request
+  /// the first frame only after publication succeeds. Returns false without
+  /// changing ownership when the view is already registered.
+  bool RegisterViewDisplay(int64_t view_id, int64_t display_id);
+
   /// Changes whether a registered view may create future raster demand.
   /// Returns true only when this update transitions the engine from at least
   /// one renderable view to none, allowing the embedder to trim idle caches.
@@ -324,6 +330,10 @@ class Animator final {
   int64_t GetDisplayForView(int64_t view_id) const;
 
   bool HasRenderableViews() const;
+
+  /// Updates display ownership and returns whether the view is renderable on
+  /// a currently registered display after the update.
+  bool BindViewToDisplay(int64_t view_id, int64_t display_id);
 
   Delegate& delegate_;
   TaskRunners task_runners_;

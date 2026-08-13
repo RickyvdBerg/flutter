@@ -1311,10 +1311,11 @@ TEST_F(EmbedderTest, ReturnedFrameOpportunityCancelsThroughPublicAbi) {
             kInternalInconsistency);
 }
 
-TEST_F(EmbedderTest, AddViewHomesInitialDisplayBeforeSchedulingFrame) {
+TEST_F(EmbedderTest, AddViewPublishesInitialDisplayBeforeMetricsScheduleFrame) {
   auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
   EmbedderConfigBuilder builder(context);
   builder.SetSurface(DlISize(800, 600));
+  builder.SetDartEntrypoint("add_view_schedules_frame_from_metrics");
   builder.SetRootRenderTargetCompositor(
       false, kFlutterAvioExtensionFeaturePerDisplayVsync |
                  kFlutterAvioExtensionFeatureRootRenderTarget |
@@ -1323,15 +1324,39 @@ TEST_F(EmbedderTest, AddViewHomesInitialDisplayBeforeSchedulingFrame) {
                  kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
 
   struct AddViewState {
+    fml::AutoResetWaitableEvent ready;
     fml::AutoResetWaitableEvent added;
-    fml::AutoResetWaitableEvent display_vsync;
-    std::atomic_bool display_vsync_requested = false;
+    fml::AutoResetWaitableEvent metrics_scheduled;
+    std::mutex mutex;
+    bool observing_metrics_schedule = false;
+    std::vector<FlutterEngineDisplayId> scheduled_displays;
   } state;
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY(
+          [&state](Dart_NativeArguments args) { state.ready.Signal(); }));
+  context.AddNativeCallback(
+      "SignalNativeMessage",
+      CREATE_NATIVE_ENTRY([&state](Dart_NativeArguments args) {
+        const auto marker = tonic::DartConverter<std::string>::FromDart(
+            Dart_GetNativeArgument(args, 0));
+        std::scoped_lock lock(state.mutex);
+        if (marker == "before-schedule") {
+          state.scheduled_displays.clear();
+          state.observing_metrics_schedule = true;
+          return;
+        }
+        EXPECT_EQ(marker, "after-schedule");
+        state.observing_metrics_schedule = false;
+        EXPECT_EQ(state.scheduled_displays,
+                  std::vector<FlutterEngineDisplayId>({19}));
+        state.metrics_scheduled.Signal();
+      }));
   context.SetVsyncForDisplayCallback(
-      [&](intptr_t, FlutterEngineDisplayId display_id) {
-        if (display_id == 19) {
-          state.display_vsync_requested = true;
-          state.display_vsync.Signal();
+      [&state](intptr_t, FlutterEngineDisplayId display_id) {
+        std::scoped_lock lock(state.mutex);
+        if (state.observing_metrics_schedule) {
+          state.scheduled_displays.push_back(display_id);
         }
       });
   builder.GetProjectArgs().vsync_for_display_callback =
@@ -1344,6 +1369,7 @@ TEST_F(EmbedderTest, AddViewHomesInitialDisplayBeforeSchedulingFrame) {
 
   auto engine = builder.LaunchEngine();
   ASSERT_TRUE(engine.is_valid());
+  ASSERT_FALSE(state.ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 
   FlutterEngineDisplay display = {};
   display.struct_size = sizeof(FlutterEngineDisplay);
@@ -1373,14 +1399,13 @@ TEST_F(EmbedderTest, AddViewHomesInitialDisplayBeforeSchedulingFrame) {
   add_view.add_view_callback = [](const FlutterAddViewResult* result) {
     EXPECT_TRUE(result->added);
     auto* state = reinterpret_cast<AddViewState*>(result->user_data);
-    EXPECT_TRUE(state->display_vsync_requested);
     state->added.Signal();
   };
 
   ASSERT_EQ(FlutterEngineAddView(engine.get(), &add_view), kSuccess);
   ASSERT_FALSE(state.added.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
   ASSERT_FALSE(
-      state.display_vsync.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+      state.metrics_scheduled.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 }
 
 //------------------------------------------------------------------------------

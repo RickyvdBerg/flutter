@@ -207,15 +207,10 @@ class RuntimeController : public PlatformConfigurationClient,
   /// @param[in]  viewport_metrics  The initial viewport metrics for the view.
   /// @param[in]  callback          Callback that will be invoked after the add
   ///                               operation is attempted or cancelled.
-  /// @param[in]  schedule_frame    Optional client-owned frame scheduling
-  ///                               edge. When supplied, it replaces the
-  ///                               default global frame request after a
-  ///                               successful add.
   ///
   void AddView(int64_t view_id,
                const ViewportMetrics& view_metrics,
-               AddViewCallback callback,
-               fml::closure schedule_frame = {});
+               AddViewCallback callback);
 
   //----------------------------------------------------------------------------
   /// @brief      Notify the isolate that a view is no longer available.
@@ -758,11 +753,7 @@ class RuntimeController : public PlatformConfigurationClient,
   //
   // These views will be added when `FlushRuntimeStateToIsolate` is called.
   // This is no longer used once the Dart isolate starts.
-  struct PendingAddView {
-    AddViewCallback callback;
-    fml::closure schedule_frame;
-  };
-  std::unordered_map<int64_t, PendingAddView> pending_add_views_;
+  std::unordered_map<int64_t, AddViewCallback> pending_add_view_callbacks_;
 
   // Tracks the views that have been called `Render` during a frame.
   //

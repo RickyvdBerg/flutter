@@ -27,6 +27,19 @@ void main() {
     expect(testPlatformDispatcher.someNewProperty, null);
   });
 
+  test('TestPlatformDispatcher forwards scoped frame request acceptance', () {
+    final backingDispatcher = _FakePlatformDispatcher(
+      displays: <Display>[],
+      views: <FlutterView>[],
+      scheduleFrameForDisplayViewsResult: false,
+    );
+    final testDispatcher = TestPlatformDispatcher(platformDispatcher: backingDispatcher);
+
+    expect(testDispatcher.scheduleFrameForDisplayViews(7, <int>[11, 12]), isFalse);
+    expect(backingDispatcher.scheduledDisplayId, 7);
+    expect(backingDispatcher.scheduledViewIds, <int>[11, 12]);
+  });
+
   testWidgets('TestPlatformDispatcher can fake locale', (WidgetTester tester) async {
     verifyPropertyFaked<Locale>(
       tester: tester,
@@ -330,7 +343,11 @@ class _FakeFlutterView extends Fake implements FlutterView {
 }
 
 class _FakePlatformDispatcher extends Fake implements PlatformDispatcher {
-  _FakePlatformDispatcher({required this.displays, required this.views});
+  _FakePlatformDispatcher({
+    required this.displays,
+    required this.views,
+    this.scheduleFrameForDisplayViewsResult = true,
+  });
   @override
   final Iterable<Display> displays;
 
@@ -345,4 +362,15 @@ class _FakePlatformDispatcher extends Fake implements PlatformDispatcher {
 
   @override
   double get textScaleFactor => 1.0;
+
+  final bool scheduleFrameForDisplayViewsResult;
+  int? scheduledDisplayId;
+  List<int>? scheduledViewIds;
+
+  @override
+  bool scheduleFrameForDisplayViews(int displayId, List<int> viewIds) {
+    scheduledDisplayId = displayId;
+    scheduledViewIds = List<int>.of(viewIds);
+    return scheduleFrameForDisplayViewsResult;
+  }
 }

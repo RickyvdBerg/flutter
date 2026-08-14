@@ -704,6 +704,11 @@ class TestPlatformDispatcher implements PlatformDispatcher {
   }
 
   @override
+  bool scheduleFrameForDisplayViews(int displayId, List<int> viewIds) {
+    return _platformDispatcher.scheduleFrameForDisplayViews(displayId, viewIds);
+  }
+
+  @override
   bool get semanticsEnabled => _semanticsEnabledTestValue ?? _platformDispatcher.semanticsEnabled;
   bool? _semanticsEnabledTestValue;
 

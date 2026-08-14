@@ -221,6 +221,12 @@ need "engine exact-acceptance regression" \
 need "framework rejected-request regression" \
   $W/test/widgets/view_scoped_frame_scheduling_test.dart \
   'a rejected engine request does not latch the framework scheduler'
+need "flutter_test forwards scoped frame acceptance" \
+  $W/../flutter_test/lib/src/window.dart \
+  'bool scheduleFrameForDisplayViews'
+need "flutter_test scoped acceptance regression" \
+  $W/../flutter_test/test/platform_dispatcher_test.dart \
+  'forwards scoped frame request acceptance'
 need "configure_serial resize gating (metrics event)" \
   $F/shell/platform/embedder/embedder.h 'configure_serial'
 need "animator pending-serial reuse gate" \

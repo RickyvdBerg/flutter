@@ -467,9 +467,16 @@ engine owner. No timer, synthetic begin-frame, global fallback, or empty frame
 is invented to repair a rejected request. Generic scheduling remains accepted
 because the global engine path always retains its request.
 
+`TestPlatformDispatcher` forwards the same acceptance result. Letting its
+forward-compatibility `noSuchMethod` absorb this typed method returned `null`
+as `bool`, so ordinary multi-view widget tests failed while scheduling their
+first frame instead of exercising the contract.
+
 `ShellTest.ScopedFrameRequestReportsWhetherItWasRetained` pins the engine
 contract. The framework regression `a rejected engine request does not latch
-the framework scheduler` proves a subsequent dirty edge can ask again.
+the framework scheduler` proves a subsequent dirty edge can ask again, and
+`TestPlatformDispatcher forwards scoped frame request acceptance` pins the
+test binding to the same result-bearing API.
 
 ## Known baseline debt
 

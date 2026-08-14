@@ -1589,13 +1589,12 @@ mixin WidgetsBinding
   }
 
   @override
-  void dispatchPlatformScheduleFrame() {
+  bool dispatchPlatformScheduleFrame() {
     final ({int displayId, List<int> viewIds})? scoped = _resolveScopedFrameRequest();
     if (scoped == null) {
-      super.dispatchPlatformScheduleFrame();
-      return;
+      return super.dispatchPlatformScheduleFrame();
     }
-    platformDispatcher.scheduleFrameForDisplayViews(scoped.displayId, scoped.viewIds);
+    return platformDispatcher.scheduleFrameForDisplayViews(scoped.displayId, scoped.viewIds);
   }
 
   void _handleBuildScheduled() {

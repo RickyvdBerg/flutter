@@ -742,15 +742,15 @@ void Engine::ScheduleFrameForDisplay(int64_t display_id,
   }
 }
 
-void Engine::ScheduleFrameForDisplayViews(int64_t display_id,
+bool Engine::ScheduleFrameForDisplayViews(int64_t display_id,
                                           const std::set<int64_t>& view_ids,
                                           bool regenerate_layer_trees) {
   if (animator_->IsPerDisplayMode()) {
-    animator_->RequestFrameForDisplayViews(display_id, view_ids,
-                                           regenerate_layer_trees);
-  } else {
-    ScheduleFrame(regenerate_layer_trees);
+    return animator_->RequestFrameForDisplayViews(display_id, view_ids,
+                                                  regenerate_layer_trees);
   }
+  ScheduleFrame(regenerate_layer_trees);
+  return true;
 }
 
 void Engine::CancelFrameOpportunity(int64_t display_id,

@@ -12,6 +12,7 @@ class _ViewScopedRenderingBinding extends RenderingFlutterBinding {
   Set<int>? _testActiveViewIds;
   VoidCallback? beforeDrawFrame;
   int scheduledFrames = 0;
+  bool acceptScheduledFrames = true;
   final List<PointerEvent> dispatchedEvents = <PointerEvent>[];
   final List<int> hitTestViewIds = <int>[];
 
@@ -19,8 +20,9 @@ class _ViewScopedRenderingBinding extends RenderingFlutterBinding {
   Set<int>? get activeFrameViewIds => _testActiveViewIds;
 
   @override
-  void dispatchPlatformScheduleFrame() {
+  bool dispatchPlatformScheduleFrame() {
     scheduledFrames += 1;
+    return acceptScheduledFrames;
   }
 
   @override
@@ -118,8 +120,23 @@ void main() {
   setUp(() {
     binding.beforeDrawFrame = null;
     binding.scheduledFrames = 0;
+    binding.acceptScheduledFrames = true;
     binding.dispatchedEvents.clear();
     binding.hitTestViewIds.clear();
+  });
+
+  test('a rejected engine request does not latch the framework scheduler', () {
+    binding.acceptScheduledFrames = false;
+
+    binding.scheduleFrame();
+
+    expect(binding.scheduledFrames, 1);
+    expect(binding.hasScheduledFrame, isFalse);
+
+    // A later independent dirty edge is free to ask again; there is no timer
+    // and no synthetic begin-frame needed to recover the scheduler.
+    binding.scheduleFrame();
+    expect(binding.scheduledFrames, 2);
   });
 
   test('scoped frame leaves inactive view coherent and its input live', () {

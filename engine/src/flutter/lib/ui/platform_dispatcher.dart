@@ -981,21 +981,21 @@ class PlatformDispatcher {
   /// Falls back to the legacy global path (engine implementation defined)
   /// if the engine is not in per-display mode.  The framework should call
   /// [scheduleFrame] instead for unscoped or cross-display requests.
-  void scheduleFrameForDisplayViews(int displayId, List<int> viewIds) {
+  bool scheduleFrameForDisplayViews(int displayId, List<int> viewIds) {
     if (viewIds.isEmpty) {
       // An empty subset is a no-op: the engine cannot satisfy a frame
       // request for "no views". Falling back to scheduleFrame() would
       // widen scope back to global; better to skip — the framework will
       // try again on the next dirty mark.
-      return;
+      return false;
     }
-    _scheduleFrameForDisplayViews(displayId, viewIds);
+    return _scheduleFrameForDisplayViews(displayId, viewIds);
   }
 
-  @Native<Void Function(Int64, Handle)>(
+  @Native<Bool Function(Int64, Handle)>(
     symbol: 'PlatformConfigurationNativeApi::ScheduleFrameForDisplayViews',
   )
-  external static void _scheduleFrameForDisplayViews(int displayId, List<int> viewIds);
+  external static bool _scheduleFrameForDisplayViews(int displayId, List<int> viewIds);
 
   /// Schedule a frame to run as soon as possible, rather than waiting for the
   /// engine to request a frame in response to a system "Vsync" signal.

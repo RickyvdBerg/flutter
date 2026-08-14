@@ -37,24 +37,22 @@ bool LatchDisplayFrameRequest(Animator::DisplayFrameState& state,
     return true;
   }
 
-  bool inserted = false;
-  if (!state.pending_frame_all_views) {
-    for (int64_t view_id : *view_ids) {
-      if (state.renderable_view_ids.find(view_id) !=
-          state.renderable_view_ids.end()) {
-        inserted =
-            state.pending_frame_view_ids.insert(view_id).second || inserted;
+  bool request_retained = false;
+  for (int64_t view_id : *view_ids) {
+    if (state.renderable_view_ids.find(view_id) !=
+        state.renderable_view_ids.end()) {
+      request_retained = true;
+      if (!state.pending_frame_all_views) {
+        state.pending_frame_view_ids.insert(view_id);
       }
     }
   }
 
-  const bool has_pending_views = inserted || state.pending_frame_all_views ||
-                                 !state.pending_frame_view_ids.empty();
-  if (has_pending_views) {
+  if (request_retained) {
     state.pending_regenerate_layer_trees =
         state.pending_regenerate_layer_trees || regenerate_layer_trees;
   }
-  return has_pending_views;
+  return request_retained;
 }
 
 void ResolveDisplayFrameViewIds(Animator::DisplayFrameState& state) {
@@ -586,10 +584,9 @@ void Animator::SetViewDisplay(int64_t view_id, int64_t display_id) {
   }
 }
 
-bool Animator::RegisterInitialViewDisplay(int64_t view_id,
-                                          int64_t display_id) {
-  TRACE_EVENT2_INT("flutter", "Animator::RegisterInitialViewDisplay",
-                   "view_id", view_id, "display_id", display_id);
+bool Animator::RegisterInitialViewDisplay(int64_t view_id, int64_t display_id) {
+  TRACE_EVENT2_INT("flutter", "Animator::RegisterInitialViewDisplay", "view_id",
+                   view_id, "display_id", display_id);
   per_display_opt_in_ = true;
   if (view_to_display_.find(view_id) != view_to_display_.end() ||
       default_state_.view_ids.count(view_id) > 0) {
@@ -690,7 +687,8 @@ bool Animator::SetViewVisibility(int64_t view_id, ViewVisibility visibility) {
   if (should_render) {
     state->renderable_view_ids.insert(view_id);
     if (state != &default_state_) {
-      RequestFrameForDisplayViews(state->display_id, {view_id});
+      static_cast<void>(
+          RequestFrameForDisplayViews(state->display_id, {view_id}));
     }
   } else {
     // Keep existing pending/current target sets intact. If the platform has
@@ -751,13 +749,15 @@ void Animator::RemoveView(int64_t view_id) {
 
 void Animator::RequestFrameForDisplay(int64_t display_id,
                                       bool regenerate_layer_trees) {
-  RequestFrameForDisplayInternal(display_id, nullptr, regenerate_layer_trees);
+  static_cast<void>(RequestFrameForDisplayInternal(display_id, nullptr,
+                                                   regenerate_layer_trees));
 }
 
-void Animator::RequestFrameForDisplayViews(int64_t display_id,
+bool Animator::RequestFrameForDisplayViews(int64_t display_id,
                                            const std::set<int64_t>& view_ids,
                                            bool regenerate_layer_trees) {
-  RequestFrameForDisplayInternal(display_id, &view_ids, regenerate_layer_trees);
+  return RequestFrameForDisplayInternal(display_id, &view_ids,
+                                        regenerate_layer_trees);
 }
 
 void Animator::CancelFrameOpportunity(int64_t display_id,
@@ -792,7 +792,7 @@ void Animator::CancelFrameOpportunity(int64_t display_id,
   }
 }
 
-void Animator::RequestFrameForDisplayInternal(int64_t display_id,
+bool Animator::RequestFrameForDisplayInternal(int64_t display_id,
                                               const std::set<int64_t>* view_ids,
                                               bool regenerate_layer_trees) {
   // Only proceed if the display has been explicitly registered.
@@ -802,16 +802,16 @@ void Animator::RequestFrameForDisplayInternal(int64_t display_id,
     if (view_ids != nullptr && !view_ids->empty()) {
       delegate_.OnAnimatorEmptyFrameForDisplay(display_id, *view_ids);
     }
-    return;
+    return false;
   }
   DisplayFrameState* state = GetDisplayState(display_id);
   if (!state) {
-    return;
+    return false;
   }
 
   // Requested views that are not homed on this display are filtered by
-  // LatchDisplayFrameRequest. Report them through the legacy empty-frame
-  // compatibility path so callers can re-resolve their current display.
+  // LatchDisplayFrameRequest. Report them through the empty-frame terminal
+  // path so callers can re-resolve their current display.
   if (view_ids != nullptr) {
     std::set<int64_t> unhomed_view_ids;
     for (int64_t view_id : *view_ids) {
@@ -825,11 +825,11 @@ void Animator::RequestFrameForDisplayInternal(int64_t display_id,
   }
 
   if (!LatchDisplayFrameRequest(*state, view_ids, regenerate_layer_trees)) {
-    return;
+    return false;
   }
 
   if (state->frame_scheduled) {
-    return;
+    return true;
   }
 
   // Latch frame requests that arrive while this display is currently building
@@ -837,10 +837,11 @@ void Animator::RequestFrameForDisplayInternal(int64_t display_id,
   // must not drop the request (animations call scheduleFrame() during build).
   if (state->frame_in_progress) {
     state->frame_scheduled = true;
-    return;
+    return true;
   }
 
   ScheduleDisplayVsync(*state);
+  return true;
 }
 
 void Animator::ScheduleDisplayVsync(DisplayFrameState& state) {
@@ -1095,7 +1096,8 @@ void Animator::BeginFrameForDisplay(DisplayFrameState& state) {
       state.current_opportunity_id = std::nullopt;
       // Retry demand is a separate edge from terminal backpressure.
       if (!retry_targets.empty()) {
-        RequestFrameForDisplayViews(state.display_id, retry_targets);
+        static_cast<void>(
+            RequestFrameForDisplayViews(state.display_id, retry_targets));
       }
       return;
     }

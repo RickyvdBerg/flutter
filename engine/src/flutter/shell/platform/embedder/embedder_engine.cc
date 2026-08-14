@@ -604,8 +604,8 @@ bool EmbedderEngine::ScheduleFrameForDisplayViews(int64_t display_id,
                          view_ids = std::move(view_ids),
                          regenerate_layer_trees]() {
     if (engine) {
-      engine->ScheduleFrameForDisplayViews(display_id, view_ids,
-                                           regenerate_layer_trees);
+      static_cast<void>(engine->ScheduleFrameForDisplayViews(
+          display_id, view_ids, regenerate_layer_trees));
     }
   };
   if (ui_runner->RunsTasksOnCurrentThread()) {

@@ -797,7 +797,7 @@ void PlatformConfigurationNativeApi::ScheduleFrame() {
   UIDartState::Current()->platform_configuration()->client()->ScheduleFrame();
 }
 
-void PlatformConfigurationNativeApi::ScheduleFrameForDisplayViews(
+bool PlatformConfigurationNativeApi::ScheduleFrameForDisplayViews(
     int64_t display_id,
     Dart_Handle view_ids) {
   UIDartState::ThrowIfUIOperationsProhibited();
@@ -811,19 +811,19 @@ void PlatformConfigurationNativeApi::ScheduleFrameForDisplayViews(
     Dart_Handle length_handle = Dart_ListLength(view_ids, &length);
     if (Dart_IsError(length_handle)) {
       Dart_PropagateError(length_handle);
-      return;
+      return false;
     }
     for (intptr_t i = 0; i < length; ++i) {
       Dart_Handle element = Dart_ListGetAt(view_ids, i);
       if (Dart_IsError(element)) {
         Dart_PropagateError(element);
-        return;
+        return false;
       }
       int64_t value = 0;
       Dart_Handle int_result = Dart_IntegerToInt64(element, &value);
       if (Dart_IsError(int_result)) {
         Dart_PropagateError(int_result);
-        return;
+        return false;
       }
       view_id_set.insert(value);
     }
@@ -834,10 +834,10 @@ void PlatformConfigurationNativeApi::ScheduleFrameForDisplayViews(
     // for "no views". Falling back to the global ScheduleFrame would
     // widen scope; better to ignore — the framework will issue another
     // request on the next dirty mark.
-    return;
+    return false;
   }
 
-  UIDartState::Current()
+  return UIDartState::Current()
       ->platform_configuration()
       ->client()
       ->ScheduleFrameForDisplayViews(display_id, view_id_set,

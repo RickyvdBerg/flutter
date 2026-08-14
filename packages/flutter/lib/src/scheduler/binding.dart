@@ -979,8 +979,7 @@ mixin SchedulerBinding on BindingBase {
       return true;
     }());
     ensureFrameCallbacksRegistered();
-    dispatchPlatformScheduleFrame();
-    _hasScheduledFrame = true;
+    _hasScheduledFrame = dispatchPlatformScheduleFrame();
   }
 
   /// Hook called by [scheduleFrame] / [scheduleForcedFrame] to actually
@@ -994,11 +993,14 @@ mixin SchedulerBinding on BindingBase {
   /// global scheduler.
   ///
   /// Overrides MUST request exactly one frame from the engine — either
-  /// via the scoped API or by calling `super.dispatchPlatformScheduleFrame()`.
-  /// `_hasScheduledFrame` is updated by [scheduleFrame] regardless.
+  /// via the scoped API or by calling `super.dispatchPlatformScheduleFrame()` —
+  /// and return whether the engine retained that request. A rejected scoped
+  /// request has no future begin-frame, so it must not latch
+  /// [_hasScheduledFrame].
   @protected
-  void dispatchPlatformScheduleFrame() {
+  bool dispatchPlatformScheduleFrame() {
     platformDispatcher.scheduleFrame();
+    return true;
   }
 
   /// Schedules a new frame by calling
@@ -1032,8 +1034,7 @@ mixin SchedulerBinding on BindingBase {
       return true;
     }());
     ensureFrameCallbacksRegistered();
-    dispatchPlatformScheduleFrame();
-    _hasScheduledFrame = true;
+    _hasScheduledFrame = dispatchPlatformScheduleFrame();
   }
 
   bool _warmUpFrame = false;
@@ -1228,11 +1229,7 @@ mixin SchedulerBinding on BindingBase {
   /// The view set is *not* cleared here — it is cleared in
   /// [_handleDrawFrameForDisplay] so it survives across the
   /// transient-callbacks → microtasks → persistent-callbacks pipeline.
-  void _handleBeginFrameForDisplay(
-    Duration rawTimeStamp,
-    int displayId,
-    List<int> viewIds,
-  ) {
+  void _handleBeginFrameForDisplay(Duration rawTimeStamp, int displayId, List<int> viewIds) {
     _activeFrameViewIds = viewIds.toSet();
     if (_warmUpFrame) {
       assert(!_rescheduleAfterWarmUpFrame);

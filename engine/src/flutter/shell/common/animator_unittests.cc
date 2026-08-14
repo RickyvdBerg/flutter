@@ -473,8 +473,9 @@ TEST_F(ShellTest, HiddenViewSettlesAdmittedWorkAndRearmsOnlyOnResume) {
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   ::testing::Mock::VerifyAndClearExpectations(&delegate);
 
-  PostTaskSync(task_runners.GetUITaskRunner(),
-               [&] { animator->RequestFrameForDisplayViews(21, {121}); });
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    EXPECT_FALSE(animator->RequestFrameForDisplayViews(21, {121}));
+  });
   EXPECT_EQ(waiter->request_count(), 1u);
 
   EXPECT_CALL(delegate,
@@ -532,7 +533,7 @@ TEST_F(ShellTest, RemovingUnrequestedTargetDoesNotInventAnOutcome) {
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
 
   PostTaskSync(task_runners.GetUITaskRunner(), [&] {
-    animator->RequestFrameForDisplayViews(14, {114});
+    EXPECT_TRUE(animator->RequestFrameForDisplayViews(14, {114}));
     animator->RemoveView(214);
   });
   EXPECT_CALL(delegate,
@@ -597,8 +598,9 @@ TEST_F(ShellTest, ExactOpportunityReconcilesEveryAdmittedTarget) {
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   ::testing::Mock::VerifyAndClearExpectations(&delegate);
 
-  PostTaskSync(task_runners.GetUITaskRunner(),
-               [&] { animator->RequestFrameForDisplayViews(14, {114, 214}); });
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    EXPECT_TRUE(animator->RequestFrameForDisplayViews(14, {114, 214}));
+  });
   EXPECT_CALL(delegate,
               OnAnimatorBeginFrameForDisplay(::testing::_, ::testing::_, 14,
                                              std::set<int64_t>({114})));
@@ -659,7 +661,7 @@ TEST_F(ShellTest, DisplayRemovalTerminatesOnlyPendingTargets) {
                [waiter] { waiter->FireDisplay(15); });
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   PostTaskSync(task_runners.GetUITaskRunner(), [&] {
-    animator->RequestFrameForDisplayViews(15, {115});
+    EXPECT_TRUE(animator->RequestFrameForDisplayViews(15, {115}));
     animator->RemoveDisplay(15);
   });
 
@@ -720,8 +722,8 @@ TEST_F(ShellTest, RetainedDisplayFrameReachesRasterAtBuildEnd) {
                [waiter] { waiter->FireDisplay(16); });
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
   PostTaskSync(task_runners.GetUITaskRunner(), [&] {
-    animator->RequestFrameForDisplayViews(16, {116},
-                                          /*regenerate_layer_trees=*/false);
+    EXPECT_TRUE(animator->RequestFrameForDisplayViews(
+        16, {116}, /*regenerate_layer_trees=*/false));
   });
   PostTaskSync(task_runners.GetUITaskRunner(),
                [waiter] { waiter->FireDisplay(16, 100, {116}); });
@@ -792,8 +794,9 @@ TEST_F(ShellTest, CancelledReturnedOpportunityCannotRunItsFrameTurn) {
 
   EXPECT_CALL(delegate, OnAnimatorBeginFrameForDisplay(
                             ::testing::_, ::testing::_, 18, ::testing::_));
-  PostTaskSync(task_runners.GetUITaskRunner(),
-               [&] { animator->RequestFrameForDisplayViews(18, {118}); });
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    EXPECT_TRUE(animator->RequestFrameForDisplayViews(18, {118}));
+  });
   PostTaskSync(task_runners.GetUITaskRunner(),
                [waiter] { waiter->FireDisplay(18, 501, {118}); });
   PostTaskSync(task_runners.GetUITaskRunner(), [] {});
@@ -907,8 +910,9 @@ TEST_F(ShellTest, PipelineBackpressureTerminatesThenRearmsDemand) {
 
   for (uint64_t opportunity_id = 1; opportunity_id <= 3; opportunity_id++) {
     if (opportunity_id > 1) {
-      PostTaskSync(task_runners.GetUITaskRunner(),
-                   [&] { animator->RequestFrameForDisplayViews(12, {112}); });
+      PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+        EXPECT_TRUE(animator->RequestFrameForDisplayViews(12, {112}));
+      });
     }
     PostTaskSync(task_runners.GetUITaskRunner(), [waiter, opportunity_id] {
       waiter->FireDisplay(12, opportunity_id, {112});
@@ -978,8 +982,42 @@ TEST_F(ShellTest, InitialViewDisplayRegistrationIsOneShotAndDemandFree) {
     EXPECT_FALSE(animator->RegisterInitialViewDisplay(141, 42));
     EXPECT_EQ(waiter->request_count(), 0u);
 
-    animator->RequestFrameForDisplayViews(41, {141});
+    EXPECT_TRUE(animator->RequestFrameForDisplayViews(41, {141}));
     EXPECT_EQ(waiter->request_count(), 1u);
+  });
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
+}
+
+TEST_F(ShellTest, ScopedFrameRequestReportsWhetherItWasRetained) {
+  FakeAnimatorDelegate delegate;
+  TaskRunners task_runners = {"test", CreateNewThread(), CreateNewThread(),
+                              CreateNewThread(), CreateNewThread()};
+  std::shared_ptr<Animator> animator;
+  ManualDisplayVsyncWaiter* waiter = nullptr;
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    auto owned_waiter =
+        std::make_unique<ManualDisplayVsyncWaiter>(task_runners);
+    waiter = owned_waiter.get();
+    animator = std::make_unique<Animator>(delegate, task_runners,
+                                          std::move(owned_waiter));
+    animator->AddDisplay(51, 60.0);
+    EXPECT_TRUE(animator->RegisterInitialViewDisplay(151, 51));
+
+    EXPECT_TRUE(animator->RequestFrameForDisplayViews(51, {151}));
+    EXPECT_EQ(waiter->request_count(), 1u);
+
+    EXPECT_FALSE(animator->RequestFrameForDisplayViews(51, {251}));
+    EXPECT_FALSE(animator->RequestFrameForDisplayViews(99, {151}));
+  });
+
+  PostTaskSync(task_runners.GetUITaskRunner(),
+               [waiter] { waiter->FireDisplay(51); });
+  PostTaskSync(task_runners.GetUITaskRunner(), [] {});
+
+  PostTaskSync(task_runners.GetUITaskRunner(), [&] {
+    EXPECT_TRUE(
+        animator->SetViewVisibility(151, Animator::ViewVisibility::kObscured));
+    EXPECT_FALSE(animator->RequestFrameForDisplayViews(51, {151}));
   });
   PostTaskSync(task_runners.GetUITaskRunner(), [&] { animator.reset(); });
 }

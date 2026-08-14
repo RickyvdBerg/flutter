@@ -211,9 +211,13 @@ class Animator final {
                               bool regenerate_layer_trees = true);
 
   /// Requests a frame for a subset of views on a specific display.
-  void RequestFrameForDisplayViews(int64_t display_id,
-                                   const std::set<int64_t>& view_ids,
-                                   bool regenerate_layer_trees = true);
+  /// Returns whether this exact request was retained. A rejected request will
+  /// not produce a framework begin-frame and must not leave its caller's
+  /// scheduler latched.
+  [[nodiscard]] bool RequestFrameForDisplayViews(
+      int64_t display_id,
+      const std::set<int64_t>& view_ids,
+      bool regenerate_layer_trees = true);
 
   // Settles UI-side state for an opportunity cancelled after its scheduled
   // baton was returned. Registry terminality is owned outside Animator; this
@@ -309,9 +313,10 @@ class Animator final {
   /// notifies the delegate to invoke Dart callbacks for this display's views.
   void BeginFrameForDisplay(DisplayFrameState& state);
 
-  void RequestFrameForDisplayInternal(int64_t display_id,
-                                      const std::set<int64_t>* view_ids,
-                                      bool regenerate_layer_trees);
+  [[nodiscard]] bool RequestFrameForDisplayInternal(
+      int64_t display_id,
+      const std::set<int64_t>* view_ids,
+      bool regenerate_layer_trees);
 
   void ScheduleDisplayVsync(DisplayFrameState& state);
 

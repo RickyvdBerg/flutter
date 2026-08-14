@@ -210,6 +210,17 @@ absent_in "RuntimeController-owned alternate first-frame scheduler" \
   $F/runtime/runtime_controller.h 'schedule_frame'
 need "dart:ui scheduleFrameForDisplayViews" \
   $F/lib/ui/platform_dispatcher.dart 'scheduleFrameForDisplayViews'
+need "scoped frame scheduling reports exact engine acceptance" \
+  $F/shell/common/animator.h 'bool RequestFrameForDisplayViews'
+need "framework latches only an accepted platform frame request" \
+  $W/lib/src/scheduler/binding.dart \
+  '_hasScheduledFrame = dispatchPlatformScheduleFrame\(\)'
+need "engine exact-acceptance regression" \
+  $F/shell/common/animator_unittests.cc \
+  'ScopedFrameRequestReportsWhetherItWasRetained'
+need "framework rejected-request regression" \
+  $W/test/widgets/view_scoped_frame_scheduling_test.dart \
+  'a rejected engine request does not latch the framework scheduler'
 need "configure_serial resize gating (metrics event)" \
   $F/shell/platform/embedder/embedder.h 'configure_serial'
 need "animator pending-serial reuse gate" \

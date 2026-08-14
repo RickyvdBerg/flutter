@@ -76,6 +76,7 @@ already ancestors of the selected main target under their original commits.
 | 38 | Keep a refused render target's frame demand instead of stranding the view | permanent lifecycle correctness fix | none |
 | 39 | Replace ambiguous target refusal with exact typed acquisition outcomes | permanent lifecycle correctness fix | none |
 | 40 | Bind a newly added view to its initial display before first-frame scheduling | permanent per-display lifecycle fix | none |
+| 41 | Report exact view-scoped frame-request acceptance to the framework scheduler | permanent framework/engine lifecycle fix | none |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -448,6 +449,27 @@ global `ScheduleFrame` behavior. The regression is
 `EmbedderTest.AddViewPublishesInitialDisplayBeforeMetricsScheduleFrame`; it
 schedules synchronously from `onMetricsChanged` and requires display 19, not
 the default display or a silently coalesced request.
+
+### Patch 41: exact scoped frame-request acceptance
+
+`SchedulerBinding._hasScheduledFrame` may represent only a request the engine
+actually retained. The scoped scheduling API therefore returns one synchronous
+acceptance bit from `PlatformConfiguration` through `RuntimeController`,
+`Engine`, and `Animator` to the framework. Unknown displays and requests whose
+exact target set contains no homed renderable view return false, even when an
+unrelated request is already pending on that display. An already-retained
+request for the caller's own target returns true.
+
+The framework latches `_hasScheduledFrame` only on true. Refusal leaves the
+dirty view eligible for a later independent scheduling edge; making an
+obscured view visible still creates the one current scoped request at the
+engine owner. No timer, synthetic begin-frame, global fallback, or empty frame
+is invented to repair a rejected request. Generic scheduling remains accepted
+because the global engine path always retains its request.
+
+`ShellTest.ScopedFrameRequestReportsWhetherItWasRetained` pins the engine
+contract. The framework regression `a rejected engine request does not latch
+the framework scheduler` proves a subsequent dirty edge can ask again.
 
 ## Known baseline debt
 

@@ -93,7 +93,7 @@ class PlatformConfigurationClient {
   ///             If the engine is not in per-display mode, implementations
   ///             should fall back to the legacy global ScheduleFrame.
   ///
-  virtual void ScheduleFrameForDisplayViews(
+  [[nodiscard]] virtual bool ScheduleFrameForDisplayViews(
       int64_t display_id,
       const std::set<int64_t>& view_ids,
       bool regenerate_layer_trees = true) = 0;
@@ -689,7 +689,7 @@ class PlatformConfigurationNativeApi {
   // Dart-callable view-scoped scheduleFrame. `view_ids` is a Dart `List<int>`
   // (Dart_Handle) that this method converts to a `std::set<int64_t>` and
   // forwards to `PlatformConfigurationClient::ScheduleFrameForDisplayViews`.
-  static void ScheduleFrameForDisplayViews(int64_t display_id,
+  static bool ScheduleFrameForDisplayViews(int64_t display_id,
                                            Dart_Handle view_ids);
 
   static void EndWarmUpFrame();

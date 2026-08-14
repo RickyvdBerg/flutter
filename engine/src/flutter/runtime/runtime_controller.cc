@@ -307,11 +307,10 @@ bool RuntimeController::BeginFrame(fml::TimePoint frame_time,
   return false;
 }
 
-bool RuntimeController::BeginFrameForDisplay(
-    int64_t display_id,
-    const std::set<int64_t>& view_ids,
-    fml::TimePoint frame_time,
-    uint64_t frame_number) {
+bool RuntimeController::BeginFrameForDisplay(int64_t display_id,
+                                             const std::set<int64_t>& view_ids,
+                                             fml::TimePoint frame_time,
+                                             uint64_t frame_number) {
   MarkAsFrameBorder();
   if (auto* platform_configuration = GetPlatformConfigurationIfAvailable()) {
     platform_configuration->BeginFrameForDisplay(display_id, view_ids,
@@ -437,12 +436,12 @@ void RuntimeController::ScheduleFrame() {
 }
 
 // |PlatformConfigurationClient|
-void RuntimeController::ScheduleFrameForDisplayViews(
+bool RuntimeController::ScheduleFrameForDisplayViews(
     int64_t display_id,
     const std::set<int64_t>& view_ids,
     bool regenerate_layer_trees) {
-  client_.ScheduleFrameForDisplayViews(display_id, view_ids,
-                                       regenerate_layer_trees);
+  return client_.ScheduleFrameForDisplayViews(display_id, view_ids,
+                                              regenerate_layer_trees);
 }
 
 void RuntimeController::EndWarmUpFrame() {

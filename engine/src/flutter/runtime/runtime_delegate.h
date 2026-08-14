@@ -33,7 +33,7 @@ class RuntimeDelegate {
   // through the platform-configuration client so Dart-originated requests
   // (RendererBinding.scheduleFrame consulting its dirty-view registry) can
   // narrow the engine's per-display frame to only the dirty views.
-  virtual void ScheduleFrameForDisplayViews(
+  [[nodiscard]] virtual bool ScheduleFrameForDisplayViews(
       int64_t display_id,
       const std::set<int64_t>& view_ids,
       bool regenerate_layer_trees = true) = 0;

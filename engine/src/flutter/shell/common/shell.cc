@@ -1564,8 +1564,8 @@ void Shell::OnFrameOpportunityBackpressured(
       task_runners_.GetUITaskRunner(),
       [engine = engine_->GetWeakPtr(), display_id, target_ids] {
         if (engine) {
-          engine->ScheduleFrameForDisplayViews(display_id, target_ids,
-                                               /*regenerate_layer_trees=*/true);
+          static_cast<void>(engine->ScheduleFrameForDisplayViews(
+              display_id, target_ids, /*regenerate_layer_trees=*/true));
         }
       });
 }

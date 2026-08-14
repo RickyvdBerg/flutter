@@ -846,9 +846,10 @@ class Engine final : public RuntimeDelegate, PointerDataDispatcher::Delegate {
   // Also serves the embedder API entry point (EmbedderEngine::
   // ScheduleFrameForDisplayViews) so a single implementation handles both
   // Dart-originated and embedder-originated scoped frame requests.
-  void ScheduleFrameForDisplayViews(int64_t display_id,
-                                    const std::set<int64_t>& view_ids,
-                                    bool regenerate_layer_trees) override;
+  [[nodiscard]] bool ScheduleFrameForDisplayViews(
+      int64_t display_id,
+      const std::set<int64_t>& view_ids,
+      bool regenerate_layer_trees) override;
 
   void CancelFrameOpportunity(int64_t display_id,
                               FrameOpportunityId opportunity_id,

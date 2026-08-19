@@ -431,6 +431,38 @@ static void _glBlitFramebuffer(GLint srcX0,
                           dstY1, mask, filter);
 }
 
+static GLenum _glCheckFramebufferStatus(GLenum target) {
+  return mock->glCheckFramebufferStatus(target);
+}
+
+static void _glFramebufferTexture2DMultisampleEXT(GLenum target,
+                                                  GLenum attachment,
+                                                  GLenum textarget,
+                                                  GLuint texture,
+                                                  GLint level,
+                                                  GLsizei samples) {
+  mock->glFramebufferTexture2DMultisampleEXT(target, attachment, textarget,
+                                             texture, level, samples);
+}
+
+static void _glRenderbufferStorageMultisample(GLenum target,
+                                              GLsizei samples,
+                                              GLenum internalformat,
+                                              GLsizei width,
+                                              GLsizei height) {
+  mock->glRenderbufferStorageMultisample(target, samples, internalformat, width,
+                                         height);
+}
+
+static void _glRenderbufferStorageMultisampleEXT(GLenum target,
+                                                 GLsizei samples,
+                                                 GLenum internalformat,
+                                                 GLsizei width,
+                                                 GLsizei height) {
+  mock->glRenderbufferStorageMultisampleEXT(target, samples, internalformat,
+                                            width, height);
+}
+
 GLuint _glCreateProgram() {
   return 0;
 }
@@ -530,6 +562,8 @@ static void _glGetFramebufferAttachmentParameteriv(GLenum target,
 static void _glGetIntegerv(GLenum pname, GLint* data) {
   if (pname == GL_TEXTURE_BINDING_2D) {
     *data = bound_texture_2d;
+  } else if (pname == GL_MAX_SAMPLES) {
+    *data = 4;
   }
 }
 
@@ -696,6 +730,7 @@ void (*epoxy_glBlitFramebuffer)(GLint srcX0,
                                 GLint dstY1,
                                 GLbitfield mask,
                                 GLenum filter);
+GLenum (*epoxy_glCheckFramebufferStatus)(GLenum target);
 void (*epoxy_glCompileShader)(GLuint shader);
 GLuint (*epoxy_glCreateProgram)();
 GLuint (*epoxy_glCreateShader)(GLenum shaderType);
@@ -711,6 +746,12 @@ void (*epoxy_glFramebufferTexture2D)(GLenum target,
                                      GLenum textarget,
                                      GLuint texture,
                                      GLint level);
+void (*epoxy_glFramebufferTexture2DMultisampleEXT)(GLenum target,
+                                                   GLenum attachment,
+                                                   GLenum textarget,
+                                                   GLuint texture,
+                                                   GLint level,
+                                                   GLsizei samples);
 void (*epoxy_glGetFramebufferAttachmentParameteriv)(GLenum target,
                                                     GLenum attachment,
                                                     GLenum pname,
@@ -722,6 +763,16 @@ void (*epoxy_glRenderbufferStorage)(GLenum target,
                                     GLenum internalformat,
                                     GLsizei width,
                                     GLsizei height);
+void (*epoxy_glRenderbufferStorageMultisample)(GLenum target,
+                                               GLsizei samples,
+                                               GLenum internalformat,
+                                               GLsizei width,
+                                               GLsizei height);
+void (*epoxy_glRenderbufferStorageMultisampleEXT)(GLenum target,
+                                                  GLsizei samples,
+                                                  GLenum internalformat,
+                                                  GLsizei width,
+                                                  GLsizei height);
 void (*epoxy_glShaderSource)(GLuint shader,
                              GLsizei count,
                              const GLchar* const* string,
@@ -764,6 +815,7 @@ static void library_init() {
   epoxy_glBindRenderbuffer = _glBindRenderbuffer;
   epoxy_glBindTexture = _glBindTexture;
   epoxy_glBlitFramebuffer = _glBlitFramebuffer;
+  epoxy_glCheckFramebufferStatus = _glCheckFramebufferStatus;
   epoxy_glCompileShader = _glCompileShader;
   epoxy_glClearColor = _glClearColor;
   epoxy_glCreateProgram = _glCreateProgram;
@@ -776,6 +828,8 @@ static void library_init() {
   epoxy_glEnable = _glEnable;
   epoxy_glFramebufferRenderbuffer = _glFramebufferRenderbuffer;
   epoxy_glFramebufferTexture2D = _glFramebufferTexture2D;
+  epoxy_glFramebufferTexture2DMultisampleEXT =
+      _glFramebufferTexture2DMultisampleEXT;
   epoxy_glGenFramebuffers = _glGenFramebuffers;
   epoxy_glGenRenderbuffers = _glGenRenderbuffers;
   epoxy_glGenTextures = _glGenTextures;
@@ -790,6 +844,9 @@ static void library_init() {
   epoxy_glIsEnabled = _glIsEnabled;
   epoxy_glLinkProgram = _glLinkProgram;
   epoxy_glRenderbufferStorage = _glRenderbufferStorage;
+  epoxy_glRenderbufferStorageMultisample = _glRenderbufferStorageMultisample;
+  epoxy_glRenderbufferStorageMultisampleEXT =
+      _glRenderbufferStorageMultisampleEXT;
   epoxy_glShaderSource = _glShaderSource;
   epoxy_glTexParameterf = _glTexParameterf;
   epoxy_glTexParameteri = _glTexParameteri;

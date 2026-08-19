@@ -77,6 +77,7 @@ already ancestors of the selected main target under their original commits.
 | 39 | Replace ambiguous target refusal with exact typed acquisition outcomes | permanent lifecycle correctness fix | none |
 | 40 | Bind a newly added view to its initial display before first-frame scheduling | permanent per-display lifecycle fix | none |
 | 41 | Report exact view-scoped frame-request acceptance to the framework scheduler | permanent framework/engine lifecycle fix | none |
+| 42 | Give the GTK framebuffer real multisampling | upstreamable bugfix — attach to flutter/flutter#191171 | open: flutter/flutter#191171, flutter/flutter#191234 |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -477,6 +478,43 @@ contract. The framework regression `a rejected engine request does not latch
 the framework scheduler` proves a subsequent dirty edge can ask again, and
 `TestPlatformDispatcher forwards scoped frame request acceptance` pins the
 test binding to the same result-bearing API.
+
+### Patch 42: real multisampling for GTK backing stores
+
+`MakeRenderTargetFromBackingStoreImpeller` declares the GTK backing store as a
+4x multisample target whenever the driver exposes
+`GL_EXT_multisampled_render_to_texture`, but `fl_framebuffer_new` built a plain
+single-sample framebuffer. Impeller binds a wrapped FBO exactly as handed to it
+(`render_pass_gles.cc` `is_wrapped_fbo`) and skips its own resolve for wrapped
+targets, so the declaration bought nothing: every Flutter app on Linux
+rasterized at one sample and every path, clip and circle edge came out
+aliased. The declaration is now truthful.
+
+Two paths, chosen by capability. With
+`GL_EXT_multisampled_render_to_texture` the colour texture is attached through
+`glFramebufferTexture2DMultisampleEXT` and the depth-stencil renderbuffer
+allocated with `glRenderbufferStorageMultisampleEXT`; the driver resolves into
+the texture on read, so no consumer changes. Without it, colour and
+depth-stencil become multisample renderbuffers and the texture moves to a
+second framebuffer that `fl_framebuffer_resolve()` blits into; the compositor
+calls that before either of its two consumers (`glBlitFramebuffer` for the
+first layer, the texture for the rest). In the fallback Impeller declares the
+wrapped FBO single-sample, which is inert: the FBO is bound as-is, no
+attachment is created or sized from the descriptor, and the declared sample
+count reaches only `GetTextureTypeFromDescriptor`, whose result the wrapped
+path never consults. GLES pipelines carry no sample count.
+
+Sample counts are negotiated, never assumed: `GL_MAX_SAMPLES` clamps the
+request, a driver with no multisample capability keeps the original
+single-sample framebuffer, and a framebuffer the driver refuses to complete is
+torn down and rebuilt single-sample rather than failing the frame. The
+compositor's own presentation framebuffer stays single-sample — it only
+receives blits and is read back with `glReadPixels`.
+
+`FlFramebufferTest` covers all four outcomes:
+`ImplicitMultisampleNeedsNoResolve`, `ExplicitMultisampleResolvesWithABlit`,
+`SamplesClampedToDriverMaximum`, and
+`IncompleteMultisampleFallsBackToSingleSample`.
 
 ## Known baseline debt
 

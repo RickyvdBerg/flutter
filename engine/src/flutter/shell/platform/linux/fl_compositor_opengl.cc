@@ -165,8 +165,11 @@ gboolean fl_compositor_opengl_composite_layers(FlCompositorOpenGL* self,
         const FlutterBackingStore* backing_store = layer->backing_store;
         FlFramebuffer* framebuffer =
             FL_FRAMEBUFFER(backing_store->open_gl.framebuffer.user_data);
+        // Both consumers below read the single sample texture, so collapse any
+        // multisample content into it first.
+        fl_framebuffer_resolve(framebuffer);
         glBindFramebuffer(GL_READ_FRAMEBUFFER,
-                          fl_framebuffer_get_id(framebuffer));
+                          fl_framebuffer_get_resolved_id(framebuffer));
         // The first layer can be blitted, and following layers composited with
         // this.
         if (first_layer) {

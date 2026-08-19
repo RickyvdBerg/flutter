@@ -37,6 +37,41 @@ FlFramebuffer* fl_framebuffer_new(GLint format,
                                   gboolean shareable);
 
 /**
+ * fl_framebuffer_new_multisampled:
+ * @format: format, e.g. GL_RGB, GL_BGR
+ * @width: width of texture.
+ * @height: height of texture.
+ * @shareable: %TRUE if this framebuffer can be shared between contexts
+ * (requires EGL).
+ * @samples: number of samples to rasterize at, clamped to what the driver
+ * supports. 1 requests no multisampling.
+ *
+ * Creates a new frame buffer that rasterizes at more than one sample per
+ * pixel, so that geometry rendered into it is antialiased. The backing texture
+ * stays single sample; see fl_framebuffer_resolve() for how the samples reach
+ * it. Requires a valid OpenGL context to create.
+ *
+ * Returns: a new #FlFramebuffer.
+ */
+FlFramebuffer* fl_framebuffer_new_multisampled(GLint format,
+                                               size_t width,
+                                               size_t height,
+                                               gboolean shareable,
+                                               GLsizei samples);
+
+/**
+ * fl_framebuffer_resolve:
+ * @framebuffer: an #FlFramebuffer.
+ *
+ * Makes the rendered content available through fl_framebuffer_get_texture_id()
+ * and fl_framebuffer_get_resolved_id(). Does nothing unless this framebuffer
+ * rasterizes into a separate multisample attachment that the driver will not
+ * resolve on its own. Call this after Flutter has rendered a frame and before
+ * reading it. Requires a valid OpenGL context.
+ */
+void fl_framebuffer_resolve(FlFramebuffer* framebuffer);
+
+/**
  * fl_framebuffer_get_shareable:
  * @framebuffer: an #FlFramebuffer.
  *
@@ -68,6 +103,30 @@ FlFramebuffer* fl_framebuffer_create_sibling(FlFramebuffer* framebuffer);
  * Returns: OpenGL framebuffer id or 0 if creation failed.
  */
 GLuint fl_framebuffer_get_id(FlFramebuffer* framebuffer);
+
+/**
+ * fl_framebuffer_get_resolved_id:
+ * @framebuffer: an #FlFramebuffer.
+ *
+ * Gets the ID of the framebuffer whose colour attachment is the texture
+ * returned by fl_framebuffer_get_texture_id(). This is the framebuffer to read
+ * rendered content from; it is the same as fl_framebuffer_get_id() unless
+ * rendering goes to a separate multisample attachment. Call
+ * fl_framebuffer_resolve() first.
+ *
+ * Returns: OpenGL framebuffer id or 0 if creation failed.
+ */
+GLuint fl_framebuffer_get_resolved_id(FlFramebuffer* framebuffer);
+
+/**
+ * fl_framebuffer_get_samples:
+ * @framebuffer: an #FlFramebuffer.
+ *
+ * Gets the number of samples per pixel this framebuffer rasterizes at.
+ *
+ * Returns: sample count, 1 if not multisampled.
+ */
+GLsizei fl_framebuffer_get_samples(FlFramebuffer* framebuffer);
 
 /**
  * fl_framebuffer_get_texture_id:

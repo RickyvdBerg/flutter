@@ -294,8 +294,13 @@ static bool create_opengl_backing_store(
     general_format = GL_BGRA_EXT;
   }
 
-  FlFramebuffer* framebuffer = fl_framebuffer_new(
-      general_format, config->size.width, config->size.height, FALSE);
+  // Flutter rasterizes into this framebuffer, so it has to carry the samples
+  // that antialias the geometry. Impeller declares the wrapped framebuffer as
+  // 4x multisampled (MakeRenderTargetFromBackingStoreImpeller), so request the
+  // same count.
+  FlFramebuffer* framebuffer = fl_framebuffer_new_multisampled(
+      general_format, config->size.width, config->size.height, FALSE,
+      /*samples=*/4);
   if (!framebuffer) {
     g_warning("Failed to create backing store");
     return false;

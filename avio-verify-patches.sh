@@ -459,6 +459,20 @@ need "tiny negative degree regression test" \
   $F/impeller/geometry/arc_unittests.cc \
   'TinyNegativeStartNormalizesBelowFullCircle'
 
+echo "--- GTK framebuffer multisampling ---"
+need "GTK backing stores rasterize multisampled" \
+  $F/shell/platform/linux/fl_engine.cc \
+  'fl_framebuffer_new_multisampled'
+need "multisample content is resolved before it is read" \
+  $F/shell/platform/linux/fl_compositor_opengl.cc \
+  'fl_framebuffer_resolve'
+need "explicit multisample resolve regression" \
+  $F/shell/platform/linux/fl_framebuffer_test.cc \
+  'ExplicitMultisampleResolvesWithABlit'
+need "unsupported multisample degrades to single sample" \
+  $F/shell/platform/linux/fl_framebuffer_test.cc \
+  'IncompleteMultisampleFallsBackToSingleSample'
+
 echo "--- Removed paths must stay removed ---"
 absent "RenderViewImmediate (forbidden, contract §8)" 'RenderViewImmediate'
 absent "drain_tasks_now (forbidden support ABI)" 'drain_tasks_now|DrainTasksNow'

@@ -130,6 +130,20 @@ namespace {
 
 constexpr size_t kMaxSelectedTargetDamageRects = 4096u;
 
+// Whether the root pass over this target resolves multisampled contents over
+// every one of its pixels. Impeller reads the same fact the same way: a color
+// attachment with a resolve texture is a multisampled pass.
+bool RasterReplacesWholeTarget(const EmbedderRenderTarget& render_target) {
+#ifdef IMPELLER_SUPPORTS_RENDERING
+  const impeller::RenderTarget* impeller_target =
+      render_target.GetImpellerRenderTarget();
+  return impeller_target != nullptr &&
+         impeller_target->GetColorAttachment(0u).resolve_texture != nullptr;
+#else
+  return false;
+#endif  // IMPELLER_SUPPORTS_RENDERING
+}
+
 SurfaceFrame::FramebufferInfo ReadSelectedTargetFramebufferInfo(
     const EmbedderRenderTarget& render_target,
     const DlMatrix& surface_transformation,
@@ -138,6 +152,7 @@ SurfaceFrame::FramebufferInfo ReadSelectedTargetFramebufferInfo(
   info.supports_readback = true;
   info.supports_partial_repaint = true;
   info.existing_damage = DlRegion(DlIRect::MakeSize(frame_size));
+  info.raster_replaces_whole_target = RasterReplacesWholeTarget(render_target);
 
   const FlutterBackingStore* backing_store = render_target.GetBackingStore();
   const auto* content_state =

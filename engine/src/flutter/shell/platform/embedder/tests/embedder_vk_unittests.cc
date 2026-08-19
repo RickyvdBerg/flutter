@@ -20,6 +20,9 @@
 #include "flutter/shell/platform/embedder/tests/embedder_test_context_vulkan.h"
 #include "flutter/shell/platform/embedder/tests/embedder_unittests_util.h"
 #include "flutter/testing/testing.h"
+#include "third_party/skia/include/core/SkColorSpace.h"
+#include "third_party/skia/include/core/SkImage.h"
+#include "third_party/skia/include/core/SkImageInfo.h"
 
 // CREATE_NATIVE_ENTRY is leaky by design
 // NOLINTBEGIN(clang-analyzer-core.StackAddressEscape)
@@ -601,7 +604,11 @@ TEST_F(EmbedderTest,
                       }));
   EXPECT_EQ(target_identifiers, (std::vector<uint64_t>{7u, 8u, 9u, 7u, 8u}));
   EXPECT_EQ(frame_damage_counts, (std::vector<int64_t>{1, 0, 0, 0, -1}));
-  EXPECT_EQ(buffer_damage_counts, (std::vector<int64_t>{-1, -1, -1, 1, -1}));
+  // Logical frame damage above is per-frame and stays sparse. Buffer damage
+  // is the rectangle the raster honored, and a multisampled root pass honors
+  // none: it resolves over every pixel of whichever target it was handed,
+  // including the preserved one reacquired on the fourth frame.
+  EXPECT_EQ(buffer_damage_counts, (std::vector<int64_t>{-1, -1, -1, -1, -1}));
   EXPECT_EQ(selected_target.create_count, 5u);
   EXPECT_EQ(selected_target.collect_count, 5u);
   engine.reset();
@@ -708,8 +715,11 @@ TEST_F(EmbedderTest,
                       }));
   ASSERT_EQ(frame_damage_counts.size(), 3u);
   ASSERT_EQ(buffer_damage_counts.size(), 3u);
+  // The blur's removal is real, sparse frame damage. No frame honors a
+  // rectangle, because the multisampled root pass resolves over the whole
+  // target whether or not the target preserved its contents.
   EXPECT_GT(frame_damage_counts[1], 0);
-  EXPECT_GT(buffer_damage_counts[1], 0);
+  EXPECT_EQ(buffer_damage_counts[1], -1);
   EXPECT_EQ(buffer_damage_counts[2], -1);
   EXPECT_EQ(selected_target.collect_count, 3u);
   engine.reset();
@@ -825,8 +835,11 @@ TEST_F(EmbedderTest,
                       }));
   ASSERT_EQ(frame_damage_counts.size(), 4u);
   ASSERT_EQ(buffer_damage_counts.size(), 4u);
+  // Removing the scene is sparse frame damage, and the frame that removes it
+  // still has to run: it is the pass that clears those pixels. It honors no
+  // rectangle while doing so -- a multisampled root pass never does.
   EXPECT_GT(frame_damage_counts[1], 0);
-  EXPECT_GT(buffer_damage_counts[1], 0);
+  EXPECT_EQ(buffer_damage_counts[1], -1);
   EXPECT_EQ(buffer_damage_counts[2], -1);
   EXPECT_EQ(buffer_damage_counts[3], -1);
   EXPECT_EQ(selected_target.collect_count, 4u);
@@ -896,7 +909,8 @@ TEST_F(EmbedderTest,
   engine.reset();
 }
 
-TEST_F(EmbedderTest, SelectedTargetDamageBoundsActualRasterForTranslucentGap) {
+TEST_F(EmbedderTest,
+       SelectedTargetDamageKeepsSparseFrameDamageForTranslucentGap) {
   auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
 
   EmbedderConfigBuilder builder(context);
@@ -1008,24 +1022,21 @@ TEST_F(EmbedderTest, SelectedTargetDamageBoundsActualRasterForTranslucentGap) {
                       }));
   ASSERT_EQ(frame_damage_counts.size(), 3u);
   ASSERT_EQ(buffer_damage_counts.size(), 3u);
+  // Logical frame damage stays sparse across the disjoint regions -- it is
+  // what accumulates catch-up damage for the other buffers, and coalescing it
+  // to a bounding box would sweep the translucent gap between them into every
+  // other target's history.
   EXPECT_GT(frame_damage_counts[1], 1);
-  EXPECT_EQ(buffer_damage_counts[1], 1);
   ASSERT_GT(frame_damage_rects[1].size(), 1u);
-  ASSERT_EQ(buffer_damage_rects[1].size(), 1u);
 
-  FlutterRect frame_bounds = frame_damage_rects[1][0];
-  for (size_t index = 1u; index < frame_damage_rects[1].size(); index++) {
-    const FlutterRect& rect = frame_damage_rects[1][index];
-    frame_bounds.left = std::min(frame_bounds.left, rect.left);
-    frame_bounds.top = std::min(frame_bounds.top, rect.top);
-    frame_bounds.right = std::max(frame_bounds.right, rect.right);
-    frame_bounds.bottom = std::max(frame_bounds.bottom, rect.bottom);
-  }
-  const FlutterRect& raster_bounds = buffer_damage_rects[1][0];
-  EXPECT_DOUBLE_EQ(raster_bounds.left, frame_bounds.left);
-  EXPECT_DOUBLE_EQ(raster_bounds.top, frame_bounds.top);
-  EXPECT_DOUBLE_EQ(raster_bounds.right, frame_bounds.right);
-  EXPECT_DOUBLE_EQ(raster_bounds.bottom, frame_bounds.bottom);
+  // No frame honors a damage rectangle: the root pass is multisampled, so it
+  // resolves over every pixel of the target and reports no narrower update.
+  EXPECT_EQ(buffer_damage_counts, (std::vector<int64_t>{-1, -1, -1}));
+  EXPECT_TRUE(buffer_damage_rects[1].empty());
+
+  // The gap between the two damaged regions is translucent, so a frame that
+  // failed to repaint it -- or repainted it over stale contents -- would not
+  // match the forced full repaint above.
   EXPECT_EQ(selected_target.collect_count, 3u);
   engine.reset();
 }
@@ -1227,12 +1238,11 @@ TEST_F(EmbedderTest, SelectedTargetDamageClearsRecycledSaveLayerTargets) {
                           kFlutterPresentRenderTargetStatusPresented,
                           kFlutterPresentRenderTargetStatusPresented,
                       }));
-  // The middle frame has to have actually taken the partial path, or the
-  // comparison above proves nothing.
+  // Every frame resolves over its whole target, so none of them honors a
+  // damage rectangle. The recycled save-layer target is the point of the
+  // comparison above: it must not arrive carrying its previous tenant.
   ASSERT_EQ(buffer_damage_counts.size(), 3u);
-  EXPECT_EQ(buffer_damage_counts[0], -1);
-  EXPECT_GE(buffer_damage_counts[1], 1);
-  EXPECT_EQ(buffer_damage_counts[2], -1);
+  EXPECT_EQ(buffer_damage_counts, (std::vector<int64_t>{-1, -1, -1}));
   engine.reset();
 }
 
@@ -1313,8 +1323,7 @@ TEST_F(EmbedderTest, SelectedTargetDamageRefusedWhenRootPassNeedsReadback) {
   ASSERT_TRUE(readback_image);
 
   // Full catch-up damage rather than an invalidated target: the target stays
-  // preserved, so it keeps the same single-sample configuration as the frame
-  // above, and only the damage differs between the two.
+  // preserved, so only the damage differs between the two frames.
   selected_target.PreserveWithFullCatchUpDamage();
   auto full_reference_scene = context.GetNextSceneImage();
   ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
@@ -1338,6 +1347,133 @@ TEST_F(EmbedderTest, SelectedTargetDamageRefusedWhenRootPassNeedsReadback) {
   // No buffer damage on any of the three frames: the readback frame published
   // a full repaint rather than a rectangle it did not honor.
   EXPECT_EQ(buffer_damage_counts, (std::vector<int64_t>{-1, -1, -1}));
+  engine.reset();
+}
+
+namespace {
+
+// Count pixels the raster covered partially. Impeller produces these only by
+// rastering multisampled and resolving, so their presence is the observable
+// consequence of a multisampled root pass and their absence is the observable
+// consequence of a single-sample one.
+size_t CountPartiallyCoveredPixels(const sk_sp<SkImage>& image) {
+  if (!image) {
+    return 0u;
+  }
+  const SkImageInfo info = SkImageInfo::MakeN32Premul(
+      image->width(), image->height(), SkColorSpace::MakeSRGB());
+  const size_t row_bytes = info.minRowBytes();
+  std::vector<uint8_t> pixels(info.computeByteSize(row_bytes));
+  if (!image->readPixels(info, pixels.data(), row_bytes, 0, 0)) {
+    return 0u;
+  }
+
+  size_t partial = 0u;
+  for (int y = 0; y < image->height(); y++) {
+    const uint32_t* row =
+        reinterpret_cast<const uint32_t*>(pixels.data() + y * row_bytes);
+    for (int x = 0; x < image->width(); x++) {
+      const uint32_t alpha = SkColorGetA(row[x]);
+      if (alpha != 0u && alpha != 255u) {
+        partial++;
+      }
+    }
+  }
+  return partial;
+}
+
+}  // namespace
+
+// The defect this pins: the root pass used to drop to a single sample for any
+// target whose contents the embedder had preserved, which is every target in a
+// steady-state compositor session. Nothing downstream reported it -- the
+// frames were correct, just unantialiased -- so the only way to catch a
+// regression is to look at the pixels along an edge only multisampling can
+// cover partially.
+TEST_F(EmbedderTest, SelectedTargetDamageKeepsPreservedTargetMultisampled) {
+  auto& context = GetEmbedderContext<EmbedderTestContextVulkan>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.AddCommandLineArgument("--enable-impeller");
+  builder.SetDartEntrypoint("render_clipped_diagonal_edge");
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kVulkanImage);
+
+  SelectedTargetTestContext selected_target(context.GetCompositor());
+  builder.GetCompositor().user_data = &selected_target;
+  builder.GetCompositor().acquire_render_target_callback =
+      AcquireSelectedTarget;
+  builder.GetCompositor().collect_backing_store_callback =
+      [](const FlutterBackingStore* backing_store, void* user_data) {
+        return reinterpret_cast<SelectedTargetTestContext*>(user_data)->Collect(
+            backing_store);
+      };
+  builder.GetCompositor().present_render_target_callback =
+      [](const FlutterPresentRenderTargetInfo* info) {
+        return reinterpret_cast<SelectedTargetTestContext*>(info->user_data)
+            ->Present(*info);
+      };
+
+  fml::AutoResetWaitableEvent result_ready;
+  fml::AutoResetWaitableEvent target_collected;
+  std::vector<FlutterPresentRenderTargetStatus> statuses;
+  context.GetCompositor().AddOnCollectRenderTargetCallback(
+      [&] { target_collected.Signal(); });
+  selected_target.on_result = [&](const FlutterPresentRenderTargetInfo& info) {
+    statuses.push_back(info.status);
+    result_ready.Signal();
+    return true;
+  };
+
+  auto unpreserved_scene = context.GetNextSceneImage();
+  auto engine = builder.LaunchEngine();
+  ASSERT_TRUE(engine.is_valid());
+
+  FlutterWindowMetricsEvent event = {};
+  event.struct_size = sizeof(event);
+  event.width = 800;
+  event.height = 600;
+  event.pixel_ratio = 1.0;
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto unpreserved_image = unpreserved_scene.get();
+  ASSERT_TRUE(unpreserved_image);
+
+  // Hand the same target back preserved. This is the state that used to select
+  // a single-sample root pass; the scene is unchanged, so full catch-up damage
+  // is what gives the frame something to raster.
+  selected_target.PreserveWithFullCatchUpDamage();
+  auto preserved_scene = context.GetNextSceneImage();
+  ASSERT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+            kSuccess);
+  ASSERT_FALSE(result_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  ASSERT_EQ(statuses.back(), kFlutterPresentRenderTargetStatusPresented);
+  ASSERT_FALSE(
+      target_collected.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
+  auto preserved_image = preserved_scene.get();
+  ASSERT_TRUE(preserved_image);
+
+  // The diagonal runs 580 pixels across and 430 down, so a multisampled edge
+  // covers hundreds of pixels partially. A single-sample one covers none: the
+  // threshold is far below what multisampling produces and far above the zero
+  // a hard edge produces, so it does not need to track edge length exactly.
+  const size_t unpreserved_partial =
+      CountPartiallyCoveredPixels(unpreserved_image);
+  const size_t preserved_partial = CountPartiallyCoveredPixels(preserved_image);
+  EXPECT_GT(unpreserved_partial, 100u);
+  EXPECT_GT(preserved_partial, 100u);
+
+  // Same scene, same coverage: preserving a target changes nothing about how
+  // its frame is rastered.
+  EXPECT_TRUE(RasterImagesAreSame(unpreserved_image, preserved_image,
+                                  /*allowable_different_pixels=*/0));
   engine.reset();
 }
 

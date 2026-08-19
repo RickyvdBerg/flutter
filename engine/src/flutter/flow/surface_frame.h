@@ -51,6 +51,18 @@ class SurfaceFrame {
     std::optional<uint64_t> content_epoch = std::nullopt;
     bool preserved_contents = false;
 
+    // Whether the root pass over this target writes every one of its pixels,
+    // regardless of how small the damage is. A multisampled pass does: it
+    // rasters into its own attachment and resolves that attachment over the
+    // whole target, so nothing the target preserved survives it.
+    //
+    // Such a frame cannot narrow its raster to the damage -- the pixels
+    // outside it have to be painted again to be resolved back to the values
+    // they already held -- and it reports no buffer damage, because it honored
+    // no rectangle. Logical frame damage is unaffected; it describes the
+    // frame, not the raster.
+    bool raster_replaces_whole_target = false;
+
     // For some targets it may be beneficial or even required to snap clip
     // rect to tile grid. I.e. repainting part of a tile may cause performance
     // degradation if the tile needs to be decompressed first.

@@ -146,6 +146,19 @@ need "root target is acquired before damage finalization" \
 need "Impeller first pass honors a preserved target load" \
   $F/impeller/entity/inline_pass_context.cc \
   'honor_declared_load_action \? declared_load_action : LoadAction::kClear'
+need "embedder root target always asks for multisampling" \
+  $F/shell/platform/embedder/embedder.cc \
+  'GetCachedSwapchainTransientsVK\(impeller_context, desc,$'
+need "a refused multisample reservation degrades instead of failing" \
+  $F/shell/platform/embedder/embedder.cc \
+  'frame single-sampled costs the frame its antialiasing'
+need "root pass sample-count changes are reported" \
+  $F/shell/platform/embedder/embedder.cc 'ReportRootPassSampleCount'
+need "a whole-target raster forfeits the damage clip" \
+  $F/flow/compositor_context.cc 'RasterReplacesWholeTarget'
+need "a multisampled target honors no damage rectangle" \
+  $F/shell/platform/embedder/embedder_external_view.cc \
+  'honors_damage'
 need "only the caller-owned root target opts out of the first-pass clear" \
   $F/impeller/display_list/canvas.cc \
   'honor_declared_load_action=\*/false'
@@ -166,10 +179,13 @@ need "transparent blur removal pixel regression" \
   'SelectedTargetDamageClearsRemovedBlurWithFullRepaintParity'
 need "disjoint translucent replacement pixel regression" \
   $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
-  'SelectedTargetDamageBoundsActualRasterForTranslucentGap'
+  'SelectedTargetDamageKeepsSparseFrameDamageForTranslucentGap'
 need "full fallback clears preserved selected target" \
   $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
   'SelectedTargetDamageFullFallbackClearsPreservedTarget'
+need "preserved targets stay multisampled pixel regression" \
+  $F/shell/platform/embedder/tests/embedder_vk_unittests.cc \
+  'SelectedTargetDamageKeepsPreservedTargetMultisampled'
 need "selected-target no-change waits for exact empty buffer damage" \
   $F/shell/platform/embedder/embedder_external_view_embedder.cc \
   '!selected_target_damage_ &&'

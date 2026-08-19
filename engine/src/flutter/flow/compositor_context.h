@@ -75,6 +75,16 @@ class FrameDamage {
     vertical_clip_alignment_ = vertical;
   }
 
+  // See SurfaceFrame::FramebufferInfo::raster_replaces_whole_target. Such a
+  // frame forfeits both its raster clip and its buffer-damage report; its
+  // logical frame damage is unaffected.
+  void SetRasterReplacesWholeTarget(bool replaces) {
+    raster_replaces_whole_target_ = replaces;
+  }
+  bool RasterReplacesWholeTarget() const {
+    return raster_replaces_whole_target_;
+  }
+
   // Calculates logical frame damage and the region that this renderer will
   // actually replace in the backing target. The logical damage remains
   // sparse. The current canvas and Impeller dispatch paths admit one
@@ -116,6 +126,7 @@ class FrameDamage {
   int vertical_clip_alignment_ = 1;
   int horizontal_clip_alignment_ = 1;
   bool ignore_damage_ = false;
+  bool raster_replaces_whole_target_ = false;
 };
 
 class CompositorContext {

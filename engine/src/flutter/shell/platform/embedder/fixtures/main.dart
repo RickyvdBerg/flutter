@@ -1714,11 +1714,9 @@ void render_disjoint_partial_repaint_with_translucent_gap() {
 // -- overlapping content cannot absorb the group opacity, so Impeller has to
 // allocate a real offscreen instead of folding the opacity into the draws.
 //
-// Every edge here is axis-aligned on an integer pixel. A rounded clip would
-// antialias its corners, and the frames being compared straddle an MSAA
-// boundary (a preserved target renders single-sample, a full repaint does
-// not), so antialiased edges would differ for reasons that have nothing to do
-// with what this is testing.
+// Every edge here is axis-aligned on an integer pixel, so the comparison turns
+// on which pixels the second layer wrote rather than on how any edge was
+// covered.
 @pragma('vm:entry-point')
 // ignore: non_constant_identifier_names
 void render_partial_repaint_through_recycled_save_layers() {
@@ -1771,6 +1769,41 @@ void render_partial_repaint_through_recycled_save_layers() {
     frame++;
     PlatformDispatcher.instance.views.first.render(builder.build());
   };
+}
+
+// An opaque fill seen through a clip whose edge runs diagonally across the
+// frame. Impeller antialiases a clip edge by rastering it multisampled and
+// resolving; it has no analytic coverage path for one. A single-sample root
+// pass therefore renders this edge as a hard staircase of fully-covered and
+// fully-uncovered pixels, and a multisampled one renders a band of partial
+// coverage along it.
+//
+// The clip is a path rather than a rounded rect so that no fast path can
+// answer it analytically, and it is drawn on a transparent ground so the
+// partial coverage shows up in alpha rather than only in colour.
+@pragma('vm:entry-point')
+// ignore: non_constant_identifier_names
+void render_clipped_diagonal_edge() {
+  PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
+    final builder = SceneBuilder();
+    final recorder = PictureRecorder();
+    final canvas = Canvas(recorder);
+
+    final path = Path()
+      ..moveTo(120.0, 40.0)
+      ..lineTo(700.0, 470.0)
+      ..lineTo(120.0, 470.0)
+      ..close();
+    canvas.clipPath(path);
+    canvas.drawRect(
+      const Rect.fromLTRB(0.0, 0.0, 800.0, 600.0),
+      Paint()..color = const Color.fromARGB(255, 240, 240, 240),
+    );
+
+    builder.addPicture(Offset.zero, recorder.endRecording());
+    PlatformDispatcher.instance.views.first.render(builder.build());
+  };
+  PlatformDispatcher.instance.scheduleFrame();
 }
 
 // A scene with a backdrop filter at the root of every frame, and one small

@@ -150,7 +150,14 @@ EmbedderExternalView::RenderResult EmbedderExternalView::Render(
     impeller::RenderTarget target = *impeller_target;
     auto color = target.GetColorAttachment(0u);
     color.clear_color = impeller::Color::BlackTransparent();
-    if (!buffer_damage.has_value()) {
+    // A multisampled pass rasters into its own attachment and resolves that
+    // attachment over every pixel of the target. It can neither carry the
+    // target's preserved contents into the frame nor honor a damage
+    // rectangle, whatever the caller asked for.
+    const bool replaces_whole_target = color.resolve_texture != nullptr;
+    const bool honors_damage =
+        buffer_damage.has_value() && !replaces_whole_target;
+    if (!honors_damage) {
       color.load_action = impeller::LoadAction::kClear;
     }
     target.SetColorAttachment(color, 0u);
@@ -173,7 +180,7 @@ EmbedderExternalView::RenderResult EmbedderExternalView::Render(
         damage_rects.push_back(
             SkIRect::MakeLTRB(rounded.GetLeft(), rounded.GetTop(),
                               rounded.GetRight(), rounded.GetBottom()));
-        if (clear_surface) {
+        if (clear_surface && honors_damage) {
           dl_builder.DrawRect(DlRect::Make(rounded), clear_paint);
         }
       }
@@ -188,7 +195,7 @@ EmbedderExternalView::RenderResult EmbedderExternalView::Render(
     slice_->render_into(&dl_builder);
     auto display_list = dl_builder.Build();
 
-    if (buffer_damage.has_value()) {
+    if (honors_damage) {
       return impeller::RenderToTarget(aiks_context->GetContentContext(), target,
                                       display_list, damage_rects,
                                       /*reset_host_buffer=*/true,

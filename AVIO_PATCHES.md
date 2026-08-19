@@ -67,7 +67,7 @@ already ancestors of the selected main target under their original commits.
 | 29 | [framework] Maintain typed O(1) element-to-view ownership | permanent framework correctness/performance fix | none while Avio carries view-scoped frame admission |
 | 30 | [framework] Route texture frames to their exact render consumers | upstream-aligned framework/engine fix adapted for compositor pacing | open: flutter/flutter#179874 |
 | 31 | [framework] Give each View an independently admitted BuildScope | permanent framework correctness fix; deletes #22's deferred-input compensation | none while Avio carries view-scoped frame admission |
-| 32 | Acquire the exact embedder target before damage and raster only its required pixels | permanent ABI/rendering extension | none |
+| 32 | Acquire the exact embedder target before damage and keep its root pass multisampled | permanent ABI/rendering extension | none |
 | 33 | Bound pipeline-cache files before mapping or allocation | permanent defensive I/O contract | upstreamable in principle |
 | 34 | Enforce hard transient budgets and trim only idle resources | permanent resource-lifecycle contract | none |
 | 35 | Negotiate exact resource profiles and principal-scoped pipeline-cache access | permanent ABI/lifecycle extension | none |
@@ -258,12 +258,41 @@ and supplies either exact catch-up damage for preserved pixels or unknown
 history for a mandatory full repaint. The engine keeps logical frame damage
 separate from selected-buffer damage in `FlutterBackingStorePresentInfo`.
 
-Preserved Vulkan targets render directly with a single-sample `Load` first
-pass, so Impeller's existing external-image queue-family barriers and exact
+The root pass is always multisampled. Impeller antialiases geometry by
+rastering it multisampled and resolving, with no analytic coverage path for a
+clip edge or an arbitrary path, so a single-sample root pass renders every such
+edge in the frame hard. Multisampling therefore outranks partial repaint, and a
+multisampled pass cannot partially repaint: it rasters into its own attachment
+and resolves that attachment over every pixel of the target, so nothing the
+target preserved survives it. Such a frame narrows nothing and reports no
+buffer damage — there is no rectangle it honored — while logical frame damage
+stays exact and sparse, which is what accumulates catch-up damage across the
+embedder's other buffers.
+
+Restricting the resolve to the damage is not available: Impeller's Vulkan
+backend begins every render pass over the whole target
+(`render_pass_vk.cc` `pass_info.renderArea`), has no render-area plumbing on
+`RenderTarget` or `RenderPass`, and uses render pass objects rather than
+`VK_KHR_dynamic_rendering`. The Metal backend's alternative — resolve into a
+scratch texture and blit only the damage — would move the write to the
+embedder's image out of the render pass, which is where this patch's
+external-image queue-family acquire and its render-complete semaphore both
+live; neither has a blit-pass equivalent. See "Deferred" below.
+
+If the transients budget cannot seat a multisample reservation, the frame
+degrades to a single-sample pass rather than failing: a refused reservation
+used to return `nullptr` and lose the whole frame, which live sessions hit
+during window-chrome reconfiguration bursts. Only that fallback path renders
+into the embedder's image directly, and only it takes the preserved `Load`
+first pass. Sample-count transitions are logged once per change, throttled to
+one line a second, because a root pass that silently loses its antialiasing
+reports nothing else.
+
+Impeller's existing external-image queue-family barriers and exact
 render-complete semaphore remain the only GPU ownership path. There is no
-scratch image, copy pass, or second fence source. A full-repaint fallback
-restores `Clear`, unknown or malformed target history fails safely to full, and
-an empty exact buffer update terminates as `NoVisualChange` without raster.
+scratch image, copy pass, or second fence source. Unknown or malformed target
+history fails safely to full, and an empty exact buffer update terminates as
+`NoVisualChange` without raster.
 An empty current display list is not itself a no-change proof: when its exact
 buffer damage can remove a previously submitted root, the engine performs a
 clear-only render, replaces retained coverage, and publishes that damage. An
@@ -275,6 +304,14 @@ Because `Load` reads the retained color attachment, both the foreign-queue
 acquire barrier and the render pass's incoming dependency declare color
 attachment read access alongside write access. Clear targets remain
 write-only.
+
+Deferred: partial repaint under multisampling, by resolving into a pooled
+scratch texture and blitting only the damage rect to the embedder's image, as
+`surface_mtl.mm` does for Metal drawables. It needs the external-image
+queue-family acquire and release (patch #27) and the render-complete semaphore
+(patch #8) to work from a blit pass as well as a render pass, plus a scratch
+texture per concurrently live target. Until then a frame that would have
+partially repainted pays a full layer-tree paint and a full-frame resolve.
 
 Logical frame damage remains sparse. The renderer's one rectangular canvas and
 Impeller dispatch are lowered once to an explicit raster/replacement region;

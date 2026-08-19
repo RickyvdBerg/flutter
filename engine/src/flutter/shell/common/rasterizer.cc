@@ -946,9 +946,12 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
       if (has_external_view_embedder) {
         if (selected_target_info.has_value()) {
           // Root-target mode selected this exact backing store before damage
-          // setup. Its preserved-content history is therefore safe to use for
-          // both layer diffing and actual partial raster.
+          // setup, so its preserved-content history is safe to diff the layer
+          // tree against. Whether that history can also narrow the raster is
+          // the target's own answer, below.
           damage = std::make_unique<FrameDamage>();
+          damage->SetRasterReplacesWholeTarget(
+              framebuffer_info.raster_replaces_whole_target);
           auto existing_damage = framebuffer_info.existing_damage;
           if (existing_damage.has_value()) {
             damage->SetPreviousLayerTree(GetLastLayerTree(view_id));

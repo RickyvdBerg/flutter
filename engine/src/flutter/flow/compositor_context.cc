@@ -139,32 +139,44 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
       return RasterStatus::kSuccess;
     }
 
-    if (raster_damage.has_value() && !raster_damage->isEmpty()) {
-      clip_bounds = raster_damage->bounds();
-    }
-
-    // A frame containing a readback -- a backdrop filter -- cannot be a
-    // partial repaint under Impeller, however small its damage is. Impeller
-    // rasters such a frame into an offscreen and copies that offscreen, whole,
-    // over the target at the end of the pass, which replaces every pixel the
-    // target preserved outside the damage region.
-    //
-    // This has to be decided here, before the cull rect below narrows Preroll
-    // to the damage. Once the tree has been culled there is no way back: the
-    // frame would then clear the whole target and repaint only the part of the
-    // scene that intersected the damage.
-    if (aiks_context_ &&
-        (frame_damage->HasReadback() ||
-         !ShouldPerformPartialRepaint(clip_bounds, layer_tree.frame_size()))) {
+    // A pass that replaces every pixel of its target -- a multisampled root
+    // pass resolving over the whole target -- has no narrower raster to
+    // perform. Everything outside the damage has to be painted again to be
+    // resolved back to the value it already held, so there is no rectangle
+    // this frame honored and none is reported. Logical frame damage is
+    // untouched; it is what accumulates catch-up damage for the other
+    // buffers, and it never described the raster in the first place.
+    if (frame_damage->RasterReplacesWholeTarget()) {
       raster_damage.reset();
-      clip_bounds = DlIRect::MakeLTRB(0, 0, 0, 0);
       frame_damage->Reset();
+    } else {
+      if (raster_damage.has_value() && !raster_damage->isEmpty()) {
+        clip_bounds = raster_damage->bounds();
+      }
+
+      // A frame containing a readback -- a backdrop filter -- cannot be a
+      // partial repaint under Impeller, however small its damage is. Impeller
+      // rasters such a frame into an offscreen and copies that offscreen,
+      // whole, over the target at the end of the pass, which replaces every
+      // pixel the target preserved outside the damage region.
+      //
+      // This has to be decided here, before the cull rect below narrows
+      // Preroll to the damage. Once the tree has been culled there is no way
+      // back: the frame would then clear the whole target and repaint only the
+      // part of the scene that intersected the damage.
+      if (aiks_context_ && (frame_damage->HasReadback() ||
+                            !ShouldPerformPartialRepaint(
+                                clip_bounds, layer_tree.frame_size()))) {
+        raster_damage.reset();
+        clip_bounds = DlIRect::MakeLTRB(0, 0, 0, 0);
+        frame_damage->Reset();
+      }
     }
   }
 
   // Compute bounding rect for Preroll cull rect.
   DlRect cull_rect = kGiantRect;
-  if (raster_damage.has_value() && !raster_damage->isEmpty()) {
+  if (!clip_bounds.IsEmpty()) {
     cull_rect = DlRect::Make(clip_bounds);
   }
 
@@ -193,9 +205,7 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
   } else {
     // Skia path: use bounding rect (preserve existing behavior).
     std::optional<DlRect> skia_clip =
-        raster_damage.has_value() && !raster_damage->isEmpty()
-            ? std::make_optional(cull_rect)
-            : std::nullopt;
+        clip_bounds.IsEmpty() ? std::nullopt : std::make_optional(cull_rect);
     PaintLayerTreeSkia(layer_tree, skia_clip, needs_save_layer,
                        ignore_raster_cache);
   }

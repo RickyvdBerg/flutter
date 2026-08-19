@@ -1638,6 +1638,53 @@ bool HasPreservedSelectedTargetContents(
          content_state->existing_damage != nullptr;
 }
 
+// Report the root pass losing, and later regaining, its multisampling. A root
+// pass that drops to one sample renders every antialiased edge in the frame
+// hard while reporting nothing else wrong, which is the one failure mode here
+// that a correct-looking log would otherwise hide.
+//
+// Only transitions are reported, so a steady sample count -- degraded or not
+// -- costs nothing per frame. The healthy state is never announced, because
+// the absence of these lines already says it. The engine drops anything below
+// ERROR unless the embedder asked for verbose logging (`shell.cc`), so ERROR
+// is what it takes for these to reach an embedder's log at all.
+void ReportRootPassSampleCount(bool multisampled) {
+  static std::mutex mutex;
+  static bool reported_degraded = false;
+  static uint64_t degraded_targets = 0u;
+
+  bool report_degraded = false;
+  uint64_t recovered_after = 0u;
+  {
+    std::scoped_lock lock(mutex);
+    if (!multisampled) {
+      degraded_targets++;
+      if (reported_degraded) {
+        return;
+      }
+      reported_degraded = true;
+      report_degraded = true;
+    } else {
+      if (!reported_degraded) {
+        return;
+      }
+      reported_degraded = false;
+      recovered_after = degraded_targets;
+      degraded_targets = 0u;
+    }
+  }
+
+  if (report_degraded) {
+    FML_LOG(ERROR)
+        << "Embedder root render pass dropped to a single sample: the Vulkan "
+           "transients budget could not seat a multisample reservation. Every "
+           "antialiased edge rasters hard until it can.";
+    return;
+  }
+  FML_LOG(ERROR) << "Embedder root render pass is multisampled again after "
+                 << recovered_after << " single-sample target(s).";
+}
+
 }  // namespace
 #endif  // SHELL_ENABLE_VULKAN && IMPELLER_SUPPORTS_RENDERING
 
@@ -1706,14 +1753,23 @@ MakeRenderTargetFromBackingStoreImpeller(
       vk_image, vk_image_view, desc, external_ownership);
 
   auto impeller_context = aiks_context->GetContext();
-  // A preserved single-sample target can load its exact previous contents.
-  // Full repaint keeps the normal MSAA clear-and-resolve path.
-  const bool enable_partial_repaint =
-      selected_target_damage &&
-      HasPreservedSelectedTargetContents(backing_store);
-  const bool enable_msaa = !enable_partial_repaint;
-  auto transients =
-      GetCachedSwapchainTransientsVK(impeller_context, desc, enable_msaa);
+  // Impeller antialiases geometry by rastering it multisampled and resolving.
+  // A single-sample root pass therefore has no antialiasing at all: every
+  // clip edge and every arbitrary path in the frame lands hard-edged. That
+  // cost is paid by the whole frame, so the root pass asks for multisampling
+  // first and treats partial repaint as the thing that gives way.
+  auto transients = GetCachedSwapchainTransientsVK(impeller_context, desc,
+                                                   /*enable_msaa=*/true);
+  const bool multisampled = transients != nullptr;
+  if (!multisampled) {
+    // The transients budget could not seat a multisample reservation -- every
+    // matching entry is leased and no idle one can be evicted. Rastering this
+    // frame single-sampled costs the frame its antialiasing; refusing to
+    // render costs the frame entirely.
+    transients = GetCachedSwapchainTransientsVK(impeller_context, desc,
+                                                /*enable_msaa=*/false);
+  }
+  ReportRootPassSampleCount(multisampled);
 
   auto surface = impeller::SurfaceVK::WrapSwapchainImage(
       transients, wrapped_source, []() -> bool { return true; });
@@ -1723,7 +1779,12 @@ MakeRenderTargetFromBackingStoreImpeller(
   }
 
   auto render_target = surface->GetRenderTarget();
-  if (enable_partial_repaint) {
+  // A multisampled pass resolves over the whole target, so nothing this
+  // target preserved survives it and its previous contents cannot be loaded.
+  // Only the single-sample fallback renders into the target itself, and only
+  // there can a preserved target load its exact previous contents.
+  if (!multisampled && selected_target_damage &&
+      HasPreservedSelectedTargetContents(backing_store)) {
     auto color = render_target.GetColorAttachment(0u);
     color.load_action = impeller::LoadAction::kLoad;
     color.store_action = impeller::StoreAction::kStore;

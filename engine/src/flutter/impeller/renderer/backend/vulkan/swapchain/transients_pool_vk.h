@@ -56,15 +56,25 @@ struct TransientsPoolLimitsVK {
 ///
 class TransientsPoolVK {
  public:
-  /// Default cap on cached entries. Sized for a typical multi-display
-  /// desktop session: 3 displays + a few per-window-chrome variants.
-  static constexpr size_t kDefaultMaxEntries = 6;
+  /// Default cap on cached entries. An entry is leased for as long as some
+  /// render target still references its attachments, so the working set is
+  /// one entry per *concurrently live* render target, not one per distinct
+  /// size. A desktop session reconfiguring window chrome recreates many
+  /// views at once and briefly holds all of their targets, so this is sized
+  /// well above the number of distinct surface sizes in play.
+  static constexpr size_t kDefaultMaxEntries = 24;
 
   /// Default cap on resident GPU memory held by cached attachments. Tuned
   /// for desktop GPUs without lazily-allocated attachment support; on
   /// tilers, memoryless attachments contribute zero and the cap is
   /// effectively unused.
-  static constexpr size_t kDefaultMaxBytes = 256ull * 1024ull * 1024ull;
+  ///
+  /// A multisampled entry costs roughly 4x(color + depth/stencil): at
+  /// 2560x1440 with 8-bit color and a 32-bit depth/stencil that is about
+  /// 112 MiB, against about 14 MiB for a single-sample one. The budget seats
+  /// several such displays at once; a session that exceeds it degrades to
+  /// single-sample rendering for the refused frame rather than losing it.
+  static constexpr size_t kDefaultMaxBytes = 768ull * 1024ull * 1024ull;
 
   /// Environment variable that overrides the byte budget at construction.
   /// Value is parsed as MiB.

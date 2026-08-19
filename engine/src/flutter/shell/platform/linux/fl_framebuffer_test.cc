@@ -114,8 +114,10 @@ TEST_F(FlFramebufferTest, ExplicitMultisampleResolvesWithABlit) {
                                                       GL_RGBA8, 100, 100));
   EXPECT_CALL(epoxy, glRenderbufferStorageMultisample(
                          GL_RENDERBUFFER, 4, GL_DEPTH24_STENCIL8, 100, 100));
+  // Once to probe the resolve at construction, once for the call below.
   EXPECT_CALL(epoxy, glBlitFramebuffer(0, 0, 100, 100, 0, 0, 100, 100,
-                                       GL_COLOR_BUFFER_BIT, GL_NEAREST));
+                                       GL_COLOR_BUFFER_BIT, GL_NEAREST))
+      .Times(2);
 
   g_autoptr(FlFramebuffer) framebuffer =
       fl_framebuffer_new_multisampled(GL_RGB, 100, 100, FALSE, 4);
@@ -123,6 +125,68 @@ TEST_F(FlFramebufferTest, ExplicitMultisampleResolvesWithABlit) {
   EXPECT_EQ(fl_framebuffer_get_samples(framebuffer), 4);
 
   fl_framebuffer_resolve(framebuffer);
+}
+
+TEST_F(FlFramebufferTest, ExplicitMultisampleResolveFormatsMatch) {
+  // A driver offering BGRA textures but no implicit resolve. Resolving a
+  // multisample framebuffer only works between identical formats, so the
+  // texture has to give up BGRA and say so.
+  EXPECT_CALL(epoxy, epoxy_gl_version).WillRepeatedly(::testing::Return(30));
+  EXPECT_CALL(epoxy, epoxy_has_gl_extension(::testing::_))
+      .WillRepeatedly(::testing::Return(false));
+  EXPECT_CALL(epoxy, epoxy_has_gl_extension(
+                         ::testing::StrEq("GL_EXT_texture_format_BGRA8888")))
+      .WillRepeatedly(::testing::Return(true));
+  EXPECT_CALL(epoxy, glCheckFramebufferStatus)
+      .WillRepeatedly(::testing::Return(GL_FRAMEBUFFER_COMPLETE));
+
+  EXPECT_CALL(epoxy, glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 100, 100, 0,
+                                  GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
+  EXPECT_CALL(epoxy, glRenderbufferStorageMultisample(GL_RENDERBUFFER, 4,
+                                                      GL_RGBA8, 100, 100));
+  EXPECT_CALL(epoxy, glRenderbufferStorageMultisample(
+                         GL_RENDERBUFFER, 4, GL_DEPTH24_STENCIL8, 100, 100));
+
+  g_autoptr(FlFramebuffer) framebuffer =
+      fl_framebuffer_new_multisampled(GL_BGRA_EXT, 100, 100, FALSE, 4);
+
+  EXPECT_EQ(fl_framebuffer_get_samples(framebuffer), 4);
+  EXPECT_EQ(fl_framebuffer_get_sized_format(framebuffer), GL_RGBA8);
+}
+
+TEST_F(FlFramebufferTest, ImplicitMultisampleKeepsTheRequestedFormat) {
+  only_extension(epoxy, "GL_EXT_multisampled_render_to_texture");
+  EXPECT_CALL(epoxy, epoxy_has_gl_extension(
+                         ::testing::StrEq("GL_EXT_texture_format_BGRA8888")))
+      .WillRepeatedly(::testing::Return(true));
+
+  // Nothing is blitted, so nothing constrains the format.
+  EXPECT_CALL(epoxy, glTexImage2D(GL_TEXTURE_2D, 0, GL_BGRA_EXT, 100, 100, 0,
+                                  GL_BGRA_EXT, GL_UNSIGNED_BYTE, nullptr));
+
+  g_autoptr(FlFramebuffer) framebuffer =
+      fl_framebuffer_new_multisampled(GL_BGRA_EXT, 100, 100, FALSE, 4);
+
+  EXPECT_EQ(fl_framebuffer_get_sized_format(framebuffer), GL_BGRA8_EXT);
+}
+
+TEST_F(FlFramebufferTest, RejectedResolveFallsBackToSingleSample) {
+  EXPECT_CALL(epoxy, epoxy_gl_version).WillRepeatedly(::testing::Return(30));
+  EXPECT_CALL(epoxy, epoxy_has_gl_extension(::testing::_))
+      .WillRepeatedly(::testing::Return(false));
+  EXPECT_CALL(epoxy, glCheckFramebufferStatus)
+      .WillRepeatedly(::testing::Return(GL_FRAMEBUFFER_COMPLETE));
+  // The drain finds a clear error queue; the probe blit is then rejected.
+  EXPECT_CALL(epoxy, glGetError)
+      .WillOnce(::testing::Return(GL_NO_ERROR))
+      .WillRepeatedly(::testing::Return(GL_INVALID_OPERATION));
+
+  g_autoptr(FlFramebuffer) framebuffer =
+      fl_framebuffer_new_multisampled(GL_RGB, 100, 100, FALSE, 4);
+
+  EXPECT_EQ(fl_framebuffer_get_samples(framebuffer), 1);
+  EXPECT_EQ(fl_framebuffer_get_resolved_id(framebuffer),
+            fl_framebuffer_get_id(framebuffer));
 }
 
 TEST_F(FlFramebufferTest, SamplesClampedToDriverMaximum) {

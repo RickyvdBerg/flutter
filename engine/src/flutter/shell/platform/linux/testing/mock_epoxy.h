@@ -43,6 +43,18 @@ class MockEpoxy {
                GLbitfield mask,
                GLenum filter));
   MOCK_METHOD(GLenum, glCheckFramebufferStatus, (GLenum target));
+  MOCK_METHOD(GLenum, glGetError, ());
+  MOCK_METHOD(void,
+              glTexImage2D,
+              (GLenum target,
+               GLint level,
+               GLint internalformat,
+               GLsizei width,
+               GLsizei height,
+               GLint border,
+               GLenum format,
+               GLenum type,
+               const void* pixels));
   MOCK_METHOD(void,
               glFramebufferTexture2DMultisampleEXT,
               (GLenum target,

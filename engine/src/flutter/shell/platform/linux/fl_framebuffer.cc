@@ -55,6 +55,12 @@ struct _FlFramebuffer {
   // How #texture_id receives the rendered content.
   FlFramebufferResolve resolve;
 
+  // Unsized and sized colour format #texture_id was created with. An explicit
+  // resolve constrains these, so they are not necessarily what the caller
+  // asked for.
+  GLint format;
+  GLint sized_format;
+
   // EGL image for this texture.
   FlEGLImage* image;
 };
@@ -106,6 +112,19 @@ static GLsizei negotiate_samples(GLsizei requested) {
   return requested < max_samples ? requested : max_samples;
 }
 
+// Returns the sized counterpart of an unsized colour format. This is what the
+// embedder ABI reports and what renderbuffer storage requires.
+static GLint to_sized_format(GLint format) {
+  switch (format) {
+    case GL_BGRA_EXT:
+      return GL_BGRA8_EXT;
+    case GL_RGB:
+      return GL_RGB8;
+    default:
+      return GL_RGBA8;
+  }
+}
+
 // Attaches single sample colour, depth and stencil to #framebuffer_id.
 static void attach_single_sample(FlFramebuffer* self) {
   self->samples = 1;
@@ -153,16 +172,15 @@ static gboolean attach_multisample(FlFramebuffer* self) {
                                         self->height          // height
     );
   } else {
-    // The colour renderbuffer needs a sized format. Requesting BGRA storage
-    // for a renderbuffer is not portable, so always allocate RGBA8 and let the
-    // resolve blit convert into whatever format the texture was created with.
+    // GL_RGBA8 by construction: the texture this resolves into was forced to
+    // the same format, because a multisample resolve cannot convert.
     glGenRenderbuffers(1, &self->multisample_color);
     glBindRenderbuffer(GL_RENDERBUFFER, self->multisample_color);
-    glRenderbufferStorageMultisample(GL_RENDERBUFFER,  // target
-                                     self->samples,    // samples
-                                     GL_RGBA8,         // internal format
-                                     self->width,      // width
-                                     self->height      // height
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER,     // target
+                                     self->samples,       // samples
+                                     self->sized_format,  // internal format
+                                     self->width,         // width
+                                     self->height         // height
     );
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                               GL_RENDERBUFFER, self->multisample_color);
@@ -220,6 +238,28 @@ static void discard_multisample(FlFramebuffer* self) {
   self->resolve_framebuffer_id = 0;
 }
 
+// Performs the resolve once and reports whether the driver accepted it.
+// Whether an unsized texture format counts as identical to the renderbuffer's
+// sized one is a driver judgement, and a rejected blit is silent, so ask
+// instead of assuming.
+static gboolean resolve_is_accepted(FlFramebuffer* self) {
+  if (self->resolve != kFlFramebufferResolveExplicit) {
+    return TRUE;
+  }
+
+  // Drain errors this framebuffer did not cause, bounded in case a lost
+  // context never reports GL_NO_ERROR.
+  for (int i = 0; i < 16; i++) {
+    if (glGetError() == GL_NO_ERROR) {
+      break;
+    }
+  }
+
+  fl_framebuffer_resolve(self);
+
+  return glGetError() == GL_NO_ERROR;
+}
+
 static void fl_framebuffer_dispose(GObject* object) {
   FlFramebuffer* self = FL_FRAMEBUFFER(object);
 
@@ -265,6 +305,30 @@ FlFramebuffer* fl_framebuffer_new_multisampled(GLint format,
   self->width = width;
   self->height = height;
 
+  // Both the resolve and the format follow from the sample count, so settle
+  // them before anything is allocated.
+  self->samples = negotiate_samples(samples);
+  if (self->samples > 1) {
+    self->resolve = has_implicit_multisample() ? kFlFramebufferResolveImplicit
+                                               : kFlFramebufferResolveExplicit;
+  }
+
+  if (self->resolve == kFlFramebufferResolveExplicit) {
+    // Resolving a multisample framebuffer requires the read and draw buffers
+    // to have identical formats (OpenGL ES 3.0 specification, section 4.3.2),
+    // and GL_RGBA8 is the only colour format portable across the multisample
+    // renderbuffer storage entry points. So the texture becomes RGBA8 too.
+    // Byte order only matters to a CPU reader, and this framebuffer has none:
+    // the compositor's presentation framebuffer, which glReadPixels does read,
+    // is single sample and keeps its caller's format. Callers must take the
+    // format actually used from fl_framebuffer_get_sized_format().
+    self->format = GL_RGBA;
+    self->sized_format = GL_RGBA8;
+  } else {
+    self->format = format;
+    self->sized_format = to_sized_format(format);
+  }
+
   glGenTextures(1, &self->texture_id);
   glGenFramebuffers(1, &self->framebuffer_id);
 
@@ -275,22 +339,29 @@ FlFramebuffer* fl_framebuffer_new_multisampled(GLint format,
   glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format,
-               GL_UNSIGNED_BYTE, NULL);
+  // Name the sized format where the resolve depends on matching it exactly.
+  // Sized internal formats need OpenGL (ES) 3.0; below that an unsized
+  // GL_RGBA with GL_UNSIGNED_BYTE is defined to be RGBA8 anyway, and
+  // resolve_is_accepted() catches a driver that disagrees.
+  GLint internal_format =
+      self->resolve == kFlFramebufferResolveExplicit && epoxy_gl_version() >= 30
+          ? self->sized_format
+          : self->format;
+  glTexImage2D(GL_TEXTURE_2D, 0, internal_format, width, height, 0,
+               self->format, GL_UNSIGNED_BYTE, NULL);
   glBindTexture(GL_TEXTURE_2D, 0);
 
   if (shareable) {
     self->image = fl_egl_image_new(self->texture_id);
   }
 
-  self->samples = negotiate_samples(samples);
   if (self->samples > 1) {
-    self->resolve = has_implicit_multisample() ? kFlFramebufferResolveImplicit
-                                               : kFlFramebufferResolveExplicit;
-    if (!attach_multisample(self)) {
+    if (!attach_multisample(self) || !resolve_is_accepted(self)) {
       // A driver that advertises the extensions but will not complete the
-      // framebuffer still has to render, so give up the antialiasing rather
-      // than the frame.
+      // framebuffer, or will not perform the resolve, still has to render, so
+      // give up the antialiasing rather than the frame. The texture keeps the
+      // format the resolve asked for; fl_framebuffer_get_sized_format() stays
+      // the single answer either way.
       discard_multisample(self);
       attach_single_sample(self);
     }
@@ -315,6 +386,8 @@ FlFramebuffer* fl_framebuffer_create_sibling(FlFramebuffer* self) {
 
   sibling->width = self->width;
   sibling->height = self->height;
+  sibling->format = self->format;
+  sibling->sized_format = self->sized_format;
   sibling->image = FL_EGL_IMAGE(g_object_ref(self->image));
 
   // Make texture from existing image.
@@ -379,6 +452,10 @@ GLuint fl_framebuffer_get_texture_id(FlFramebuffer* self) {
 
 GLsizei fl_framebuffer_get_samples(FlFramebuffer* self) {
   return self->samples;
+}
+
+GLint fl_framebuffer_get_sized_format(FlFramebuffer* self) {
+  return self->sized_format;
 }
 
 size_t fl_framebuffer_get_width(FlFramebuffer* self) {

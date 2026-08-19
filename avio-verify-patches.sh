@@ -472,6 +472,15 @@ need "GTK backing stores rasterize multisampled" \
 need "multisample content is resolved before it is read" \
   $F/shell/platform/linux/fl_compositor_opengl.cc \
   'fl_framebuffer_resolve'
+need "the framebuffer is the single authority on its colour format" \
+  $F/shell/platform/linux/fl_engine.cc \
+  'fl_framebuffer_get_sized_format\(framebuffer\)'
+need "resolve source and destination formats match" \
+  $F/shell/platform/linux/fl_framebuffer_test.cc \
+  'ExplicitMultisampleResolveFormatsMatch'
+need "a rejected resolve degrades to single sample" \
+  $F/shell/platform/linux/fl_framebuffer_test.cc \
+  'RejectedResolveFallsBackToSingleSample'
 need "explicit multisample resolve regression" \
   $F/shell/platform/linux/fl_framebuffer_test.cc \
   'ExplicitMultisampleResolvesWithABlit'

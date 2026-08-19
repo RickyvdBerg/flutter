@@ -287,19 +287,18 @@ static bool create_opengl_backing_store(
     return false;
   }
 
-  GLint sized_format = GL_RGBA8;
-  GLint general_format = GL_RGBA;
+  GLint preferred_format = GL_RGBA;
   if (epoxy_has_gl_extension("GL_EXT_texture_format_BGRA8888")) {
-    sized_format = GL_BGRA8_EXT;
-    general_format = GL_BGRA_EXT;
+    preferred_format = GL_BGRA_EXT;
   }
 
   // Flutter rasterizes into this framebuffer, so it has to carry the samples
   // that antialias the geometry. Impeller declares the wrapped framebuffer as
   // 4x multisampled (MakeRenderTargetFromBackingStoreImpeller), so request the
-  // same count.
+  // same count. The framebuffer settles the format, because resolving the
+  // samples can constrain it; asking it back keeps one answer.
   FlFramebuffer* framebuffer = fl_framebuffer_new_multisampled(
-      general_format, config->size.width, config->size.height, FALSE,
+      preferred_format, config->size.width, config->size.height, FALSE,
       /*samples=*/4);
   if (!framebuffer) {
     g_warning("Failed to create backing store");
@@ -311,7 +310,8 @@ static bool create_opengl_backing_store(
   backing_store_out->open_gl.framebuffer.user_data = framebuffer;
   backing_store_out->open_gl.framebuffer.name =
       fl_framebuffer_get_id(framebuffer);
-  backing_store_out->open_gl.framebuffer.target = sized_format;
+  backing_store_out->open_gl.framebuffer.target =
+      fl_framebuffer_get_sized_format(framebuffer);
   backing_store_out->open_gl.framebuffer.destruction_callback = [](void* p) {
     // Backing store destroyed in fl_compositor_opengl_collect_backing_store(),
     // set on FlutterCompositor.collect_backing_store_callback during engine

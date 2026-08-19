@@ -51,6 +51,11 @@ FlFramebuffer* fl_framebuffer_new(GLint format,
  * stays single sample; see fl_framebuffer_resolve() for how the samples reach
  * it. Requires a valid OpenGL context to create.
  *
+ * @format is a preference, not a guarantee: resolving multisample content can
+ * only be done between identical formats, so this may downgrade it. Take the
+ * format actually used from fl_framebuffer_get_sized_format() rather than
+ * deriving it from @format again.
+ *
  * Returns: a new #FlFramebuffer.
  */
 FlFramebuffer* fl_framebuffer_new_multisampled(GLint format,
@@ -127,6 +132,19 @@ GLuint fl_framebuffer_get_resolved_id(FlFramebuffer* framebuffer);
  * Returns: sample count, 1 if not multisampled.
  */
 GLsizei fl_framebuffer_get_samples(FlFramebuffer* framebuffer);
+
+/**
+ * fl_framebuffer_get_sized_format:
+ * @framebuffer: an #FlFramebuffer.
+ *
+ * Gets the sized colour format of the backing texture, e.g. GL_RGBA8. This is
+ * the single authority on what this framebuffer holds: it is the sized form of
+ * the format requested at construction unless the resolve required a different
+ * one.
+ *
+ * Returns: a sized OpenGL colour format.
+ */
+GLint fl_framebuffer_get_sized_format(FlFramebuffer* framebuffer);
 
 /**
  * fl_framebuffer_get_texture_id:

@@ -626,10 +626,14 @@ static void _glTexImage2D(GLenum target,
     std::vector<uint8_t> temp(size);
     memcpy(temp.data(), pixels, size);
   }
+  if (mock) {
+    mock->glTexImage2D(target, level, internalformat, width, height, border,
+                       format, type, pixels);
+  }
 }
 
 static GLenum _glGetError() {
-  return GL_NO_ERROR;
+  return mock ? mock->glGetError() : GL_NO_ERROR;
 }
 
 void _glLinkProgram(GLuint program) {}

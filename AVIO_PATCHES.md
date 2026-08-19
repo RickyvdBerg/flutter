@@ -509,17 +509,32 @@ attachment is created or sized from the descriptor, and the declared sample
 count reaches only `GetTextureTypeFromDescriptor`, whose result the wrapped
 path never consults. GLES pipelines carry no sample count.
 
+The explicit resolve constrains the colour format, and that constraint has one
+owner. Resolving a multisample framebuffer is only defined between identical
+read and draw formats (OpenGL ES 3.0 §4.3.2) — a mismatch is `INVALID_OPERATION`
+and the blit is silently dropped — and `GL_RGBA8` is the only colour format
+portable across the multisample renderbuffer storage entry points. So an
+explicit resolve forces the texture to RGBA8 as well, overriding the caller's
+preferred format. `fl_framebuffer_get_sized_format()` is the single answer for
+what the framebuffer actually holds; `create_opengl_backing_store` reads it
+back for `FlutterOpenGLFramebuffer.target` instead of deriving the format a
+second time, so caller and framebuffer cannot disagree about byte order. Byte
+order costs nothing here: every consumer is a GPU one. The compositor's
+presentation framebuffer, which `glReadPixels` does read, is single-sample and
+keeps its own format.
+
 Sample counts are negotiated, never assumed: `GL_MAX_SAMPLES` clamps the
 request, a driver with no multisample capability keeps the original
-single-sample framebuffer, and a framebuffer the driver refuses to complete is
-torn down and rebuilt single-sample rather than failing the frame. The
-compositor's own presentation framebuffer stays single-sample — it only
-receives blits and is read back with `glReadPixels`.
+single-sample framebuffer, a framebuffer the driver refuses to complete is torn
+down and rebuilt single-sample, and the resolve itself is performed once at
+construction so a driver that rejects it degrades then rather than dropping
+frames silently forever.
 
-`FlFramebufferTest` covers all four outcomes:
-`ImplicitMultisampleNeedsNoResolve`, `ExplicitMultisampleResolvesWithABlit`,
-`SamplesClampedToDriverMaximum`, and
-`IncompleteMultisampleFallsBackToSingleSample`.
+`FlFramebufferTest` covers each outcome:
+`ImplicitMultisampleNeedsNoResolve`, `ImplicitMultisampleKeepsTheRequestedFormat`,
+`ExplicitMultisampleResolvesWithABlit`, `ExplicitMultisampleResolveFormatsMatch`,
+`SamplesClampedToDriverMaximum`, `IncompleteMultisampleFallsBackToSingleSample`,
+and `RejectedResolveFallsBackToSingleSample`.
 
 ### Patch 43: SDF circles for color-source paints
 

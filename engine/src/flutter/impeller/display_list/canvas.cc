@@ -1269,6 +1269,15 @@ void Canvas::DrawCircle(const Point& center,
     }
   }
 
+  if (renderer_.GetContext()->GetFlags().use_sdfs &&
+      ShouldDrawCircleWithSDF(paint)) {
+    auto params = UberSDFParameters::MakeCircle(
+        /*color=*/paint.color, /*center=*/center, /*radius=*/radius,
+        /*stroke=*/paint.GetStroke());
+    AddRenderSDFEntityToCurrentPass(paint, params);
+    return;
+  }
+
   if (AttemptDrawAntialiasedCircle(center, radius, paint)) {
     return;
   }
@@ -2681,6 +2690,23 @@ bool Canvas::IsCompatibleWithSDFRendering(const Paint& paint) {
     case BlendMode::kLuminosity:
       return true;
   }
+}
+
+bool Canvas::ShouldDrawCircleWithSDF(const Paint& paint) {
+  // A circle with a colour source has no analytic antialiased path:
+  // AttemptDrawAntialiasedCircle rejects it and the tessellated CircleGeometry
+  // it falls through to has no coverage ramp at all. UberSDF is the only thing
+  // that antialiases those, and it composes with a colour source through
+  // AddRenderSDFEntityToCurrentPass, exactly as DrawOval and DrawRoundRect
+  // already do.
+  //
+  // Solid circles keep the analytic path instead. Its coverage ramp is one
+  // pixel wide where UberSDF's is two, and the wider one visibly fattens small
+  // radii.
+  if (!paint.color_source) {
+    return false;
+  }
+  return IsCompatibleWithSDFRendering(paint);
 }
 
 LazyRenderingConfig::LazyRenderingConfig(

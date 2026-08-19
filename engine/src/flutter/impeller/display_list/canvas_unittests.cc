@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include <unordered_map>
+#include "flutter/display_list/dl_color.h"
 #include "flutter/display_list/dl_tile_mode.h"
+#include "flutter/display_list/effects/dl_color_source.h"
 #include "flutter/display_list/effects/dl_image_filter.h"
 #include "flutter/display_list/geometry/dl_geometry_types.h"
 #include "flutter/testing/testing.h"
@@ -555,6 +557,40 @@ TEST(CanvasTest, NonAntialiasedPaintIncompatibleWithSDFRendering) {
 TEST(CanvasTest, AntialiasedPaintCompatibleWithSDFRendering) {
   Paint paint;
   EXPECT_TRUE(Canvas::IsCompatibleWithSDFRendering(paint));
+}
+
+static std::shared_ptr<flutter::DlColorSource> MakeTestGradient() {
+  std::vector<flutter::DlColor> colors = {flutter::DlColor::kBlue(),
+                                          flutter::DlColor::kRed()};
+  std::vector<float> stops = {0.0, 1.0};
+  return flutter::DlColorSource::MakeLinear(flutter::DlPoint(0, 0),       //
+                                            flutter::DlPoint(1.0, 1.0),   //
+                                            2,                            //
+                                            colors.data(),                //
+                                            stops.data(),                 //
+                                            flutter::DlTileMode::kClamp,  //
+                                            nullptr                       //
+  );
+}
+
+TEST(CanvasTest, SolidCircleKeepsTheAnalyticPath) {
+  Paint paint;
+  EXPECT_FALSE(Canvas::ShouldDrawCircleWithSDF(paint));
+}
+
+TEST(CanvasTest, ColorSourceCircleUsesSDF) {
+  auto gradient = MakeTestGradient();
+  Paint paint;
+  paint.color_source = gradient.get();
+  EXPECT_TRUE(Canvas::ShouldDrawCircleWithSDF(paint));
+}
+
+TEST(CanvasTest, ColorSourceCircleRespectsSDFCompatibility) {
+  auto gradient = MakeTestGradient();
+  Paint paint;
+  paint.color_source = gradient.get();
+  paint.anti_alias = false;
+  EXPECT_FALSE(Canvas::ShouldDrawCircleWithSDF(paint));
 }
 
 }  // namespace testing

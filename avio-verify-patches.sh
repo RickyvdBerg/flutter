@@ -449,9 +449,15 @@ need "UberSDF high-precision fragment arithmetic" \
 need "UberSDF thin-stroke coverage" \
   $F/impeller/entity/shaders/uber_sdf.frag \
   'strokeAlphaCoverage'
-absent_in "DrawCircle UberSDF fast path with widened AA ramp" \
+need "DrawCircle takes UberSDF only for color-source paints" \
   $F/impeller/display_list/canvas.cc \
-  'UberSDFParameters::MakeCircle'
+  'bool Canvas::ShouldDrawCircleWithSDF'
+need "solid circle keeps the analytic path regression" \
+  $F/impeller/display_list/canvas_unittests.cc \
+  'SolidCircleKeepsTheAnalyticPath'
+need "color-source circle SDF routing regression" \
+  $F/impeller/display_list/canvas_unittests.cc \
+  'ColorSourceCircleUsesSDF'
 need "degree normalization half-open range guard" \
   $F/impeller/geometry/scalar.h \
   'if \(deg >= 360\.0f\)'

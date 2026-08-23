@@ -99,7 +99,8 @@ class EmbedderConfigBuilder {
           kFlutterAvioExtensionFeatureRootRenderTarget |
           kFlutterAvioExtensionFeatureExplicitRenderCompletion |
           kFlutterAvioExtensionFeatureExactVsyncCancellation |
-          kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+          kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+          kFlutterAvioExtensionFeatureRenderDeadline);
 
   FlutterCompositor& GetCompositor();
 

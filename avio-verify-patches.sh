@@ -62,6 +62,21 @@ echo "--- Exact frame opportunities ---"
 need "exact opportunity feature negotiation" \
   $F/shell/platform/embedder/embedder.h \
   'kFlutterAvioExtensionFeatureFrameOpportunityOutcomes'
+need "render-deadline ABI extension version" \
+  $F/shell/platform/embedder/embedder.h \
+  'FLUTTER_AVIO_EXTENSION_VERSION 3'
+need "render-deadline semantic feature" \
+  $F/shell/platform/embedder/embedder.h \
+  'kFlutterAvioExtensionFeatureRenderDeadline'
+need "render deadline travels in exact vsync ABI" \
+  $F/shell/platform/embedder/embedder.h 'uint64_t render_deadline_time_nanos'
+need "frame timing recorder retains the producer deadline" \
+  $F/flow/frame_timings.h 'GetRenderDeadlineTime'
+need "raster trace reports exact deadline misses" \
+  $F/shell/common/rasterizer.cc 'AvioRenderDeadlineMiss'
+need "deadline miss traces require exact opportunity identity" \
+  $F/shell/common/rasterizer.cc \
+  'opportunity.has_value\(\) && raster_finish_time > render_deadline_time'
 need "engine-local opportunity conservation ledger" \
   $F/common/frame_opportunity.h 'class FrameOpportunityRegistry'
 need "exact returned-opportunity cancellation ABI" \

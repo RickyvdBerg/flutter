@@ -98,6 +98,7 @@ class EmbedderEngine {
       uint64_t frame_opportunity_id,
       const std::vector<int64_t>& target_ids,
       fml::TimePoint frame_start_time,
+      fml::TimePoint render_deadline_time,
       fml::TimePoint frame_target_time);
 
   bool CancelVsyncForDisplay(intptr_t baton,

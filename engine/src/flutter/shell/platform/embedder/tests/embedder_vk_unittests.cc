@@ -38,6 +38,7 @@ constexpr FlutterAvioExtensionFeatures kExactSelectedTargetFeatures =
     kFlutterAvioExtensionFeatureExplicitRenderCompletion |
     kFlutterAvioExtensionFeatureExactVsyncCancellation |
     kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+    kFlutterAvioExtensionFeatureRenderDeadline |
     kFlutterAvioExtensionFeatureSelectedTargetDamage;
 
 ////////////////////////////////////////////////////////////////////////////////

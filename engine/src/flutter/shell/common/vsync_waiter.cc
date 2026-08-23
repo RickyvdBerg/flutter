@@ -108,11 +108,13 @@ void VsyncWaiter::ScheduleSecondaryCallback(uintptr_t id,
   AwaitVSyncForSecondaryCallback();
 }
 
-void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
-                               fml::TimePoint frame_target_time,
-                               bool pause_secondary_tasks,
-                               std::optional<uint64_t> frame_opportunity_id,
-                               std::set<int64_t> frame_opportunity_target_ids) {
+void VsyncWaiter::FireCallback(
+    fml::TimePoint frame_start_time,
+    fml::TimePoint frame_target_time,
+    bool pause_secondary_tasks,
+    std::optional<uint64_t> frame_opportunity_id,
+    std::set<int64_t> frame_opportunity_target_ids,
+    std::optional<fml::TimePoint> render_deadline_time) {
   FML_DCHECK(fml::TimePoint::Now() >= frame_start_time);
 
   Callback callback;
@@ -157,12 +159,16 @@ void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
     task_runners_.GetUITaskRunner()->PostTask(
         [ui_task_queue_id, callback, flow_identifier, frame_start_time,
          frame_target_time, pause_secondary_tasks, frame_opportunity_id,
+         render_deadline_time,
          frame_opportunity_target_ids =
              std::move(frame_opportunity_target_ids)]() mutable {
           FML_TRACE_EVENT_WITH_FLOW_IDS(
               "flutter", kVsyncTraceName, /*flow_id_count=*/1,
               /*flow_ids=*/&flow_identifier, "StartTime", frame_start_time,
-              "TargetTime", frame_target_time);
+              "RenderDeadline",
+              render_deadline_time.value_or(frame_target_time), "TargetTime",
+              frame_target_time, "DisplayId", kDefaultDisplayId,
+              "FrameOpportunityId", frame_opportunity_id.value_or(0));
           std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder =
               std::make_unique<FrameTimingsRecorder>();
           if (frame_opportunity_id.has_value()) {
@@ -170,8 +176,14 @@ void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
                 frame_opportunity_id.value(), kDefaultDisplayId,
                 std::move(frame_opportunity_target_ids));
           }
-          frame_timings_recorder->RecordVsync(frame_start_time,
-                                              frame_target_time);
+          if (render_deadline_time.has_value()) {
+            frame_timings_recorder->RecordVsync(frame_start_time,
+                                                render_deadline_time.value(),
+                                                frame_target_time);
+          } else {
+            frame_timings_recorder->RecordVsync(frame_start_time,
+                                                frame_target_time);
+          }
           callback(std::move(frame_timings_recorder));
           TRACE_FLOW_END("flutter", kVsyncFlowName, flow_identifier);
           if (pause_secondary_tasks) {
@@ -185,17 +197,20 @@ void VsyncWaiter::FireCallback(fml::TimePoint frame_start_time,
   }
 }
 
-void VsyncWaiter::FireCallback(DisplayId display_id,
-                               fml::TimePoint frame_start_time,
-                               fml::TimePoint frame_target_time,
-                               bool pause_secondary_tasks,
-                               std::optional<uint64_t> frame_opportunity_id,
-                               std::set<int64_t> frame_opportunity_target_ids) {
+void VsyncWaiter::FireCallback(
+    DisplayId display_id,
+    fml::TimePoint frame_start_time,
+    fml::TimePoint frame_target_time,
+    bool pause_secondary_tasks,
+    std::optional<uint64_t> frame_opportunity_id,
+    std::set<int64_t> frame_opportunity_target_ids,
+    std::optional<fml::TimePoint> render_deadline_time) {
   if (display_id == kDefaultDisplayId) {
     // Delegate to the legacy path which handles both callback_ and
     // secondary_callbacks_.
     FireCallback(frame_start_time, frame_target_time, pause_secondary_tasks,
-                 frame_opportunity_id, std::move(frame_opportunity_target_ids));
+                 frame_opportunity_id, std::move(frame_opportunity_target_ids),
+                 render_deadline_time);
     return;
   }
 
@@ -238,13 +253,15 @@ void VsyncWaiter::FireCallback(DisplayId display_id,
   task_runners_.GetUITaskRunner()->PostTask(
       [ui_task_queue_id, callback, flow_identifier, frame_start_time,
        frame_target_time, pause_secondary_tasks, frame_opportunity_id,
-       display_id,
+       display_id, render_deadline_time,
        frame_opportunity_target_ids =
            std::move(frame_opportunity_target_ids)]() mutable {
         FML_TRACE_EVENT_WITH_FLOW_IDS(
             "flutter", kVsyncTraceName, /*flow_id_count=*/1,
             /*flow_ids=*/&flow_identifier, "StartTime", frame_start_time,
-            "TargetTime", frame_target_time);
+            "RenderDeadline", render_deadline_time.value_or(frame_target_time),
+            "TargetTime", frame_target_time, "DisplayId", display_id,
+            "FrameOpportunityId", frame_opportunity_id.value_or(0));
         std::unique_ptr<FrameTimingsRecorder> frame_timings_recorder =
             std::make_unique<FrameTimingsRecorder>();
         if (frame_opportunity_id.has_value()) {
@@ -252,8 +269,14 @@ void VsyncWaiter::FireCallback(DisplayId display_id,
               frame_opportunity_id.value(), display_id,
               std::move(frame_opportunity_target_ids));
         }
-        frame_timings_recorder->RecordVsync(frame_start_time,
-                                            frame_target_time);
+        if (render_deadline_time.has_value()) {
+          frame_timings_recorder->RecordVsync(frame_start_time,
+                                              render_deadline_time.value(),
+                                              frame_target_time);
+        } else {
+          frame_timings_recorder->RecordVsync(frame_start_time,
+                                              frame_target_time);
+        }
         callback(std::move(frame_timings_recorder));
         TRACE_FLOW_END("flutter", kVsyncFlowName, flow_identifier);
         if (pause_secondary_tasks) {

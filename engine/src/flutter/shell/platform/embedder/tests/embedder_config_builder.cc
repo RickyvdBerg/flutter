@@ -51,7 +51,7 @@ struct ExactFramePump {
         next_opportunity_id.fetch_add(1u);
     FML_CHECK(FlutterEngineOnVsyncForDisplayWithOpportunity(
                   attached_engine, baton, display_id, opportunity_id, &target,
-                  1u, now, now + 16'666'667u) == kSuccess);
+                  1u, now, now + 15'000'000u, now + 16'666'667u) == kSuccess);
   }
 
   std::mutex mutex;
@@ -352,7 +352,8 @@ void EmbedderConfigBuilder::SetRootRenderTargetCompositor(
       kFlutterAvioExtensionFeaturePerDisplayVsync |
       kFlutterAvioExtensionFeatureExplicitRenderCompletion |
       kFlutterAvioExtensionFeatureExactVsyncCancellation |
-      kFlutterAvioExtensionFeatureFrameOpportunityOutcomes;
+      kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+      kFlutterAvioExtensionFeatureRenderDeadline;
   if ((required_features & exact_features) == exact_features) {
     exact_frame_pump_ = std::make_shared<ExactFramePump>();
     context_.SetVsyncForDisplayCallback(

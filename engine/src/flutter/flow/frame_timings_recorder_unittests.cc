@@ -27,7 +27,31 @@ TEST(FrameTimingsRecorderTest, RecordVsync) {
   recorder->RecordVsync(st, en);
 
   ASSERT_EQ(st, recorder->GetVsyncStartTime());
+  ASSERT_EQ(en, recorder->GetRenderDeadlineTime());
   ASSERT_EQ(en, recorder->GetVsyncTargetTime());
+}
+
+TEST(FrameTimingsRecorderTest, RecordVsyncPreservesRenderDeadline) {
+  auto recorder = std::make_unique<FrameTimingsRecorder>();
+  const auto start = fml::TimePoint::Now();
+  const auto deadline = start + fml::TimeDelta::FromMillisecondsF(14);
+  const auto target = start + fml::TimeDelta::FromMillisecondsF(16);
+  recorder->RecordVsync(start, deadline, target);
+
+  EXPECT_EQ(start, recorder->GetVsyncStartTime());
+  EXPECT_EQ(deadline, recorder->GetRenderDeadlineTime());
+  EXPECT_EQ(target, recorder->GetVsyncTargetTime());
+}
+
+TEST(FrameTimingsRecorderTest, ExactRecordVsyncRejectsTargetAsDeadline) {
+  auto recorder = std::make_unique<FrameTimingsRecorder>();
+  const auto start = fml::TimePoint::Now();
+  const auto target = start + fml::TimeDelta::FromMillisecondsF(16);
+
+  const auto status = recorder->RecordVsyncImpl(start, target, target, true);
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.message(),
+            "Check failed: vsync_start <= render_deadline < vsync_target.");
 }
 
 TEST(FrameTimingsRecorderTest, RecordBuildTimes) {
@@ -180,15 +204,18 @@ TEST(FrameTimingsRecorderTest, ClonePreservesFrameOpportunity) {
             std::set<int64_t>({101, 202}));
 }
 
-TEST(FrameTimingsRecorderTest, ClonedHasSameVsyncStartAndTarget) {
+TEST(FrameTimingsRecorderTest, ClonedHasSameVsyncTiming) {
   auto recorder = std::make_unique<FrameTimingsRecorder>();
 
   const auto now = fml::TimePoint::Now();
-  recorder->RecordVsync(now, now + fml::TimeDelta::FromMilliseconds(16));
+  const auto deadline = now + fml::TimeDelta::FromMilliseconds(14);
+  recorder->RecordVsync(now, deadline,
+                        now + fml::TimeDelta::FromMilliseconds(16));
 
   auto cloned = recorder->CloneUntil(FrameTimingsRecorder::State::kVsync);
   ASSERT_EQ(recorder->GetFrameNumber(), cloned->GetFrameNumber());
   ASSERT_EQ(recorder->GetVsyncStartTime(), cloned->GetVsyncStartTime());
+  ASSERT_EQ(recorder->GetRenderDeadlineTime(), cloned->GetRenderDeadlineTime());
   ASSERT_EQ(recorder->GetVsyncTargetTime(), cloned->GetVsyncTargetTime());
 }
 

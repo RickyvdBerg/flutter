@@ -367,10 +367,15 @@ bool EmbedderEngine::OnVsyncEventForDisplayWithOpportunity(
     uint64_t frame_opportunity_id,
     const std::vector<int64_t>& target_ids,
     fml::TimePoint frame_start_time,
+    fml::TimePoint render_deadline_time,
     fml::TimePoint frame_target_time) {
   if (!IsValid() || frame_opportunity_id == 0 ||
+      frame_start_time > render_deadline_time ||
+      render_deadline_time >= frame_target_time ||
       (avio_extension_features_ &
        kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) == 0 ||
+      (avio_extension_features_ & kFlutterAvioExtensionFeatureRenderDeadline) ==
+          0 ||
       !frame_opportunity_registry_ ||
       !frame_opportunity_registry_->Open(frame_opportunity_id, display_id,
                                          target_ids)) {
@@ -380,7 +385,8 @@ bool EmbedderEngine::OnVsyncEventForDisplayWithOpportunity(
   auto waiter = shell_->GetVsyncWaiter().lock();
   if (waiter && waiter->ReturnVsync(display_id, baton, frame_start_time,
                                     frame_target_time, frame_opportunity_id,
-                                    {target_ids.begin(), target_ids.end()})) {
+                                    {target_ids.begin(), target_ids.end()},
+                                    render_deadline_time)) {
     return true;
   }
   frame_opportunity_registry_->Abandon(frame_opportunity_id, display_id);

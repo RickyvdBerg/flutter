@@ -73,7 +73,7 @@ extern "C" {
 // Flutter embedder ABI. The engine reports supported semantics through
 // FlutterEngineGetAvioExtensionCapabilities and validates the request again
 // during initialization, before creating a view or GPU resource.
-#define FLUTTER_AVIO_EXTENSION_VERSION 2u
+#define FLUTTER_AVIO_EXTENSION_VERSION 3u
 
 typedef uint64_t FlutterAvioExtensionFeatures;
 
@@ -92,6 +92,7 @@ typedef uint64_t FlutterAvioExtensionFeatures;
   0x0000000000000100ULL
 #define kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition \
   0x0000000000000200ULL
+#define kFlutterAvioExtensionFeatureRenderDeadline 0x0000000000000400ULL
 
 /// Hard transaction bound shared by retained scene collection and embedders.
 #define FLUTTER_AVIO_MAX_COMPOSITOR_MATERIALS 64u
@@ -4058,6 +4059,10 @@ FlutterEngineResult FlutterEngineOnVsyncForDisplay(
 /// exclusive consumers of the same baton. `opportunity_id` must be non-zero.
 /// `target_ids` must name the complete, non-empty, duplicate-free target set
 /// admitted by this opportunity; each target subsequently terminalizes once.
+/// The three timestamps share one monotonic clock and must satisfy
+/// `frame_start_time_nanos <= render_deadline_time_nanos <
+/// frame_target_time_nanos`. The render deadline budgets Flutter work; the
+/// target remains the animation and presentation sample.
 FLUTTER_EXPORT
 FlutterEngineResult FlutterEngineOnVsyncForDisplayWithOpportunity(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,
@@ -4067,6 +4072,7 @@ FlutterEngineResult FlutterEngineOnVsyncForDisplayWithOpportunity(
     const FlutterViewId* target_ids,
     size_t target_ids_count,
     uint64_t frame_start_time_nanos,
+    uint64_t render_deadline_time_nanos,
     uint64_t frame_target_time_nanos);
 
 //------------------------------------------------------------------------------
@@ -4610,6 +4616,7 @@ typedef FlutterEngineResult (
     const FlutterViewId* target_ids,
     size_t target_ids_count,
     uint64_t frame_start_time_nanos,
+    uint64_t render_deadline_time_nanos,
     uint64_t frame_target_time_nanos);
 typedef FlutterEngineResult (*FlutterEngineCancelVsyncForDisplayFnPtr)(
     FLUTTER_API_SYMBOL(FlutterEngine) engine,

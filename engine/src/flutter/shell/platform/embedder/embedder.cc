@@ -190,7 +190,8 @@ static constexpr FlutterAvioExtensionFeatures kAvioSupportedFeatures =
     kFlutterAvioExtensionFeatureSelectedTargetDamage |
     kFlutterAvioExtensionFeatureViewVisibility |
     kFlutterAvioExtensionFeatureAtomicCompositorMaterials |
-    kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition
+    kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition |
+    kFlutterAvioExtensionFeatureRenderDeadline
 #if FML_OS_LINUX && defined(SHELL_ENABLE_VULKAN) && \
     defined(IMPELLER_SUPPORTS_RENDERING)
     | kFlutterAvioExtensionFeatureResourceLifecycleConfig
@@ -224,9 +225,11 @@ static const char* ValidateAvioExtensionRequest(
        (request->required_features &
         kFlutterAvioExtensionFeatureExactVsyncCancellation) == 0 ||
        (request->required_features &
-        kFlutterAvioExtensionFeatureExplicitRenderCompletion) == 0)) {
+        kFlutterAvioExtensionFeatureExplicitRenderCompletion) == 0 ||
+       (request->required_features &
+        kFlutterAvioExtensionFeatureRenderDeadline) == 0)) {
     return "Exact frame outcomes require root targets, explicit render "
-           "completion, and exact Vsync cancellation.";
+           "completion, exact Vsync cancellation, and render deadlines.";
   }
   if ((request->required_features &
        kFlutterAvioExtensionFeatureSelectedTargetDamage) != 0 &&
@@ -251,6 +254,12 @@ static const char* ValidateAvioExtensionRequest(
         kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) == 0)) {
     return "Typed target acquisition requires root targets and exact frame "
            "outcomes.";
+  }
+  if ((request->required_features &
+       kFlutterAvioExtensionFeatureRenderDeadline) != 0 &&
+      (request->required_features &
+       kFlutterAvioExtensionFeatureFrameOpportunityOutcomes) == 0) {
+    return "Render deadlines require exact frame opportunity outcomes.";
   }
   return nullptr;
 }
@@ -4220,26 +4229,31 @@ FlutterEngineResult FlutterEngineOnVsyncForDisplayWithOpportunity(
     const FlutterViewId* target_ids,
     size_t target_ids_count,
     uint64_t frame_start_time_nanos,
+    uint64_t render_deadline_time_nanos,
     uint64_t frame_target_time_nanos) {
   if (engine == nullptr || baton <= 0 || opportunity_id == 0 ||
-      target_ids == nullptr || target_ids_count == 0) {
+      target_ids == nullptr || target_ids_count == 0 ||
+      frame_start_time_nanos > render_deadline_time_nanos ||
+      render_deadline_time_nanos >= frame_target_time_nanos) {
     return LOG_EMBEDDER_ERROR(
         kInvalidArguments,
         "Exact per-display Vsync requires an engine, baton, opportunity, and "
-        "targets.");
+        "targets with start <= render deadline < target.");
   }
 
   std::vector<int64_t> targets(target_ids, target_ids + target_ids_count);
 
   auto start_time = fml::TimePoint::FromEpochDelta(
       fml::TimeDelta::FromNanoseconds(frame_start_time_nanos));
+  auto render_deadline_time = fml::TimePoint::FromEpochDelta(
+      fml::TimeDelta::FromNanoseconds(render_deadline_time_nanos));
   auto target_time = fml::TimePoint::FromEpochDelta(
       fml::TimeDelta::FromNanoseconds(frame_target_time_nanos));
 
   if (!reinterpret_cast<flutter::EmbedderEngine*>(engine)
            ->OnVsyncEventForDisplayWithOpportunity(
                baton, static_cast<int64_t>(display_id), opportunity_id, targets,
-               start_time, target_time)) {
+               start_time, render_deadline_time, target_time)) {
     return LOG_EMBEDDER_ERROR(
         kInternalInconsistency,
         "The exact per-display Vsync baton was not pending.");

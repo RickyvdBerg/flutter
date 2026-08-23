@@ -91,7 +91,8 @@ class VsyncWaiter : public std::enable_shared_from_this<VsyncWaiter> {
       fml::TimePoint frame_start_time,
       fml::TimePoint frame_target_time,
       std::optional<uint64_t> frame_opportunity_id,
-      std::set<int64_t> frame_opportunity_target_ids = {}) {
+      std::set<int64_t> frame_opportunity_target_ids = {},
+      std::optional<fml::TimePoint> render_deadline_time = std::nullopt) {
     return false;
   }
 
@@ -155,22 +156,26 @@ class VsyncWaiter : public std::enable_shared_from_this<VsyncWaiter> {
 
   // Schedules the callback on the UI task runner. Needs to be invoked as close
   // to the `frame_start_time` as possible.
-  void FireCallback(fml::TimePoint frame_start_time,
-                    fml::TimePoint frame_target_time,
-                    bool pause_secondary_tasks = true,
-                    std::optional<uint64_t> frame_opportunity_id = std::nullopt,
-                    std::set<int64_t> frame_opportunity_target_ids = {});
+  void FireCallback(
+      fml::TimePoint frame_start_time,
+      fml::TimePoint frame_target_time,
+      bool pause_secondary_tasks = true,
+      std::optional<uint64_t> frame_opportunity_id = std::nullopt,
+      std::set<int64_t> frame_opportunity_target_ids = {},
+      std::optional<fml::TimePoint> render_deadline_time = std::nullopt);
 
   // Per-display variant: fires the pending callback for a specific display.
   // Only the callback for the given `display_id` is invoked; callbacks for
   // other displays remain pending. If no callback is pending for this
   // display, the call is a no-op.
-  void FireCallback(DisplayId display_id,
-                    fml::TimePoint frame_start_time,
-                    fml::TimePoint frame_target_time,
-                    bool pause_secondary_tasks = true,
-                    std::optional<uint64_t> frame_opportunity_id = std::nullopt,
-                    std::set<int64_t> frame_opportunity_target_ids = {});
+  void FireCallback(
+      DisplayId display_id,
+      fml::TimePoint frame_start_time,
+      fml::TimePoint frame_target_time,
+      bool pause_secondary_tasks = true,
+      std::optional<uint64_t> frame_opportunity_id = std::nullopt,
+      std::set<int64_t> frame_opportunity_target_ids = {},
+      std::optional<fml::TimePoint> render_deadline_time = std::nullopt);
 
   bool CancelCallback(DisplayId display_id,
                       CancellationReason reason,

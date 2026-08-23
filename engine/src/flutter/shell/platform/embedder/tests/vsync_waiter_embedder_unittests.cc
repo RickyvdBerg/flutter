@@ -69,10 +69,11 @@ TEST(VsyncWaiterEmbedderTest, BatonsAreOwnedByOneEngineInstance) {
   ASSERT_TRUE(second_baton.has_value());
   EXPECT_EQ(first_baton, second_baton);
   const auto now = fml::TimePoint::Now();
-  EXPECT_TRUE(
-      first->ReturnVsync(7, first_baton.value(), now, now, 101, {1001}));
-  EXPECT_TRUE(
-      second->ReturnVsync(7, second_baton.value(), now, now, 202, {2002}));
+  const auto target = now + fml::TimeDelta::FromMilliseconds(1);
+  EXPECT_TRUE(first->ReturnVsync(7, first_baton.value(), now, target, 101,
+                                 {1001}, now));
+  EXPECT_TRUE(second->ReturnVsync(7, second_baton.value(), now, target, 202,
+                                  {2002}, now));
   DrainCurrentMessageLoop();
 
   ASSERT_TRUE(first_opportunity.has_value());
@@ -98,10 +99,16 @@ TEST(VsyncWaiterEmbedderTest, WrongIdentityDoesNotConsumeBaton) {
       9, [&](std::unique_ptr<FrameTimingsRecorder>) { callback_count++; });
   ASSERT_TRUE(baton.has_value());
   const auto now = fml::TimePoint::Now();
-  EXPECT_FALSE(waiter->ReturnVsync(8, baton.value(), now, now, 303));
-  EXPECT_FALSE(waiter->ReturnVsync(9, baton.value() + 1, now, now, 303));
-  EXPECT_TRUE(waiter->ReturnVsync(9, baton.value(), now, now, 303));
-  EXPECT_FALSE(waiter->ReturnVsync(9, baton.value(), now, now, 303));
+  const auto target = now + fml::TimeDelta::FromMilliseconds(1);
+  EXPECT_FALSE(
+      waiter->ReturnVsync(8, baton.value(), now, target, 303, {}, now));
+  EXPECT_FALSE(
+      waiter->ReturnVsync(9, baton.value() + 1, now, target, 303, {}, now));
+  EXPECT_FALSE(
+      waiter->ReturnVsync(9, baton.value(), now, target, 303, {}, target));
+  EXPECT_TRUE(waiter->ReturnVsync(9, baton.value(), now, target, 303, {}, now));
+  EXPECT_FALSE(
+      waiter->ReturnVsync(9, baton.value(), now, target, 303, {}, now));
   DrainCurrentMessageLoop();
   EXPECT_EQ(callback_count, 1u);
 }
@@ -149,7 +156,9 @@ TEST(VsyncWaiterEmbedderTest, ReturnAndCancellationAreMutuallyExclusive) {
       [&](VsyncWaiter::CancellationReason) { cancellation_count++; });
   ASSERT_TRUE(baton.has_value());
   const auto now = fml::TimePoint::Now();
-  EXPECT_TRUE(waiter->ReturnVsync(12, baton.value(), now, now, 404));
+  const auto target = now + fml::TimeDelta::FromMilliseconds(1);
+  EXPECT_TRUE(
+      waiter->ReturnVsync(12, baton.value(), now, target, 404, {}, now));
   EXPECT_FALSE(waiter->CancelVsync(
       12, baton.value(), VsyncWaiter::CancellationReason::kHostTerminated,
       nullptr));
@@ -165,7 +174,8 @@ TEST(VsyncWaiterEmbedderTest, ReturnAndCancellationAreMutuallyExclusive) {
   EXPECT_TRUE(waiter->CancelVsync(
       12, baton.value(), VsyncWaiter::CancellationReason::kHostTerminated,
       nullptr));
-  EXPECT_FALSE(waiter->ReturnVsync(12, baton.value(), now, now, 405));
+  EXPECT_FALSE(
+      waiter->ReturnVsync(12, baton.value(), now, target, 405, {}, now));
   DrainCurrentMessageLoop();
   EXPECT_EQ(frame_count, 1u);
   EXPECT_EQ(cancellation_count, 1u);
@@ -189,9 +199,10 @@ TEST(VsyncWaiterEmbedderTest, ReturnedFutureOpportunityCanBeExactlyCancelled) {
       });
   ASSERT_TRUE(baton.has_value());
   const auto now = fml::TimePoint::Now();
-  EXPECT_TRUE(waiter->ReturnVsync(14, baton.value(),
-                                  now + fml::TimeDelta::FromSeconds(1),
-                                  now + fml::TimeDelta::FromSeconds(2), 406));
+  EXPECT_TRUE(waiter->ReturnVsync(
+      14, baton.value(), now + fml::TimeDelta::FromSeconds(1),
+      now + fml::TimeDelta::FromSeconds(2), 406, {},
+      now + fml::TimeDelta::FromMilliseconds(1500)));
   EXPECT_FALSE(waiter->CancelFrameOpportunity(
       14, 405, VsyncWaiter::CancellationReason::kTargetRemoved, nullptr));
   EXPECT_TRUE(waiter->CancelFrameOpportunity(

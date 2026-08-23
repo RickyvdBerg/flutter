@@ -1132,7 +1132,8 @@ TEST_F(EmbedderTest, ExactFrameOutcomesRequireTerminalCallback) {
                  kFlutterAvioExtensionFeatureRootRenderTarget |
                  kFlutterAvioExtensionFeatureExplicitRenderCompletion |
                  kFlutterAvioExtensionFeatureExactVsyncCancellation |
-                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+                 kFlutterAvioExtensionFeatureRenderDeadline);
   builder.GetProjectArgs().vsync_for_display_callback =
       [](void*, intptr_t, FlutterEngineDisplayId) {};
   builder.GetCompositor().frame_opportunity_outcome_callback = nullptr;
@@ -1150,7 +1151,8 @@ TEST_F(EmbedderTest, ExactFrameOutcomesRequireCompositor) {
                  kFlutterAvioExtensionFeatureRootRenderTarget |
                  kFlutterAvioExtensionFeatureExplicitRenderCompletion |
                  kFlutterAvioExtensionFeatureExactVsyncCancellation |
-                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+                 kFlutterAvioExtensionFeatureRenderDeadline);
   builder.GetProjectArgs().vsync_for_display_callback =
       [](void*, intptr_t, FlutterEngineDisplayId) {};
   builder.GetProjectArgs().compositor = nullptr;
@@ -1166,6 +1168,26 @@ TEST_F(EmbedderTest, ExactFrameOutcomesRequireExplicitRenderCompletion) {
   builder.SetRootRenderTargetCompositor(
       false, kFlutterAvioExtensionFeaturePerDisplayVsync |
                  kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureExactVsyncCancellation |
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+                 kFlutterAvioExtensionFeatureRenderDeadline);
+  builder.GetProjectArgs().vsync_for_display_callback =
+      [](void*, intptr_t, FlutterEngineDisplayId) {};
+  builder.GetCompositor().frame_opportunity_outcome_callback =
+      [](const FlutterFrameOpportunityOutcomeInfo*) {};
+
+  auto engine = builder.LaunchEngine();
+  EXPECT_FALSE(engine.is_valid());
+}
+
+TEST_F(EmbedderTest, ExactFrameOutcomesRequireRenderDeadline) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetRootRenderTargetCompositor(
+      false, kFlutterAvioExtensionFeaturePerDisplayVsync |
+                 kFlutterAvioExtensionFeatureRootRenderTarget |
+                 kFlutterAvioExtensionFeatureExplicitRenderCompletion |
                  kFlutterAvioExtensionFeatureExactVsyncCancellation |
                  kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
   builder.GetProjectArgs().vsync_for_display_callback =
@@ -1186,7 +1208,8 @@ TEST_F(EmbedderTest, ExactFrameOpportunityContractCanBeNegotiated) {
                  kFlutterAvioExtensionFeatureRootRenderTarget |
                  kFlutterAvioExtensionFeatureExplicitRenderCompletion |
                  kFlutterAvioExtensionFeatureExactVsyncCancellation |
-                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+                 kFlutterAvioExtensionFeatureRenderDeadline);
   builder.GetProjectArgs().vsync_for_display_callback =
       [](void*, intptr_t, FlutterEngineDisplayId) {};
   builder.GetCompositor().frame_opportunity_outcome_callback =
@@ -1206,6 +1229,7 @@ TEST_F(EmbedderTest, PerViewVisibilityCanBeNegotiated) {
                  kFlutterAvioExtensionFeatureExplicitRenderCompletion |
                  kFlutterAvioExtensionFeatureExactVsyncCancellation |
                  kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+                 kFlutterAvioExtensionFeatureRenderDeadline |
                  kFlutterAvioExtensionFeatureViewVisibility);
   builder.GetProjectArgs().vsync_for_display_callback =
       [](void*, intptr_t, FlutterEngineDisplayId) {};
@@ -1235,7 +1259,8 @@ TEST_F(EmbedderTest, ReturnedFrameOpportunityCancelsThroughPublicAbi) {
                  kFlutterAvioExtensionFeatureRootRenderTarget |
                  kFlutterAvioExtensionFeatureExplicitRenderCompletion |
                  kFlutterAvioExtensionFeatureExactVsyncCancellation |
-                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+                 kFlutterAvioExtensionFeatureRenderDeadline);
 
   fml::AutoResetWaitableEvent baton_latch;
   std::optional<intptr_t> baton;
@@ -1278,10 +1303,16 @@ TEST_F(EmbedderTest, ReturnedFrameOpportunityCancelsThroughPublicAbi) {
 
   const FlutterViewId target_id = kFlutterImplicitViewId;
   const uint64_t now = FlutterEngineGetCurrentTime();
-  ASSERT_EQ(FlutterEngineOnVsyncForDisplayWithOpportunity(
-                engine.get(), baton.value(), display.display_id, 700,
-                &target_id, 1, now + 1'000'000'000, now + 2'000'000'000),
-            kSuccess);
+  EXPECT_EQ(
+      FlutterEngineOnVsyncForDisplayWithOpportunity(
+          engine.get(), baton.value(), display.display_id, 700, &target_id, 1,
+          now + 1'000'000'000, now + 2'000'000'000, now + 2'000'000'000),
+      kInvalidArguments);
+  ASSERT_EQ(
+      FlutterEngineOnVsyncForDisplayWithOpportunity(
+          engine.get(), baton.value(), display.display_id, 700, &target_id, 1,
+          now + 1'000'000'000, now + 1'500'000'000, now + 2'000'000'000),
+      kSuccess);
 
   struct CancellationState {
     fml::AutoResetWaitableEvent latch;
@@ -1321,7 +1352,8 @@ TEST_F(EmbedderTest, AddViewPublishesInitialDisplayBeforeMetricsScheduleFrame) {
                  kFlutterAvioExtensionFeatureRootRenderTarget |
                  kFlutterAvioExtensionFeatureExplicitRenderCompletion |
                  kFlutterAvioExtensionFeatureExactVsyncCancellation |
-                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes);
+                 kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
+                 kFlutterAvioExtensionFeatureRenderDeadline);
 
   struct AddViewState {
     fml::AutoResetWaitableEvent ready;

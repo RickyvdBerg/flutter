@@ -59,6 +59,10 @@ class FrameTimingsRecorder {
   /// This is typically the next vsync signal timestamp.
   fml::TimePoint GetVsyncTargetTime() const;
 
+  /// Latest compositor-authored time by which producer rendering should
+  /// complete for this frame. This may precede the presentation target.
+  fml::TimePoint GetRenderDeadlineTime() const;
+
   /// Timestamp of when the frame building started.
   fml::TimePoint GetBuildStartTime() const;
 
@@ -91,6 +95,12 @@ class FrameTimingsRecorder {
 
   /// Records a vsync event.
   void RecordVsync(fml::TimePoint vsync_start, fml::TimePoint vsync_target);
+
+  /// Records an exact compositor opportunity with a distinct producer render
+  /// deadline and presentation target.
+  void RecordVsync(fml::TimePoint vsync_start,
+                   fml::TimePoint render_deadline,
+                   fml::TimePoint vsync_target);
 
   /// Records a build start event.
   void RecordBuildStart(fml::TimePoint build_start);
@@ -152,12 +162,16 @@ class FrameTimingsRecorder {
   void AssertInState(State state) const;
 
  private:
+  FML_FRIEND_TEST(FrameTimingsRecorderTest,
+                  ExactRecordVsyncRejectsTargetAsDeadline);
   FML_FRIEND_TEST(FrameTimingsRecorderTest, ThrowWhenRecordBuildBeforeVsync);
   FML_FRIEND_TEST(FrameTimingsRecorderTest,
                   ThrowWhenRecordRasterBeforeBuildEnd);
 
   [[nodiscard]] fml::Status RecordVsyncImpl(fml::TimePoint vsync_start,
-                                            fml::TimePoint vsync_target);
+                                            fml::TimePoint render_deadline,
+                                            fml::TimePoint vsync_target,
+                                            bool exact_render_deadline);
   [[nodiscard]] fml::Status RecordBuildStartImpl(fml::TimePoint build_start);
   [[nodiscard]] fml::Status RecordBuildEndImpl(fml::TimePoint build_end);
   [[nodiscard]] fml::Status RecordRasterStartImpl(fml::TimePoint raster_start);
@@ -171,6 +185,7 @@ class FrameTimingsRecorder {
   const std::string frame_number_trace_arg_val_;
 
   fml::TimePoint vsync_start_;
+  fml::TimePoint render_deadline_;
   fml::TimePoint vsync_target_;
   fml::TimePoint build_start_;
   fml::TimePoint build_end_;

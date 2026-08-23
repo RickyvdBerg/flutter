@@ -81,7 +81,10 @@ TEST(EmbedderProcTable, ReportsAvioSemanticCapabilities) {
       kFlutterAvioExtensionFeatureExactVsyncCancellation |
       kFlutterAvioExtensionFeatureFrameOpportunityOutcomes |
       kFlutterAvioExtensionFeatureSelectedTargetDamage |
-      kFlutterAvioExtensionFeatureViewVisibility;
+      kFlutterAvioExtensionFeatureViewVisibility |
+      kFlutterAvioExtensionFeatureAtomicCompositorMaterials |
+      kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition |
+      kFlutterAvioExtensionFeatureRenderDeadline;
 #if FML_OS_LINUX && defined(SHELL_ENABLE_VULKAN) && \
     defined(IMPELLER_SUPPORTS_RENDERING)
   expected_features |= kFlutterAvioExtensionFeatureResourceLifecycleConfig;

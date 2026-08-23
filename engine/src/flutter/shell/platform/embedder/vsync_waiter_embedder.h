@@ -41,13 +41,14 @@ class VsyncWaiterEmbedder final : public VsyncWaiter {
   bool SupportsPerDisplayVsync() const override;
 
   // |VsyncWaiter|
-  bool ReturnVsync(
-      DisplayId display_id,
-      intptr_t baton,
-      fml::TimePoint frame_start_time,
-      fml::TimePoint frame_target_time,
-      std::optional<uint64_t> frame_opportunity_id,
-      std::set<int64_t> frame_opportunity_target_ids = {}) override;
+  bool ReturnVsync(DisplayId display_id,
+                   intptr_t baton,
+                   fml::TimePoint frame_start_time,
+                   fml::TimePoint frame_target_time,
+                   std::optional<uint64_t> frame_opportunity_id,
+                   std::set<int64_t> frame_opportunity_target_ids = {},
+                   std::optional<fml::TimePoint> render_deadline_time =
+                       std::nullopt) override;
 
   // |VsyncWaiter|
   bool CancelVsync(DisplayId display_id,

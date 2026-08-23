@@ -62,6 +62,12 @@ fml::TimePoint FrameTimingsRecorder::GetVsyncTargetTime() const {
   return vsync_target_;
 }
 
+fml::TimePoint FrameTimingsRecorder::GetRenderDeadlineTime() const {
+  std::scoped_lock state_lock(state_mutex_);
+  FML_DCHECK(state_ >= State::kVsync);
+  return render_deadline_;
+}
+
 fml::TimePoint FrameTimingsRecorder::GetBuildStartTime() const {
   std::scoped_lock state_lock(state_mutex_);
   FML_DCHECK(state_ >= State::kBuildStart);
@@ -128,7 +134,17 @@ size_t FrameTimingsRecorder::GetPictureCacheBytes() const {
 
 void FrameTimingsRecorder::RecordVsync(fml::TimePoint vsync_start,
                                        fml::TimePoint vsync_target) {
-  fml::Status status = RecordVsyncImpl(vsync_start, vsync_target);
+  fml::Status status =
+      RecordVsyncImpl(vsync_start, vsync_target, vsync_target, false);
+  FML_DCHECK(status.ok());
+  (void)status;
+}
+
+void FrameTimingsRecorder::RecordVsync(fml::TimePoint vsync_start,
+                                       fml::TimePoint render_deadline,
+                                       fml::TimePoint vsync_target) {
+  fml::Status status =
+      RecordVsyncImpl(vsync_start, render_deadline, vsync_target, true);
   FML_DCHECK(status.ok());
   (void)status;
 }
@@ -151,15 +167,28 @@ void FrameTimingsRecorder::RecordRasterStart(fml::TimePoint raster_start) {
   (void)status;
 }
 
-fml::Status FrameTimingsRecorder::RecordVsyncImpl(fml::TimePoint vsync_start,
-                                                  fml::TimePoint vsync_target) {
+fml::Status FrameTimingsRecorder::RecordVsyncImpl(
+    fml::TimePoint vsync_start,
+    fml::TimePoint render_deadline,
+    fml::TimePoint vsync_target,
+    bool exact_render_deadline) {
   std::scoped_lock state_lock(state_mutex_);
   if (state_ != State::kUninitialized) {
     return fml::Status(fml::StatusCode::kFailedPrecondition,
                        "Check failed: state_ == State::kUninitialized.");
   }
+  if (vsync_start > render_deadline ||
+      (exact_render_deadline ? render_deadline >= vsync_target
+                             : render_deadline > vsync_target)) {
+    return fml::Status(
+        fml::StatusCode::kInvalidArgument,
+        exact_render_deadline
+            ? "Check failed: vsync_start <= render_deadline < vsync_target."
+            : "Check failed: vsync_start <= render_deadline <= vsync_target.");
+  }
   state_ = State::kVsync;
   vsync_start_ = vsync_start;
+  render_deadline_ = render_deadline;
   vsync_target_ = vsync_target;
   return fml::Status();
 }
@@ -246,6 +275,7 @@ std::unique_ptr<FrameTimingsRecorder> FrameTimingsRecorder::CloneUntil(
 
   if (state >= State::kVsync) {
     recorder->vsync_start_ = vsync_start_;
+    recorder->render_deadline_ = render_deadline_;
     recorder->vsync_target_ = vsync_target_;
   }
 

@@ -33,6 +33,18 @@ AvioCompositorMaterial MakeMaterial(uint64_t id, DlRect rect) {
   };
 }
 
+AvioCompositorMaterial MakeBottomEdgeMaterial(uint64_t id, DlRect rect) {
+  auto material = MakeMaterial(id, rect);
+  material.uses_default_corner = false;
+  material.corner_mask = 0u;
+  material.clip_kind = AvioCompositorMaterialClipKind::kBottomEdgePull;
+  material.clip_parameter_0 = rect.GetWidth() * 0.6f;
+  material.clip_parameter_1 = 1.0f;
+  material.clip_parameter_2 = rect.GetHeight() * 0.75f;
+  material.clip_parameter_3 = 8.0f;
+  return material;
+}
+
 class AvioCompositorMaterialLayerTest : public LayerTest {
  public:
   std::vector<AvioCompositorMaterial>& CollectIntoFrame() {
@@ -90,6 +102,26 @@ TEST_F(AvioCompositorMaterialLayerTest,
   EXPECT_FALSE(invalid());
 }
 
+TEST_F(AvioCompositorMaterialLayerTest,
+       UniformScaleTransformsBottomEdgeLengths) {
+  auto& materials = CollectIntoFrame();
+  auto material = std::make_shared<AvioCompositorMaterialLayer>(
+      MakeBottomEdgeMaterial(10u, DlRect::MakeXYWH(2.0f, 3.0f, 200.0f, 80.0f)));
+  auto transform =
+      std::make_shared<TransformLayer>(DlMatrix::MakeScale({2.0f, 2.0f, 1.0f}));
+  transform->Add(material);
+
+  transform->Preroll(preroll_context());
+
+  ASSERT_EQ(materials.size(), 1u);
+  EXPECT_EQ(materials[0].rect, DlRect::MakeXYWH(4.0f, 6.0f, 400.0f, 160.0f));
+  EXPECT_NEAR(materials[0].clip_parameter_0, 240.0f, 0.001f);
+  EXPECT_EQ(materials[0].clip_parameter_1, 1.0f);
+  EXPECT_EQ(materials[0].clip_parameter_2, 120.0f);
+  EXPECT_EQ(materials[0].clip_parameter_3, 16.0f);
+  EXPECT_FALSE(invalid());
+}
+
 TEST_F(AvioCompositorMaterialLayerTest, NonUniformScaleRejectsTheFrameShape) {
   auto& materials = CollectIntoFrame();
   auto material = std::make_shared<AvioCompositorMaterialLayer>(
@@ -141,6 +173,25 @@ TEST(AvioCompositorMaterialTest, MalformedDescriptorsFailClosed) {
   material.corner_exponent = 13.0f;
   EXPECT_FALSE(IsValidAvioCompositorMaterial(material));
   material.corner_exponent = 2.0f;
+
+  material.clip_parameter_0 = 1.0f;
+  EXPECT_FALSE(IsValidAvioCompositorMaterial(material));
+  material.clip_parameter_0 = 0.0f;
+
+  auto bottom_edge =
+      MakeBottomEdgeMaterial(2u, DlRect::MakeXYWH(0.0f, 0.0f, 200.0f, 80.0f));
+  EXPECT_TRUE(IsValidAvioCompositorMaterial(bottom_edge));
+  bottom_edge.clip_parameter_1 = 1.26f;
+  EXPECT_FALSE(IsValidAvioCompositorMaterial(bottom_edge));
+  bottom_edge.clip_parameter_1 = 1.0f;
+  bottom_edge.clip_parameter_0 = 201.0f;
+  EXPECT_FALSE(IsValidAvioCompositorMaterial(bottom_edge));
+  bottom_edge.clip_parameter_0 = 120.0f;
+  bottom_edge.clip_parameter_2 = 81.0f;
+  EXPECT_FALSE(IsValidAvioCompositorMaterial(bottom_edge));
+  bottom_edge.clip_parameter_2 = 60.0f;
+  bottom_edge.corner_mask = 0x0fu;
+  EXPECT_FALSE(IsValidAvioCompositorMaterial(bottom_edge));
 
   material.recipe = static_cast<AvioCompositorMaterialRecipe>(99u);
   EXPECT_FALSE(IsValidAvioCompositorMaterial(material));
@@ -208,6 +259,21 @@ TEST_F(AvioCompositorMaterialLayerTest,
       DlRoundRect::MakeRectXY(DlRect::MakeXYWH(0.0f, 0.0f, 40.0f, 40.0f), 8.0f,
                               8.0f),
       Clip::kAntiAlias);
+  clip->Add(material);
+
+  clip->Preroll(preroll_context());
+
+  EXPECT_TRUE(materials.empty());
+  EXPECT_TRUE(invalid());
+}
+
+TEST_F(AvioCompositorMaterialLayerTest, RectilinearCropRejectsBottomEdgeShape) {
+  auto& materials = CollectIntoFrame();
+  auto material =
+      std::make_shared<AvioCompositorMaterialLayer>(MakeBottomEdgeMaterial(
+          5u, DlRect::MakeXYWH(10.0f, 10.0f, 200.0f, 80.0f)));
+  auto clip = std::make_shared<ClipRectLayer>(
+      DlRect::MakeXYWH(20.0f, 10.0f, 180.0f, 80.0f), Clip::kHardEdge);
   clip->Add(material);
 
   clip->Preroll(preroll_context());

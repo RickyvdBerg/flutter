@@ -249,6 +249,11 @@ void SceneBuilder::pushAvioCompositorMaterial(
     double noise_opacity,
     int32_t order,
     double strength,
+    uint32_t clip_kind,
+    double clip_parameter_0,
+    double clip_parameter_1,
+    double clip_parameter_2,
+    double clip_parameter_3,
     const fml::RefPtr<EngineLayer>& old_layer) {
   AvioCompositorMaterial material = {
       .id = id > 0 ? static_cast<uint64_t>(id) : 0u,
@@ -270,6 +275,11 @@ void SceneBuilder::pushAvioCompositorMaterial(
       .noise_opacity = SafeNarrow(noise_opacity),
       .order = order,
       .strength = SafeNarrow(strength),
+      .clip_kind = static_cast<AvioCompositorMaterialClipKind>(clip_kind),
+      .clip_parameter_0 = SafeNarrow(clip_parameter_0),
+      .clip_parameter_1 = SafeNarrow(clip_parameter_1),
+      .clip_parameter_2 = SafeNarrow(clip_parameter_2),
+      .clip_parameter_3 = SafeNarrow(clip_parameter_3),
   };
   auto layer =
       std::make_shared<AvioCompositorMaterialLayer>(std::move(material));

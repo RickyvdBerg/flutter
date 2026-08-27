@@ -34,6 +34,32 @@ TEST(EmbedderExternalViewEmbedderTest,
   EXPECT_EQ(converted[0].corner_scale, 1.5f);
 }
 
+TEST(EmbedderExternalViewEmbedderTest,
+     MaterialCoordinatesScaleBottomEdgeLengthsButNotProgress) {
+  AvioCompositorMaterial material = {
+      .id = 2u,
+      .rect = DlRect::MakeXYWH(4.0f, 6.0f, 400.0f, 80.0f),
+      .recipe = AvioCompositorMaterialRecipe::kTiered,
+      .tier = 2u,
+      .clip_kind = AvioCompositorMaterialClipKind::kBottomEdgePull,
+      .clip_parameter_0 = 240.0f,
+      .clip_parameter_1 = 0.8f,
+      .clip_parameter_2 = 62.0f,
+      .clip_parameter_3 = 8.0f,
+  };
+
+  const auto converted = ConvertAvioCompositorMaterialsToEmbedderCoordinates(
+      {material}, DlMatrix::MakeScale({3.0f, 3.0f, 1.0f}), 2.0);
+
+  ASSERT_EQ(converted.size(), 1u);
+  EXPECT_EQ(converted[0].clip_kind,
+            kFlutterAvioCompositorMaterialClipBottomEdgePull);
+  EXPECT_EQ(converted[0].clip_parameter_0, 360.0);
+  EXPECT_NEAR(converted[0].clip_parameter_1, 0.8, 0.000001);
+  EXPECT_EQ(converted[0].clip_parameter_2, 93.0);
+  EXPECT_EQ(converted[0].clip_parameter_3, 12.0);
+}
+
 AvioCompositorMaterial MakeMaterial(uint64_t id, const DlRect& rect) {
   return AvioCompositorMaterial{
       .id = id,

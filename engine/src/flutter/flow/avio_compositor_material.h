@@ -18,6 +18,11 @@ enum class AvioCompositorMaterialRecipe : uint32_t {
   kTiered = 1,
 };
 
+enum class AvioCompositorMaterialClipKind : uint32_t {
+  kRoundedRectangle = 0,
+  kBottomEdgePull = 1,
+};
+
 /// Immutable compositor-material metadata collected from one retained scene.
 ///
 /// The rect starts in layer-local coordinates. Layer-tree preroll copies the
@@ -46,6 +51,12 @@ struct AvioCompositorMaterial {
   DlScalar noise_opacity = 0.0f;
   int32_t order = 0;
   DlScalar strength = 1.0f;
+  AvioCompositorMaterialClipKind clip_kind =
+      AvioCompositorMaterialClipKind::kRoundedRectangle;
+  DlScalar clip_parameter_0 = 0.0f;
+  DlScalar clip_parameter_1 = 0.0f;
+  DlScalar clip_parameter_2 = 0.0f;
+  DlScalar clip_parameter_3 = 0.0f;
 
   bool operator==(const AvioCompositorMaterial&) const = default;
 };
@@ -55,10 +66,11 @@ struct AvioCompositorMaterial {
 constexpr size_t kMaxAvioCompositorMaterialsPerFrame = 64u;
 constexpr DlScalar kMaxAvioCompositorMaterialCornerExponent = 12.0f;
 
-/// Whether a retained descriptor can be represented exactly by Avio's v1
-/// external material vocabulary. Dart assertions are developer guidance; this
-/// check is the release-mode engine boundary and therefore rejects malformed
-/// native input instead of normalizing it into a different scene.
+/// Whether a retained descriptor can be represented exactly by Avio's
+/// versioned external material vocabulary. Dart assertions are developer
+/// guidance; this check is the release-mode engine boundary and therefore
+/// rejects malformed native input instead of normalizing it into a different
+/// scene.
 inline bool IsValidAvioCompositorMaterial(
     const AvioCompositorMaterial& material) {
   const auto is_finite_non_negative = [](DlScalar value) {
@@ -84,8 +96,38 @@ inline bool IsValidAvioCompositorMaterial(
       !is_finite_non_negative(material.saturation) ||
       !is_finite_non_negative(material.luminosity) ||
       !is_finite_unit(material.noise_opacity) ||
-      !is_finite_unit(material.strength)) {
+      !is_finite_unit(material.strength) ||
+      !std::isfinite(material.clip_parameter_0) ||
+      !std::isfinite(material.clip_parameter_1) ||
+      !std::isfinite(material.clip_parameter_2) ||
+      !std::isfinite(material.clip_parameter_3)) {
     return false;
+  }
+
+  switch (material.clip_kind) {
+    case AvioCompositorMaterialClipKind::kRoundedRectangle:
+      if (material.clip_parameter_0 != 0.0f ||
+          material.clip_parameter_1 != 0.0f ||
+          material.clip_parameter_2 != 0.0f ||
+          material.clip_parameter_3 != 0.0f) {
+        return false;
+      }
+      break;
+    case AvioCompositorMaterialClipKind::kBottomEdgePull:
+      if (material.uses_default_corner || material.corner_mask != 0u ||
+          material.clip_parameter_0 <= 0.0f ||
+          material.clip_parameter_0 > material.rect.GetWidth() ||
+          material.clip_parameter_1 < 0.0f ||
+          material.clip_parameter_1 > 1.25f ||
+          material.clip_parameter_2 <= 0.0f ||
+          material.clip_parameter_2 * material.clip_parameter_1 >
+              material.rect.GetHeight() ||
+          material.clip_parameter_3 < 0.0f) {
+        return false;
+      }
+      break;
+    default:
+      return false;
   }
 
   switch (material.recipe) {

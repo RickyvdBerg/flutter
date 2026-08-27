@@ -54,10 +54,18 @@ void AvioCompositorMaterialLayer::Preroll(PrerollContext* context) {
   if (!transformed.has_value() || transformed->IsEmpty()) {
     return;
   }
+  if (material_.clip_kind == AvioCompositorMaterialClipKind::kBottomEdgePull &&
+      transformed.value() != full_bounds) {
+    // Cropping a parametric pull changes its baseline, center, or shoulder.
+    // That cannot be represented by the original four parameters.
+    *context->avio_compositor_materials_invalid = true;
+    return;
+  }
   if (!context->state_stack.scene_clip_is_rectilinear()) {
-    // The external compositor consumes axis-aligned rounded rectangles. A
-    // path, rrect, or superellipse ancestor can cut an arbitrary shape from
-    // this node, which cannot be represented by its material descriptor.
+    // The external compositor consumes an axis-aligned closed shape
+    // vocabulary. A path, rrect, or superellipse ancestor can cut an
+    // arbitrary shape from this node, which cannot be represented by its
+    // material descriptor.
     *context->avio_compositor_materials_invalid = true;
     return;
   }
@@ -68,10 +76,10 @@ void AvioCompositorMaterialLayer::Preroll(PrerollContext* context) {
       !std::isfinite(*max_scale) || *max_scale <= 0.0f || matrix.m[0] <= 0.0f ||
       matrix.m[5] <= 0.0f ||
       std::abs(*max_scale - *min_scale) > *max_scale * 0.0001f) {
-    // The external compositor currently consumes axis-aligned rounded
-    // rectangles. Publishing a bounding box for rotation, reflection,
-    // perspective, or a non-uniform scale would silently describe a different
-    // shape (and reflection would also require remapping corner identity).
+    // The external compositor consumes axis-aligned closed shapes. Publishing
+    // a bounding box for rotation, reflection, perspective, or a non-uniform
+    // scale would silently describe a different shape (and reflection would
+    // also require remapping corner identity).
     *context->avio_compositor_materials_invalid = true;
     return;
   }
@@ -94,18 +102,27 @@ void AvioCompositorMaterialLayer::Preroll(PrerollContext* context) {
   auto material = material_;
   material.rect = transformed.value();
   material.corner_scale = *max_scale;
+  if (material.clip_kind == AvioCompositorMaterialClipKind::kBottomEdgePull) {
+    material.clip_parameter_0 *= *max_scale;
+    material.clip_parameter_2 *= *max_scale;
+    material.clip_parameter_3 *= *max_scale;
+  }
   // Clipping an original corner creates a square cut edge, not a new rounded
   // corner at the clipped boundary.
-  if (material.rect.GetLeft() > full_bounds.GetLeft()) {
+  if (material.clip_kind == AvioCompositorMaterialClipKind::kRoundedRectangle &&
+      material.rect.GetLeft() > full_bounds.GetLeft()) {
     material.corner_mask &= ~(0x01u | 0x08u);
   }
-  if (material.rect.GetTop() > full_bounds.GetTop()) {
+  if (material.clip_kind == AvioCompositorMaterialClipKind::kRoundedRectangle &&
+      material.rect.GetTop() > full_bounds.GetTop()) {
     material.corner_mask &= ~(0x01u | 0x02u);
   }
-  if (material.rect.GetRight() < full_bounds.GetRight()) {
+  if (material.clip_kind == AvioCompositorMaterialClipKind::kRoundedRectangle &&
+      material.rect.GetRight() < full_bounds.GetRight()) {
     material.corner_mask &= ~(0x02u | 0x04u);
   }
-  if (material.rect.GetBottom() < full_bounds.GetBottom()) {
+  if (material.clip_kind == AvioCompositorMaterialClipKind::kRoundedRectangle &&
+      material.rect.GetBottom() < full_bounds.GetBottom()) {
     material.corner_mask &= ~(0x04u | 0x08u);
   }
   material.strength =

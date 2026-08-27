@@ -117,6 +117,11 @@ class SceneBuilder : public RefCountedDartWrappable<SceneBuilder> {
                                   double noise_opacity,
                                   int32_t order,
                                   double strength,
+                                  uint32_t clip_kind,
+                                  double clip_parameter_0,
+                                  double clip_parameter_1,
+                                  double clip_parameter_2,
+                                  double clip_parameter_3,
                                   const fml::RefPtr<EngineLayer>& old_layer);
 
   void addRetained(const fml::RefPtr<EngineLayer>& retained_layer);

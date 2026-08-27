@@ -300,6 +300,12 @@ static void fl_view_present_layers(
         .noise_opacity = material.noise_opacity,
         .order = material.order,
         .strength = material.strength,
+        .clip_kind =
+            static_cast<FlCompositorMaterialClipKind>(material.clip_kind),
+        .clip_parameter_0 = material.clip_parameter_0,
+        .clip_parameter_1 = material.clip_parameter_1,
+        .clip_parameter_2 = material.clip_parameter_2,
+        .clip_parameter_3 = material.clip_parameter_3,
     };
   }
   fl_view_renderer_present_layers(self->renderer, layers, layers_count,

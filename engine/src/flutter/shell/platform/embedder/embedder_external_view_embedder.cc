@@ -405,6 +405,15 @@ ConvertAvioCompositorMaterialsToEmbedderCoordinates(
         .noise_opacity = material.noise_opacity,
         .order = material.order,
         .strength = material.strength,
+        .clip_kind = static_cast<FlutterAvioCompositorMaterialClipKind>(
+            material.clip_kind),
+        .clip_parameter_0 =
+            material.clip_parameter_0 * surface_scale * logical_scale,
+        .clip_parameter_1 = material.clip_parameter_1,
+        .clip_parameter_2 =
+            material.clip_parameter_2 * surface_scale * logical_scale,
+        .clip_parameter_3 =
+            material.clip_parameter_3 * surface_scale * logical_scale,
     });
   }
   return result;

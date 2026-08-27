@@ -243,6 +243,12 @@ class ShaderMaskEngineLayer extends _EngineLayerWrapper {
 /// it with the exact frame carrying the retained layer tree.
 enum AvioCompositorMaterialRecipe { explicit, tiered }
 
+/// Analytic clip vocabulary for an Avio external-compositor material node.
+///
+/// This is deliberately a closed set. The engine transports compact validated
+/// parameters; it does not accept an arbitrary client bitmap or path.
+enum AvioCompositorMaterialClipKind { roundedRectangle, bottomEdgePull }
+
 /// An opaque handle to an Avio compositor-material engine layer.
 ///
 /// Instances are created by [SceneBuilder.pushAvioCompositorMaterial].
@@ -496,6 +502,11 @@ abstract class SceneBuilder {
     double noiseOpacity = 0,
     int order = 0,
     double strength = 1,
+    AvioCompositorMaterialClipKind clipKind = AvioCompositorMaterialClipKind.roundedRectangle,
+    double clipParameter0 = 0,
+    double clipParameter1 = 0,
+    double clipParameter2 = 0,
+    double clipParameter3 = 0,
     AvioCompositorMaterialEngineLayer? oldLayer,
   });
 
@@ -1005,22 +1016,41 @@ base class _NativeSceneBuilder extends NativeFieldWrapperClass1 implements Scene
     double noiseOpacity = 0,
     int order = 0,
     double strength = 1,
+    AvioCompositorMaterialClipKind clipKind = AvioCompositorMaterialClipKind.roundedRectangle,
+    double clipParameter0 = 0,
+    double clipParameter1 = 0,
+    double clipParameter2 = 0,
+    double clipParameter3 = 0,
     AvioCompositorMaterialEngineLayer? oldLayer,
   }) {
     assert(id > 0);
     assert(rect.isFinite && !rect.isEmpty);
     assert(tier >= 0);
     assert(cornerRadius.isFinite && cornerRadius >= 0);
-    assert(
-      cornerExponent.isFinite &&
-          cornerExponent >= 2 &&
-          cornerExponent <= 12,
-    );
+    assert(cornerExponent.isFinite && cornerExponent >= 2 && cornerExponent <= 12);
     assert(blurRadius.isFinite && blurRadius >= 0);
     assert(saturation.isFinite && saturation >= 0);
     assert(luminosity.isFinite && luminosity >= 0);
     assert(noiseOpacity.isFinite && noiseOpacity >= 0 && noiseOpacity <= 1);
     assert(strength.isFinite && strength >= 0 && strength <= 1);
+    assert(switch (clipKind) {
+      AvioCompositorMaterialClipKind.roundedRectangle =>
+        clipParameter0 == 0 && clipParameter1 == 0 && clipParameter2 == 0 && clipParameter3 == 0,
+      AvioCompositorMaterialClipKind.bottomEdgePull =>
+        !usesDefaultCorner &&
+            cornerMask == 0 &&
+            clipParameter0.isFinite &&
+            clipParameter0 > 0 &&
+            clipParameter0 <= rect.width &&
+            clipParameter1.isFinite &&
+            clipParameter1 >= 0 &&
+            clipParameter1 <= 1.25 &&
+            clipParameter2.isFinite &&
+            clipParameter2 > 0 &&
+            clipParameter2 * clipParameter1 <= rect.height &&
+            clipParameter3.isFinite &&
+            clipParameter3 >= 0,
+    }, 'The compositor material clip parameters must describe a bounded shape.');
     assert(_debugCheckCanBeUsedAsOldLayer(oldLayer, 'pushAvioCompositorMaterial'));
     final EngineLayer engineLayer = _NativeEngineLayer._();
     _pushAvioCompositorMaterial(
@@ -1046,6 +1076,11 @@ base class _NativeSceneBuilder extends NativeFieldWrapperClass1 implements Scene
       noiseOpacity,
       order,
       strength,
+      clipKind.index,
+      clipParameter0,
+      clipParameter1,
+      clipParameter2,
+      clipParameter3,
       oldLayer?._nativeLayer,
     );
     final layer = AvioCompositorMaterialEngineLayer._(engineLayer);
@@ -1078,6 +1113,11 @@ base class _NativeSceneBuilder extends NativeFieldWrapperClass1 implements Scene
       Double,
       Int32,
       Double,
+      Uint32,
+      Double,
+      Double,
+      Double,
+      Double,
       Handle,
     )
   >(symbol: 'SceneBuilder::pushAvioCompositorMaterial')
@@ -1104,6 +1144,11 @@ base class _NativeSceneBuilder extends NativeFieldWrapperClass1 implements Scene
     double noiseOpacity,
     int order,
     double strength,
+    int clipKind,
+    double clipParameter0,
+    double clipParameter1,
+    double clipParameter2,
+    double clipParameter3,
     EngineLayer? oldLayer,
   );
 

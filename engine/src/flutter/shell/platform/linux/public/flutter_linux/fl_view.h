@@ -28,6 +28,11 @@ typedef enum {
   FL_COMPOSITOR_MATERIAL_RECIPE_TIERED = 1,
 } FlCompositorMaterialRecipe;
 
+typedef enum {
+  FL_COMPOSITOR_MATERIAL_CLIP_ROUNDED_RECTANGLE = 0,
+  FL_COMPOSITOR_MATERIAL_CLIP_BOTTOM_EDGE_PULL = 1,
+} FlCompositorMaterialClipKind;
+
 /// One immutable material node belonging to the exact frame being drawn.
 typedef struct {
   guint64 id;
@@ -53,6 +58,11 @@ typedef struct {
   gfloat noise_opacity;
   gint32 order;
   gfloat strength;
+  FlCompositorMaterialClipKind clip_kind;
+  gdouble clip_parameter_0;
+  gdouble clip_parameter_1;
+  gdouble clip_parameter_2;
+  gdouble clip_parameter_3;
 } FlCompositorMaterial;
 
 /// Called on the GTK thread immediately before the exact Flutter frame is

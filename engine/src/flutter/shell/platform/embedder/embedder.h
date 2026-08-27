@@ -73,7 +73,7 @@ extern "C" {
 // Flutter embedder ABI. The engine reports supported semantics through
 // FlutterEngineGetAvioExtensionCapabilities and validates the request again
 // during initialization, before creating a view or GPU resource.
-#define FLUTTER_AVIO_EXTENSION_VERSION 3u
+#define FLUTTER_AVIO_EXTENSION_VERSION 4u
 
 typedef uint64_t FlutterAvioExtensionFeatures;
 
@@ -103,6 +103,13 @@ typedef enum {
   /// The consumer resolves `tier` through its own trusted recipe table.
   kFlutterAvioCompositorMaterialRecipeTiered = 1,
 } FlutterAvioCompositorMaterialRecipe;
+
+typedef enum {
+  /// The existing rounded/superellipse material shape.
+  kFlutterAvioCompositorMaterialClipRoundedRectangle = 0,
+  /// Avio's flowing bottom edge pulled around a content-sized plateau.
+  kFlutterAvioCompositorMaterialClipBottomEdgePull = 1,
+} FlutterAvioCompositorMaterialClipKind;
 
 typedef struct {
   /// The size of this struct. Must be sizeof(FlutterAvioExtensionCapabilities).
@@ -860,6 +867,11 @@ typedef struct {
   float noise_opacity;
   int32_t order;
   float strength;
+  FlutterAvioCompositorMaterialClipKind clip_kind;
+  double clip_parameter_0;
+  double clip_parameter_1;
+  double clip_parameter_2;
+  double clip_parameter_3;
 } FlutterAvioCompositorMaterial;
 
 /// A structure to represent a 2D point.

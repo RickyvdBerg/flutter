@@ -43,7 +43,7 @@ enum class DlStrokeJoin {
   kDefaultJoin = kMiter,
 };
 
-enum class DlTextCoverageMode {
+enum class DlCoverageMode {
   kPlatformDefault,
   kExternalLinearBackdrop,
 
@@ -131,11 +131,11 @@ class DlPaint {
     return *this;
   }
 
-  DlTextCoverageMode getTextCoverageMode() const {
-    return static_cast<DlTextCoverageMode>(text_coverage_mode_);
+  DlCoverageMode getCoverageMode() const {
+    return static_cast<DlCoverageMode>(coverage_mode_);
   }
-  DlPaint& setTextCoverageMode(DlTextCoverageMode mode) {
-    text_coverage_mode_ = static_cast<unsigned>(mode);
+  DlPaint& setCoverageMode(DlCoverageMode mode) {
+    coverage_mode_ = static_cast<unsigned>(mode);
     return *this;
   }
 
@@ -229,12 +229,12 @@ class DlPaint {
   static constexpr int kDrawStyleBits = 2;
   static constexpr int kStrokeCapBits = 2;
   static constexpr int kStrokeJoinBits = 2;
-  static constexpr int kTextCoverageModeBits = 1;
+  static constexpr int kCoverageModeBits = 1;
   ASSERT_ENUM_FITS(DlBlendMode::kLastMode, kBlendModeBits);
   ASSERT_ENUM_FITS(DlDrawStyle::kLastStyle, kDrawStyleBits);
   ASSERT_ENUM_FITS(DlStrokeCap::kLastCap, kStrokeCapBits);
   ASSERT_ENUM_FITS(DlStrokeJoin::kLastJoin, kStrokeJoinBits);
-  ASSERT_ENUM_FITS(DlTextCoverageMode::kLastMode, kTextCoverageModeBits);
+  ASSERT_ENUM_FITS(DlCoverageMode::kLastMode, kCoverageModeBits);
 
   union {
     struct {
@@ -244,7 +244,7 @@ class DlPaint {
       unsigned stroke_join_ : kStrokeJoinBits = {};
       unsigned is_anti_alias_ : 1 = {};
       unsigned is_invert_colors_ : 1 = {};
-      unsigned text_coverage_mode_ : kTextCoverageModeBits = {};
+      unsigned coverage_mode_ : kCoverageModeBits = {};
     };
   };
 

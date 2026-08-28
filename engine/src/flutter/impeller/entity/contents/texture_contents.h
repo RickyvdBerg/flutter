@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "flutter/display_list/dl_paint.h"
 #include "impeller/core/sampler_descriptor.h"
 #include "impeller/entity/contents/contents.h"
 
@@ -90,6 +91,8 @@ class TextureContents final : public Contents {
 
   void SetOpacity(Scalar opacity);
 
+  void SetCoverageMode(flutter::DlCoverageMode mode);
+
   Scalar GetOpacity() const;
 
   void SetStencilEnabled(bool enabled);
@@ -142,6 +145,8 @@ class TextureContents final : public Contents {
   Scalar inherited_opacity_ = 1.0f;
   bool defer_applying_opacity_ = false;
   bool snapshots_need_rasterization_for_runtime_effects_ = false;
+  flutter::DlCoverageMode coverage_mode_ =
+      flutter::DlCoverageMode::kPlatformDefault;
 
   TextureContents(const TextureContents&) = delete;
 

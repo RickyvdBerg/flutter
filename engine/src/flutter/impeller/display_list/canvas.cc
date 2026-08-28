@@ -1451,6 +1451,7 @@ void Canvas::DrawImageRect(const std::shared_ptr<Texture>& image,
                                         SourceRectConstraint::kStrict);
   texture_contents->SetSamplerDescriptor(sampler);
   texture_contents->SetOpacity(paint.color.alpha);
+  texture_contents->SetCoverageMode(paint.coverage_mode);
   texture_contents->SetDeferApplyingOpacity(paint.HasColorFilter());
 
   Entity entity;
@@ -2203,6 +2204,7 @@ void Canvas::AddRenderSDFEntityToCurrentPass(
   }
   auto geometry = std::make_unique<UberSDFGeometry>(params);
   auto contents = UberSDFContents::Make(params, std::move(geometry));
+  contents->SetCoverageMode(paint.coverage_mode);
   const Geometry* geom = contents->GetGeometry();
 
   if (paint.color_source) {

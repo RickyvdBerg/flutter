@@ -210,6 +210,7 @@ std::shared_ptr<ColorSourceContents> Paint::CreateContents(
       contents->SetTexture(texture);
       contents->SetTileModes(x_tile_mode, y_tile_mode);
       contents->SetSamplerDescriptor(sampler_descriptor);
+      contents->SetCoverageMode(coverage_mode);
       contents->SetEffectTransform(inverted_geometry_transform *
                                    effect_transform);
       if (color_filter || invert_colors) {

@@ -5,6 +5,7 @@
 precision mediump float;
 
 #include <impeller/texture.glsl>
+#include <impeller/coverage.glsl>
 #include <impeller/types.glsl>
 
 layout(constant_id = 0) const float supports_decal = 1.0;
@@ -15,6 +16,7 @@ uniform FragInfo {
   float x_tile_mode;
   float y_tile_mode;
   float alpha;
+  float external_linear_backdrop;
 }
 frag_info;
 
@@ -37,4 +39,6 @@ void main() {
                      ) *
                  float16_t(frag_info.alpha);
   }
+  frag_color = f16vec4(IPApplyExternalLinearBackdropCoverage(
+      vec4(frag_color), frag_info.external_linear_backdrop));
 }

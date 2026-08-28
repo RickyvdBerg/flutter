@@ -19,7 +19,7 @@ namespace impeller {
 
 using PathCreator = std::function<fml::StatusOr<flutter::DlPath>()>;
 
-enum class TextCoverageMode {
+enum class CoverageMode {
   kPlatformDefault,
   kExternalLinearBackdrop,
 };
@@ -110,10 +110,8 @@ class TextFrame {
     return enable_gamma_correction_;
   }
 
-  void SetTextCoverageMode(TextCoverageMode value) {
-    text_coverage_mode_ = value;
-  }
-  TextCoverageMode GetTextCoverageMode() const { return text_coverage_mode_; }
+  void SetCoverageMode(CoverageMode value) { coverage_mode_ = value; }
+  CoverageMode GetCoverageMode() const { return coverage_mode_; }
 
  private:
   std::vector<TextRun> runs_;
@@ -121,7 +119,7 @@ class TextFrame {
   bool has_color_;
   const PathCreator path_creator_;
   std::optional<bool> enable_gamma_correction_ = std::nullopt;
-  TextCoverageMode text_coverage_mode_ = TextCoverageMode::kPlatformDefault;
+  CoverageMode coverage_mode_ = CoverageMode::kPlatformDefault;
 };
 
 }  // namespace impeller

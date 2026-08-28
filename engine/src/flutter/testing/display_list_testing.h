@@ -103,6 +103,7 @@ class DisplayListStreamDispatcher final : public DlOpReceiver {
       : os_(os), cur_indent_(cur_indent), indent_(indent) {}
 
   void setAntiAlias(bool aa) override;
+  void setCoverageMode(DlCoverageMode mode) override;
   void setDrawStyle(DlDrawStyle style) override;
   void setColor(DlColor color) override;
   void setStrokeWidth(DlScalar width) override;
@@ -326,6 +327,9 @@ class DisplayListGeneralReceiver : public DlOpReceiver {
     } else {
       RecordByType(DisplayListOpType::kClearImageFilter);
     }
+  }
+  void setCoverageMode(DlCoverageMode mode) override {
+    RecordByType(DisplayListOpType::kSetCoverageMode);
   }
   void setColorFilter(const DlColorFilter* filter) override {
     if (filter) {

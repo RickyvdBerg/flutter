@@ -5,6 +5,7 @@
 precision mediump float;
 
 #include <impeller/color.glsl>
+#include <impeller/coverage.glsl>
 #include <impeller/types.glsl>
 
 #include "sdf_functions.glsl"
@@ -27,6 +28,7 @@ uniform FragInfo {
   vec2 circle_center_right;
   vec2 superellipse_scale;
   vec4 radii;
+  float external_linear_backdrop;
 }
 frag_info;
 
@@ -287,8 +289,12 @@ void main() {
   // Clamp alpha in case floating point precision errors cause it to be outside
   // [0.0, 1.0].
   alpha = clamp(alpha, 0.0, 1.0);
-  alpha = gammaCorrectedAlpha(alpha, frag_info.color.rgb);
+  if (frag_info.external_linear_backdrop < 0.5) {
+    alpha = gammaCorrectedAlpha(alpha, frag_info.color.rgb);
+  }
 
   frag_color = vec4(frag_info.color.rgb, frag_info.color.a * alpha);
   frag_color = IPPremultiply(frag_color);
+  frag_color = IPApplyExternalLinearBackdropCoverage(
+      frag_color, frag_info.external_linear_backdrop);
 }

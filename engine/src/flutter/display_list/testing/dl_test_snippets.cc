@@ -95,6 +95,19 @@ std::vector<DisplayListInvocationGroup> CreateAllAttributesOps() {
            // Reset attribute to default as last entry
            {0, 0, 0, [](DlOpReceiver& r) { r.setAntiAlias(false); }},
        }},
+      {"SetCoverageMode",
+       {
+           {0, 8, 0,
+            [](DlOpReceiver& r) {
+              r.setCoverageMode(DlCoverageMode::kExternalLinearBackdrop);
+            }},
+
+           // Reset attribute to default as last entry
+           {0, 0, 0,
+            [](DlOpReceiver& r) {
+              r.setCoverageMode(DlCoverageMode::kPlatformDefault);
+            }},
+       }},
       {"SetInvertColors",
        {
            {0, 8, 0, [](DlOpReceiver& r) { r.setInvertColors(true); }},

@@ -821,7 +821,7 @@ void convertPaintToDlPaint() {
   paint.maskFilter = MaskFilter.blur(BlurStyle.inner, .75);
   paint.style = PaintingStyle.stroke;
   paint.isAntiAlias = false;
-  paint.avioTextCoverageMode = AvioTextCoverageMode.externalLinearBackdrop;
+  paint.avioCoverageMode = AvioCoverageMode.externalLinearBackdrop;
   _convertPaintToDlPaint(paint);
 }
 

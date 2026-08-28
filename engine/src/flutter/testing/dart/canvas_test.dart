@@ -1354,7 +1354,7 @@ void main() async {
       ..blendMode = BlendMode.srcOver
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10.0)
       ..filterQuality = FilterQuality.high
-      ..avioTextCoverageMode = AvioTextCoverageMode.externalLinearBackdrop
+      ..avioCoverageMode = AvioCoverageMode.externalLinearBackdrop
       ..colorFilter = const ColorFilter.mode(Color(0xFF00FF00), BlendMode.color)
       ..imageFilter = ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0);
 
@@ -1367,7 +1367,7 @@ void main() async {
     expect(paintCopy.blendMode, equals(BlendMode.srcOver));
     expect(paintCopy.maskFilter, equals(const MaskFilter.blur(BlurStyle.normal, 10.0)));
     expect(paintCopy.filterQuality, equals(FilterQuality.high));
-    expect(paintCopy.avioTextCoverageMode, AvioTextCoverageMode.externalLinearBackdrop);
+    expect(paintCopy.avioCoverageMode, AvioCoverageMode.externalLinearBackdrop);
     expect(
       paintCopy.colorFilter,
       equals(const ColorFilter.mode(Color(0xFF00FF00), BlendMode.color)),
@@ -1385,7 +1385,7 @@ void main() async {
       ..blendMode = BlendMode.srcOver
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10.0)
       ..filterQuality = FilterQuality.high
-      ..avioTextCoverageMode = AvioTextCoverageMode.externalLinearBackdrop
+      ..avioCoverageMode = AvioCoverageMode.externalLinearBackdrop
       ..colorFilter = const ColorFilter.mode(Color(0xFF00FF00), BlendMode.color)
       ..imageFilter = ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0);
 
@@ -1399,7 +1399,7 @@ void main() async {
       ..blendMode = BlendMode.srcIn
       ..maskFilter = const MaskFilter.blur(BlurStyle.solid, 20.0)
       ..filterQuality = FilterQuality.none
-      ..avioTextCoverageMode = AvioTextCoverageMode.platformDefault
+      ..avioCoverageMode = AvioCoverageMode.platformDefault
       ..colorFilter = const ColorFilter.mode(Color(0xFFFF0000), BlendMode.modulate)
       ..imageFilter = ImageFilter.blur(sigmaX: 20.0, sigmaY: 20.0);
 
@@ -1412,7 +1412,7 @@ void main() async {
     expect(paint.blendMode, equals(BlendMode.srcOver));
     expect(paint.maskFilter, equals(const MaskFilter.blur(BlurStyle.normal, 10.0)));
     expect(paint.filterQuality, equals(FilterQuality.high));
-    expect(paint.avioTextCoverageMode, AvioTextCoverageMode.externalLinearBackdrop);
+    expect(paint.avioCoverageMode, AvioCoverageMode.externalLinearBackdrop);
     expect(paint.colorFilter, equals(const ColorFilter.mode(Color(0xFF00FF00), BlendMode.color)));
     expect(paint.imageFilter, equals(ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0)));
   });
@@ -1427,7 +1427,7 @@ void main() async {
       ..blendMode = BlendMode.srcOver
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10.0)
       ..filterQuality = FilterQuality.high
-      ..avioTextCoverageMode = AvioTextCoverageMode.externalLinearBackdrop
+      ..avioCoverageMode = AvioCoverageMode.externalLinearBackdrop
       ..colorFilter = const ColorFilter.mode(Color(0xFF00FF00), BlendMode.color)
       ..imageFilter = ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0);
 
@@ -1442,7 +1442,7 @@ void main() async {
       ..blendMode = BlendMode.srcIn
       ..maskFilter = const MaskFilter.blur(BlurStyle.solid, 20.0)
       ..filterQuality = FilterQuality.none
-      ..avioTextCoverageMode = AvioTextCoverageMode.platformDefault
+      ..avioCoverageMode = AvioCoverageMode.platformDefault
       ..colorFilter = const ColorFilter.mode(Color(0xFFFF0000), BlendMode.modulate)
       ..imageFilter = ImageFilter.blur(sigmaX: 20.0, sigmaY: 20.0);
 
@@ -1455,7 +1455,7 @@ void main() async {
     expect(paintCopy.blendMode, equals(BlendMode.srcOver));
     expect(paintCopy.maskFilter, equals(const MaskFilter.blur(BlurStyle.normal, 10.0)));
     expect(paintCopy.filterQuality, equals(FilterQuality.high));
-    expect(paintCopy.avioTextCoverageMode, AvioTextCoverageMode.externalLinearBackdrop);
+    expect(paintCopy.avioCoverageMode, AvioCoverageMode.externalLinearBackdrop);
     expect(
       paintCopy.colorFilter,
       equals(const ColorFilter.mode(Color(0xFF00FF00), BlendMode.color)),

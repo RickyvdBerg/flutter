@@ -52,6 +52,10 @@ void TextureContents::SetOpacity(Scalar opacity) {
   opacity_ = opacity;
 }
 
+void TextureContents::SetCoverageMode(flutter::DlCoverageMode mode) {
+  coverage_mode_ = mode;
+}
+
 void TextureContents::SetStencilEnabled(bool enabled) {
   stencil_enabled_ = enabled;
 }
@@ -79,7 +83,8 @@ std::optional<Snapshot> TextureContents::RenderToSnapshot(
   // rects.
   auto bounds = destination_rect_;
   auto opacity = GetOpacity();
-  if (source_rect_ == Rect::MakeSize(texture_->GetSize()) &&
+  if (coverage_mode_ == flutter::DlCoverageMode::kPlatformDefault &&
+      source_rect_ == Rect::MakeSize(texture_->GetSize()) &&
       (opacity >= 1 - kEhCloseEnough || defer_applying_opacity_)) {
     auto scale = Vector2(bounds.GetSize() / Size(texture_->GetSize()));
     return Snapshot{.texture = texture_,
@@ -186,6 +191,10 @@ bool TextureContents::Render(const ContentContext& renderer,
     FSStrict::FragInfo frag_info;
     frag_info.source_rect = Vector4(strict_texture_coords.GetLTRB());
     frag_info.alpha = GetOpacity();
+    frag_info.external_linear_backdrop =
+        coverage_mode_ == flutter::DlCoverageMode::kExternalLinearBackdrop
+            ? 1.0f
+            : 0.0f;
     FSStrict::BindFragInfo(pass, data_host_buffer.EmplaceUniform((frag_info)));
     FSStrict::BindTextureSampler(
         pass, texture_,
@@ -199,6 +208,10 @@ bool TextureContents::Render(const ContentContext& renderer,
     frag_info.y_tile_mode =
         static_cast<Scalar>(sampler_descriptor_.height_address_mode);
     frag_info.alpha = GetOpacity();
+    frag_info.external_linear_backdrop =
+        coverage_mode_ == flutter::DlCoverageMode::kExternalLinearBackdrop
+            ? 1.0f
+            : 0.0f;
     FSExternal::BindFragInfo(pass, data_host_buffer.EmplaceUniform(frag_info));
 
     SamplerDescriptor sampler_desc;
@@ -218,6 +231,10 @@ bool TextureContents::Render(const ContentContext& renderer,
   } else {
     FS::FragInfo frag_info;
     frag_info.alpha = GetOpacity();
+    frag_info.external_linear_backdrop =
+        coverage_mode_ == flutter::DlCoverageMode::kExternalLinearBackdrop
+            ? 1.0f
+            : 0.0f;
     FS::BindFragInfo(pass, data_host_buffer.EmplaceUniform((frag_info)));
     FS::BindTextureSampler(
         pass, texture_,

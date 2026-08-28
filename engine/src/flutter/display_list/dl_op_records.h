@@ -83,6 +83,19 @@ DEFINE_SET_BOOL_OP(InvertColors)
 #undef DEFINE_SET_BOOL_OP
 
 // 4 byte header + 4 byte payload packs into minimum 8 bytes
+struct SetCoverageModeOp final : DLOp {
+  static constexpr auto kType = DisplayListOpType::kSetCoverageMode;
+
+  explicit SetCoverageModeOp(DlCoverageMode mode) : DLOp(kType), mode(mode) {}
+
+  const DlCoverageMode mode;
+
+  void dispatch(DlOpReceiver& receiver) const {
+    receiver.setCoverageMode(mode);
+  }
+};
+
+// 4 byte header + 4 byte payload packs into minimum 8 bytes
 #define DEFINE_SET_ENUM_OP(name)                                       \
   struct SetStroke##name##Op final : DLOp {                            \
     static constexpr auto kType = DisplayListOpType::kSetStroke##name; \

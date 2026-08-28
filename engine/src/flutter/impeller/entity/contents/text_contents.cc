@@ -35,7 +35,6 @@ constexpr bool kPlatformGammaCorrectionDefault =
 #endif
 
 constexpr Scalar kMaxPlatformGammaCorrection = 1.2f;
-constexpr Scalar kExternalLinearBackdropContrast = 2.2f;
 
 Point SizeToPoint(Size size) {
   return Point(size.width, size.height);
@@ -51,15 +50,17 @@ TextContents::~TextContents() = default;
 
 Scalar TextContents::ComputeTextContrast(
     Color color,
-    TextCoverageMode coverage_mode,
+    CoverageMode coverage_mode,
     std::optional<bool> enable_gamma_correction) {
   if (!enable_gamma_correction.value_or(
-          coverage_mode == TextCoverageMode::kExternalLinearBackdrop ||
+          coverage_mode == CoverageMode::kExternalLinearBackdrop ||
           kPlatformGammaCorrectionDefault)) {
     return 1.0f;
   }
-  if (coverage_mode == TextCoverageMode::kExternalLinearBackdrop) {
-    return kExternalLinearBackdropContrast;
+  if (coverage_mode == CoverageMode::kExternalLinearBackdrop) {
+    // The shader converts the final authored opacity * glyph coverage. Applying
+    // a separate glyph-only contrast here would double-transform the edge.
+    return 1.0f;
   }
 
   // Calculate relative luminance using Rec. 709 luma coefficients. The
@@ -304,7 +305,10 @@ bool TextContents::Render(const ContentContext& renderer,
   frag_info.text_color = ToVector(color.Premultiply());
   frag_info.is_color_glyph = type == GlyphAtlas::Type::kColorBitmap;
   frag_info.text_contrast = ComputeTextContrast(
-      color, frame_->GetTextCoverageMode(), frame_->GetEnableGammaCorrection());
+      color, frame_->GetCoverageMode(), frame_->GetEnableGammaCorrection());
+  frag_info.external_linear_backdrop =
+      frame_->GetCoverageMode() == CoverageMode::kExternalLinearBackdrop ? 1.0f
+                                                                         : 0.0f;
 
   FS::BindFragInfo(
       pass, renderer.GetTransientsDataBuffer().EmplaceUniform(frag_info));

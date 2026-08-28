@@ -73,6 +73,9 @@ class DlDispatcherBase : public flutter::DlOpReceiver {
   void setAntiAlias(bool aa) override;
 
   // |flutter::DlOpReceiver|
+  void setCoverageMode(flutter::DlCoverageMode mode) override;
+
+  // |flutter::DlOpReceiver|
   void setDrawStyle(flutter::DlDrawStyle style) override;
 
   // |flutter::DlOpReceiver|

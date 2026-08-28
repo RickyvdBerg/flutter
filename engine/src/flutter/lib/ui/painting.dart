@@ -1342,7 +1342,7 @@ final class Paint {
   static const int _kMaskFilterBlurStyleIndex = 14;
   static const int _kMaskFilterSigmaIndex = 15;
   static const int _kInvertColorIndex = 16;
-  static const int _kAvioTextCoverageModeIndex = 17;
+  static const int _kAvioCoverageModeIndex = 17;
 
   static const int _kIsAntiAliasOffset = _kIsAntiAliasIndex << 2;
   static const int _kColorRedOffset = _kColorRedIndex << 2;
@@ -1361,7 +1361,7 @@ final class Paint {
   static const int _kMaskFilterBlurStyleOffset = _kMaskFilterBlurStyleIndex << 2;
   static const int _kMaskFilterSigmaOffset = _kMaskFilterSigmaIndex << 2;
   static const int _kInvertColorOffset = _kInvertColorIndex << 2;
-  static const int _kAvioTextCoverageModeOffset = _kAvioTextCoverageModeIndex << 2;
+  static const int _kAvioCoverageModeOffset = _kAvioCoverageModeIndex << 2;
 
   // If you add more fields, remember to update _kDataByteCount.
   static const int _kDataByteCount = 72; // 4 * (last index + 1).
@@ -1719,19 +1719,17 @@ final class Paint {
     _data.setInt32(_kInvertColorOffset, value ? 1 : 0, _kFakeHostEndian);
   }
 
-  /// How Impeller authors glyph coverage for text drawn with this paint.
+  /// How Impeller authors semantic foreground coverage drawn with this paint.
   ///
-  /// This is an Avio engine extension and is only read when the paint is used
-  /// as a text foreground. Other drawing operations ignore it.
-  AvioTextCoverageMode get avioTextCoverageMode {
-    return AvioTextCoverageMode.values[_data.getInt32(
-      _kAvioTextCoverageModeOffset,
-      _kFakeHostEndian,
-    )];
+  /// This is an Avio engine extension for text, analytic vector shapes, and
+  /// image masks that remain translucent until an external compositor supplies
+  /// their backdrop. Materials keep [AvioCoverageMode.platformDefault].
+  AvioCoverageMode get avioCoverageMode {
+    return AvioCoverageMode.values[_data.getInt32(_kAvioCoverageModeOffset, _kFakeHostEndian)];
   }
 
-  set avioTextCoverageMode(AvioTextCoverageMode value) {
-    _data.setInt32(_kAvioTextCoverageModeOffset, value.index, _kFakeHostEndian);
+  set avioCoverageMode(AvioCoverageMode value) {
+    _data.setInt32(_kAvioCoverageModeOffset, value.index, _kFakeHostEndian);
   }
 
   @override
@@ -1801,20 +1799,20 @@ final class Paint {
   }
 }
 
-/// The downstream composition contract for glyph anti-aliasing coverage.
+/// The downstream composition contract for semantic foreground coverage.
 ///
-/// This is an Avio engine extension. It changes only glyph coverage, never the
-/// text color, glyph geometry, shaping, or font selection.
-enum AvioTextCoverageMode {
-  /// Use Flutter's platform text-gamma policy.
+/// This is an Avio engine extension. It changes only final source coverage,
+/// never color, geometry, shaping, font selection, or material coverage.
+enum AvioCoverageMode {
+  /// Use Flutter's normal platform policy for this drawing operation.
   platformDefault,
 
-  /// The glyph remains translucent until an external linear-light compositor
-  /// supplies its backdrop.
+  /// The foreground remains translucent until an external linear-light
+  /// compositor supplies its backdrop.
   ///
-  /// Impeller authors the coverage mask for that later blend in its existing
-  /// glyph shader. This keeps text crisp without adding another text, surface,
-  /// or compositor pass.
+  /// Impeller converts the operation's combined authored opacity and edge or
+  /// mask coverage once in its existing shader. This preserves display-space
+  /// UI ink without adding another surface, layer, or compositor pass.
   externalLinearBackdrop,
 }
 

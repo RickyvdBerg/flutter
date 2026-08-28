@@ -5,6 +5,7 @@
 precision mediump float;
 
 #include <impeller/external_texture_oes.glsl>
+#include <impeller/coverage.glsl>
 
 uniform sampler2D SAMPLER_EXTERNAL_OES_texture_sampler;
 
@@ -12,6 +13,7 @@ uniform FragInfo {
   float x_tile_mode;
   float y_tile_mode;
   float alpha;
+  float external_linear_backdrop;
 }
 frag_info;
 
@@ -27,4 +29,6 @@ void main() {
                               frag_info.y_tile_mode   // y tile mode
                               ) *
       frag_info.alpha;
+  frag_color = IPApplyExternalLinearBackdropCoverage(
+      frag_color, frag_info.external_linear_backdrop);
 }

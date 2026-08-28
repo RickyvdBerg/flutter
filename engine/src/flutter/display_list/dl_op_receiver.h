@@ -98,6 +98,7 @@ class DlOpReceiver {
   // another method that changes the same attribute. The current set of
   // attributes is not affected by |save| and |restore|.
   virtual void setAntiAlias(bool aa) = 0;
+  virtual void setCoverageMode(DlCoverageMode mode) = 0;
   virtual void setDrawStyle(DlDrawStyle style) = 0;
   virtual void setColor(DlColor color) = 0;
   virtual void setStrokeWidth(float width) = 0;

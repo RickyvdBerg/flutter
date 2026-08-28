@@ -280,6 +280,12 @@ class DisplayListBuilder final : public virtual DlCanvas,
     }
   }
   // |DlOpReceiver|
+  void setCoverageMode(DlCoverageMode mode) override {
+    if (current_.getCoverageMode() != mode) {
+      onSetCoverageMode(mode);
+    }
+  }
+  // |DlOpReceiver|
   void setInvertColors(bool invert) override {
     if (current_.isInvertColors() != invert) {
       onSetInvertColors(invert);
@@ -774,6 +780,7 @@ class DisplayListBuilder final : public virtual DlCanvas,
   }
 
   void onSetAntiAlias(bool aa);
+  void onSetCoverageMode(DlCoverageMode mode);
   void onSetInvertColors(bool invert);
   void onSetStrokeCap(DlStrokeCap cap);
   void onSetStrokeJoin(DlStrokeJoin join);

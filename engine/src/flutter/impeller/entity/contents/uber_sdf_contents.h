@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "flutter/display_list/dl_paint.h"
 #include "flutter/impeller/entity/contents/color_source_contents.h"
 #include "flutter/impeller/entity/contents/contents.h"
 #include "impeller/entity/contents/uber_sdf_parameters.h"
@@ -32,6 +33,8 @@ class UberSDFContents : public ColorSourceContents {
 
   Color GetColor() const;
 
+  void SetCoverageMode(flutter::DlCoverageMode mode);
+
   bool ApplyColorFilter(const ColorFilterProc& color_filter_proc) override;
 
   const Geometry* GetGeometry() const override;
@@ -45,6 +48,8 @@ class UberSDFContents : public ColorSourceContents {
 
   UberSDFParameters params_;
   std::unique_ptr<Geometry> geometry_;
+  flutter::DlCoverageMode coverage_mode_ =
+      flutter::DlCoverageMode::kPlatformDefault;
 
   UberSDFContents(const UberSDFContents&) = delete;
 

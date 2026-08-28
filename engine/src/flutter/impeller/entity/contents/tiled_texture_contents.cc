@@ -57,6 +57,10 @@ void TiledTextureContents::SetSamplerDescriptor(const SamplerDescriptor& desc) {
   sampler_descriptor_ = desc;
 }
 
+void TiledTextureContents::SetCoverageMode(flutter::DlCoverageMode mode) {
+  coverage_mode_ = mode;
+}
+
 void TiledTextureContents::SetColorFilter(ColorFilterProc color_filter) {
   color_filter_ = std::move(color_filter);
 }
@@ -160,6 +164,10 @@ bool TiledTextureContents::Render(const ContentContext& renderer,
           frag_info.y_tile_mode =
               static_cast<Scalar>(sampler_descriptor_.height_address_mode);
           frag_info.alpha = GetOpacityFactor();
+          frag_info.external_linear_backdrop =
+              coverage_mode_ == flutter::DlCoverageMode::kExternalLinearBackdrop
+                  ? 1.0f
+                  : 0.0f;
           FSExternal::BindFragInfo(pass,
                                    data_host_buffer.EmplaceUniform(frag_info));
 
@@ -200,6 +208,10 @@ bool TiledTextureContents::Render(const ContentContext& renderer,
         frag_info.alpha =
             GetOpacityFactor() *
             GetGeometry()->ComputeAlphaCoverage(entity.GetTransform());
+        frag_info.external_linear_backdrop =
+            coverage_mode_ == flutter::DlCoverageMode::kExternalLinearBackdrop
+                ? 1.0f
+                : 0.0f;
         FS::BindFragInfo(pass, data_host_buffer.EmplaceUniform(frag_info));
 
         if (color_filter_) {
@@ -230,7 +242,8 @@ std::optional<Snapshot> TiledTextureContents::RenderToSnapshot(
     return std::nullopt;
   }
   std::optional<Rect> geometry_coverage = GetGeometry()->GetCoverage({});
-  if (GetInverseEffectTransform().IsIdentity() &&
+  if (coverage_mode_ == flutter::DlCoverageMode::kPlatformDefault &&
+      GetInverseEffectTransform().IsIdentity() &&
       GetGeometry()->IsAxisAlignedRect() &&
       (!geometry_coverage.has_value() ||
        Rect::MakeSize(texture_->GetSize())

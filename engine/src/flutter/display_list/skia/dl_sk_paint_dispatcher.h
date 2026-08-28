@@ -23,6 +23,7 @@ class DlSkPaintDispatchHelper : public virtual DlOpReceiver {
   }
 
   void setAntiAlias(bool aa) override;
+  void setCoverageMode(DlCoverageMode mode) override;
   void setDrawStyle(DlDrawStyle style) override;
   void setColor(DlColor color) override;
   void setStrokeWidth(SkScalar width) override;

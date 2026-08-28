@@ -103,6 +103,9 @@ class ComplexityCalculatorHelper
   virtual ~ComplexityCalculatorHelper() = default;
 
   void setInvertColors(bool invert) override {}
+  void setCoverageMode(DlCoverageMode mode) override {
+    current_paint_.setCoverageMode(mode);
+  }
   void setStrokeCap(DlStrokeCap cap) override {}
   void setStrokeJoin(DlStrokeJoin join) override {}
   void setStrokeMiter(DlScalar limit) override {}

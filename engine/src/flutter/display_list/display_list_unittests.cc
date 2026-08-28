@@ -481,6 +481,10 @@ TEST_F(DisplayListTest, BuildRestoresAttributes) {
   builder.Build();
   check_defaults(builder, cull_rect);
 
+  receiver.setCoverageMode(DlCoverageMode::kExternalLinearBackdrop);
+  builder.Build();
+  check_defaults(builder, cull_rect);
+
   receiver.setInvertColors(true);
   builder.Build();
   check_defaults(builder, cull_rect);

@@ -86,6 +86,8 @@ struct Paint {
   BlendMode blend_mode = BlendMode::kSrcOver;
   bool invert_colors = false;
   bool anti_alias = true;
+  flutter::DlCoverageMode coverage_mode =
+      flutter::DlCoverageMode::kPlatformDefault;
 
   std::optional<MaskBlurDescriptor> mask_blur_descriptor;
 

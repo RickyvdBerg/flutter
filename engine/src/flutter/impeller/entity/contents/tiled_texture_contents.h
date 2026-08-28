@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 
+#include "flutter/display_list/dl_paint.h"
 #include "impeller/core/sampler_descriptor.h"
 #include "impeller/entity/contents/color_source_contents.h"
 #include "impeller/entity/contents/filters/color_filter_contents.h"
@@ -40,6 +41,8 @@ class TiledTextureContents final : public ColorSourceContents {
   void SetTileModes(Entity::TileMode x_tile_mode, Entity::TileMode y_tile_mode);
 
   void SetSamplerDescriptor(const SamplerDescriptor& desc);
+
+  void SetCoverageMode(flutter::DlCoverageMode mode);
 
   /// @brief Set a color filter to apply directly to this tiled texture
   /// @param color_filter
@@ -74,6 +77,8 @@ class TiledTextureContents final : public ColorSourceContents {
   Entity::TileMode x_tile_mode_ = Entity::TileMode::kClamp;
   Entity::TileMode y_tile_mode_ = Entity::TileMode::kClamp;
   ColorFilterProc color_filter_ = nullptr;
+  flutter::DlCoverageMode coverage_mode_ =
+      flutter::DlCoverageMode::kPlatformDefault;
 
   TiledTextureContents(const TiledTextureContents&) = delete;
 

@@ -78,7 +78,7 @@ already ancestors of the selected main target under their original commits.
 | 41 | Report exact view-scoped frame-request acceptance to the framework scheduler | permanent framework/engine lifecycle fix | none |
 | 42 | Give the GTK framebuffer real multisampling | upstreamable bugfix — attach to flutter/flutter#191171 | open: flutter/flutter#191171, flutter/flutter#191234 |
 | 44 | Carry typed analytic clips with retained compositor materials | permanent ABI/scene extension | none |
-| 45 | Author glyph coverage for an external linear-light backdrop | permanent composition-contract extension | none — Flutter otherwise cannot know that its transparent target receives a backdrop later |
+| 45 | Author semantic foreground coverage for an external linear-light backdrop | permanent composition-contract extension | none — Flutter otherwise cannot know that its transparent target receives a backdrop later |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -569,30 +569,34 @@ publication. `roundedRectangle` preserves the original material vocabulary;
 flattening it into a rounded envelope or an untyped payload. Unsupported or
 malformed clip descriptors reject the exact frame at the engine boundary.
 
-### Patch 45: external linear-backdrop glyph coverage
+### Patch 45: external linear-backdrop foreground coverage
 
-Stock Linux Impeller corrects glyph coverage in its existing text shader using
-an exponent derived from the foreground luminance. That policy assumes Flutter
-owns the destination against which the glyph is painted. Avio's transparent
-shell target deliberately violates that assumption for direct-wallpaper text:
-the anti-aliasing coverage survives into the root target, and Smithay supplies
-the wallpaper during a later linear-light blend. In that path dark glyphs keep
-the stock exponent of 1.0 and therefore look lighter and thinner than the same
-text flattened against its backdrop before composition.
+Stock Linux Impeller's glyph correction and UberSDF luma correction both
+assume Flutter owns the destination against which the coverage is painted.
+Avio's transparent shell target deliberately violates that assumption for
+direct-wallpaper foreground: edge or mask coverage survives into the root
+target, and Smithay supplies the wallpaper during a later linear-light blend.
+The same mismatch affects paragraph glyphs, analytic chrome, and transparent
+image marks, so a glyph-only exponent cannot be the owning contract.
 
-`Paint.avioTextCoverageMode` makes the missing destination contract explicit.
+`Paint.avioCoverageMode` makes the missing destination contract explicit.
 `platformDefault` preserves upstream behavior. `externalLinearBackdrop` is
-carried through `DlPaint` and the paragraph display list into `TextFrame`, then
-selects a 2.2 coverage exponent in the existing Impeller glyph fragment shader.
-It changes no text RGB, shaping, font metrics, atlas sampling, or geometry and
-adds no draw, surface, texture, or compositor pass. An explicit
-`SetEnableGammaCorrection(false)` remains authoritative for tests and embedders
-that deliberately disable coverage correction.
+carried as display-list paint state into the existing glyph-atlas, UberSDF,
+direct-texture, and tiled-texture shaders. Each shader first combines authored
+opacity with edge or mask coverage, then converts that final alpha exactly as
+`1 - srgbToLinear(1 - alpha)` while preserving unpremultiplied source color.
+This restores the display-space dark-on-light coverage response after
+Smithay's linear-light blend. It changes no color, geometry, shaping, font
+selection, or atlas sample and adds no draw, surface, texture, or compositor
+pass. Stock glyph and UberSDF correction remains authoritative in
+`platformDefault`; the external mode does not apply either approximation a
+second time.
 
-The mode belongs on semantic typography roles that are known to remain
-translucent until external composition. It must not become a platform-wide
-default or a Smithay heuristic over generic alpha: both would also alter text
-already flattened into opaque Flutter pixels and non-text translucent content.
+The mode belongs only on semantic foreground roles known to remain translucent
+until external composition. It must not become a platform-wide default or a
+Smithay heuristic over generic alpha: both would also alter text already
+flattened into opaque Flutter pixels and translucent materials whose linear
+coverage is intentional.
 
 ## Known baseline debt
 

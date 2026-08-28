@@ -70,10 +70,10 @@ class DisplayListParagraphPainter : public skt::ParagraphPainter {
     if (impeller_enabled_) {
       auto make_text_frame = [&]() {
         auto frame = impeller::MakeTextFrameFromTextBlobSkia(blob);
-        if (dl_paints_[paint_id].getTextCoverageMode() ==
-            DlTextCoverageMode::kExternalLinearBackdrop) {
-          frame->SetTextCoverageMode(
-              impeller::TextCoverageMode::kExternalLinearBackdrop);
+        if (dl_paints_[paint_id].getCoverageMode() ==
+            DlCoverageMode::kExternalLinearBackdrop) {
+          frame->SetCoverageMode(
+              impeller::CoverageMode::kExternalLinearBackdrop);
         }
         return frame;
       };

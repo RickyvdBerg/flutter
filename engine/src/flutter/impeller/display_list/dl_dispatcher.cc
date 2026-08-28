@@ -152,6 +152,13 @@ void DlDispatcherBase::setAntiAlias(bool aa) {
   paint_.anti_alias = aa;
 }
 
+// |flutter::DlOpReceiver|
+void DlDispatcherBase::setCoverageMode(flutter::DlCoverageMode mode) {
+  AUTO_DEPTH_WATCHER(0u);
+
+  paint_.coverage_mode = mode;
+}
+
 static Paint::Style ToStyle(flutter::DlDrawStyle style) {
   switch (style) {
     case flutter::DlDrawStyle::kFill:

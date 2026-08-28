@@ -61,6 +61,10 @@ UberSDFContents::UberSDFContents(const UberSDFParameters& params,
 
 UberSDFContents::~UberSDFContents() = default;
 
+void UberSDFContents::SetCoverageMode(flutter::DlCoverageMode mode) {
+  coverage_mode_ = mode;
+}
+
 bool UberSDFContents::Render(const ContentContext& renderer,
                              const Entity& entity,
                              RenderPass& pass) const {
@@ -86,6 +90,9 @@ bool UberSDFContents::Render(const ContentContext& renderer,
   frag_info.circle_center_right = params_.circle_center_right;
   frag_info.superellipse_scale = params_.superellipse_scale;
   frag_info.radii = params_.radii;
+  frag_info.external_linear_backdrop =
+      coverage_mode_ == flutter::DlCoverageMode::kExternalLinearBackdrop ? 1.0f
+                                                                         : 0.0f;
 
   auto geometry_result =
       GetGeometry()->GetPositionBuffer(renderer, entity, pass);

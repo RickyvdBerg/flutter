@@ -40,6 +40,10 @@ void DlSkPaintDispatchHelper::restore_opacity() {
 void DlSkPaintDispatchHelper::setAntiAlias(bool aa) {
   paint_.setAntiAlias(aa);
 }
+void DlSkPaintDispatchHelper::setCoverageMode(DlCoverageMode mode) {
+  // Avio's external-backdrop contract is implemented by Impeller. Skia keeps
+  // its platform-default paint behavior.
+}
 void DlSkPaintDispatchHelper::setInvertColors(bool invert) {
   invert_colors_ = invert;
   paint_.setColorFilter(makeColorFilter());

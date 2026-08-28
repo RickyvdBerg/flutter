@@ -260,6 +260,7 @@ DisplayListOpCategory DisplayList::GetOpCategory(DlIndex index) const {
 DisplayListOpCategory DisplayList::GetOpCategory(DisplayListOpType type) {
   switch (type) {
     case DisplayListOpType::kSetAntiAlias:
+    case DisplayListOpType::kSetCoverageMode:
     case DisplayListOpType::kSetInvertColors:
     case DisplayListOpType::kSetStrokeCap:
     case DisplayListOpType::kSetStrokeJoin:

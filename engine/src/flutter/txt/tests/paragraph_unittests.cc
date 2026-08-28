@@ -50,8 +50,8 @@ class DlOpRecorder final : public virtual DlOpReceiver,
   int pathCount() const { return paths_.size(); }
   int textFrameCount() const { return text_frames_.size(); }
   int blobCount() const { return blobs_.size(); }
-  impeller::TextCoverageMode textCoverageMode(size_t index) const {
-    return text_frames_.at(index)->GetTextCoverageMode();
+  impeller::CoverageMode coverageMode(size_t index) const {
+    return text_frames_.at(index)->GetCoverageMode();
   }
 
  private:
@@ -247,8 +247,7 @@ TEST_F(PainterTest, DrawTextImpeller) {
 
   EXPECT_EQ(recorder.textFrameCount(), 1);
   EXPECT_EQ(recorder.blobCount(), 0);
-  EXPECT_EQ(recorder.textCoverageMode(0),
-            impeller::TextCoverageMode::kPlatformDefault);
+  EXPECT_EQ(recorder.coverageMode(0), impeller::CoverageMode::kPlatformDefault);
 }
 
 TEST_F(PainterTest, DrawTextWithExternalLinearBackdropCoverageImpeller) {
@@ -256,15 +255,15 @@ TEST_F(PainterTest, DrawTextWithExternalLinearBackdropCoverageImpeller) {
 
   auto style = makeStyle();
   DlPaint foreground;
-  foreground.setTextCoverageMode(DlTextCoverageMode::kExternalLinearBackdrop);
+  foreground.setCoverageMode(DlCoverageMode::kExternalLinearBackdrop);
   style.foreground = foreground;
 
   auto recorder = DlOpRecorder();
   draw(style)->Dispatch(recorder);
 
   ASSERT_EQ(recorder.textFrameCount(), 1);
-  EXPECT_EQ(recorder.textCoverageMode(0),
-            impeller::TextCoverageMode::kExternalLinearBackdrop);
+  EXPECT_EQ(recorder.coverageMode(0),
+            impeller::CoverageMode::kExternalLinearBackdrop);
 }
 
 TEST_F(PainterTest, DrawStrokedTextImpeller) {

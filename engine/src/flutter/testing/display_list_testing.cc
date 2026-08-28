@@ -704,6 +704,10 @@ void DisplayListStreamDispatcher::setImageFilter(const DlImageFilter* filter) {
   outdent(15);
   os_ << ");" << std::endl;
 }
+void DisplayListStreamDispatcher::setCoverageMode(DlCoverageMode mode) {
+  startl() << "setCoverageMode(" << static_cast<int>(mode) << ");"
+           << std::endl;
+}
 void DisplayListStreamDispatcher::save() {
   startl() << "save();" << std::endl;
   startl() << "{" << std::endl;

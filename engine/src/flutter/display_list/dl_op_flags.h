@@ -87,6 +87,7 @@ class DisplayListFlags {
   static constexpr int kUsesColorFilter     = 1 << 15;
   static constexpr int kUsesMaskFilter      = 1 << 16;
   static constexpr int kUsesImageFilter     = 1 << 17;
+  static constexpr int kUsesCoverageMode    = 1 << 18;
 
   // Some ops have an optional paint argument. If the version
   // stored in the DisplayList ignores the paint, but there
@@ -100,7 +101,7 @@ class DisplayListFlags {
 
   static constexpr int kAnyAttributeMask =  //
       kUsesAntiAlias | kUsesAlpha | kUsesColor | kUsesBlend | kUsesShader |
-      kUsesColorFilter | kUsesMaskFilter | kUsesImageFilter;
+      kUsesColorFilter | kUsesMaskFilter | kUsesImageFilter | kUsesCoverageMode;
 };
 
 class DisplayListFlagsBase : protected DisplayListFlags {
@@ -169,6 +170,9 @@ class DisplayListAttributeFlags : DisplayListFlagsBase {
   constexpr bool ignores_paint() const { return has_any(kIgnoresPaint); }
 
   constexpr bool applies_anti_alias() const { return has_any(kUsesAntiAlias); }
+  constexpr bool applies_coverage_mode() const {
+    return has_any(kUsesCoverageMode);
+  }
   constexpr bool applies_color() const { return has_any(kUsesColor); }
   constexpr bool applies_alpha() const { return has_any(kUsesAlpha); }
   constexpr bool applies_alpha_or_color() const {
@@ -254,7 +258,8 @@ class DisplayListOpFlags : DisplayListFlags {
                                           kUsesBlend |        //
                                           kUsesShader |       //
                                           kUsesColorFilter |  //
-                                          kUsesImageFilter);
+                                          kUsesImageFilter |  //
+                                          kUsesCoverageMode);
 
   // Flags common to all primitives that stroke or fill
   static constexpr int kBaseStrokeOrFillFlags = (kIsDrawnGeometry |  //
@@ -271,7 +276,8 @@ class DisplayListOpFlags : DisplayListFlags {
                                           kUsesAlpha |        //
                                           kUsesBlend |        //
                                           kUsesColorFilter |  //
-                                          kUsesImageFilter);
+                                          kUsesImageFilter |  //
+                                          kUsesCoverageMode);
 
  public:
   static constexpr DisplayListAttributeFlags kSaveLayerFlags{

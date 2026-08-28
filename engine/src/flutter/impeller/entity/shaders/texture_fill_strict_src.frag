@@ -5,6 +5,7 @@
 precision mediump float;
 
 #include <impeller/constants.glsl>
+#include <impeller/coverage.glsl>
 #include <impeller/types.glsl>
 
 uniform f16sampler2D texture_sampler;
@@ -12,6 +13,7 @@ uniform f16sampler2D texture_sampler;
 uniform FragInfo {
   vec4 source_rect;
   float alpha;
+  float external_linear_backdrop;
 }
 frag_info;
 
@@ -27,4 +29,6 @@ void main() {
   f16vec4 sampled =
       texture(texture_sampler, texture_coords, float16_t(kDefaultMipBias));
   frag_color = sampled * float16_t(frag_info.alpha);
+  frag_color = f16vec4(IPApplyExternalLinearBackdropCoverage(
+      vec4(frag_color), frag_info.external_linear_backdrop));
 }

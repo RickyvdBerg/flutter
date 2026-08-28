@@ -263,6 +263,10 @@ void DisplayListBuilder::onSetAntiAlias(bool aa) {
   current_.setAntiAlias(aa);
   Push<SetAntiAliasOp>(0, aa);
 }
+void DisplayListBuilder::onSetCoverageMode(DlCoverageMode mode) {
+  current_.setCoverageMode(mode);
+  Push<SetCoverageModeOp>(0, mode);
+}
 void DisplayListBuilder::onSetInvertColors(bool invert) {
   current_.setInvertColors(invert);
   Push<SetInvertColorsOp>(0, invert);
@@ -457,6 +461,9 @@ void DisplayListBuilder::SetAttributesFromPaint(
     const DisplayListAttributeFlags flags) {
   if (flags.applies_anti_alias()) {
     setAntiAlias(paint.isAntiAlias());
+  }
+  if (flags.applies_coverage_mode()) {
+    setCoverageMode(paint.getCoverageMode());
   }
   if (flags.applies_alpha_or_color()) {
     setColor(paint.getColor());

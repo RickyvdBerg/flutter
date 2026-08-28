@@ -5,6 +5,7 @@
 precision mediump float;
 
 #include <impeller/types.glsl>
+#include <impeller/coverage.glsl>
 
 uniform f16sampler2D glyph_atlas_sampler;
 
@@ -15,6 +16,7 @@ uniform FragInfo {
   float use_text_color;
   f16vec4 text_color;
   float text_contrast;
+  float external_linear_backdrop;
 }
 frag_info;
 
@@ -48,4 +50,7 @@ void main() {
 
     frag_color = f16vec4(coverage) * frag_info.text_color;
   }
+
+  frag_color = f16vec4(IPApplyExternalLinearBackdropCoverage(
+      vec4(frag_color), frag_info.external_linear_backdrop));
 }

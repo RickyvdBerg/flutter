@@ -44,7 +44,7 @@ class TextContents final : public Contents {
 
   static Scalar ComputeTextContrast(
       Color color,
-      TextCoverageMode coverage_mode,
+      CoverageMode coverage_mode,
       std::optional<bool> enable_gamma_correction = std::nullopt);
 
   // |Contents|

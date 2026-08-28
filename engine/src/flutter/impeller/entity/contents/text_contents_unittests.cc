@@ -20,21 +20,19 @@ namespace testing {
 using TextContentsTest = PlaygroundTest;
 INSTANTIATE_PLAYGROUND_SUITE(TextContentsTest);
 
-TEST(TextContentsContrastTest, ExternalLinearBackdropCorrectsDarkCoverage) {
-  EXPECT_FLOAT_EQ(
-      TextContents::ComputeTextContrast(
-          Color::Black(), TextCoverageMode::kExternalLinearBackdrop),
-      2.2f);
-  EXPECT_FLOAT_EQ(
-      TextContents::ComputeTextContrast(
-          Color::Black(), TextCoverageMode::kPlatformDefault, false),
-      1.0f);
+TEST(TextContentsContrastTest, ExternalLinearBackdropDefersToCombinedCoverage) {
+  EXPECT_FLOAT_EQ(TextContents::ComputeTextContrast(
+                      Color::Black(), CoverageMode::kExternalLinearBackdrop),
+                  1.0f);
+  EXPECT_FLOAT_EQ(TextContents::ComputeTextContrast(
+                      Color::Black(), CoverageMode::kPlatformDefault, false),
+                  1.0f);
 }
 
 TEST(TextContentsContrastTest, ExplicitDisableWinsOverBackdropMode) {
   EXPECT_FLOAT_EQ(
       TextContents::ComputeTextContrast(
-          Color::White(), TextCoverageMode::kExternalLinearBackdrop, false),
+          Color::White(), CoverageMode::kExternalLinearBackdrop, false),
       1.0f);
 }
 

@@ -54,6 +54,7 @@ namespace flutter {
 
 #define FOR_EACH_DISPLAY_LIST_OP(V)  \
   V(SetAntiAlias)                    \
+  V(SetCoverageMode)                 \
   V(SetInvertColors)                 \
                                      \
   V(SetStrokeCap)                    \

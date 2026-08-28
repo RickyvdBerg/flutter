@@ -289,12 +289,6 @@ class Canvas {
   /// Visible for testing.
   static bool IsCompatibleWithSDFRendering(const Paint& paint);
 
-  /// Returns true if a circle drawn with this paint should take the UberSDF
-  /// path rather than the analytic CircleContents one.
-  ///
-  /// Visible for testing.
-  static bool ShouldDrawCircleWithSDF(const Paint& paint);
-
  private:
   class BlurShape {
    public:

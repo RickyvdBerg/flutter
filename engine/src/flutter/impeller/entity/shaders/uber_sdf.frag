@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-precision highp float;
+precision mediump float;
 
 #include <impeller/color.glsl>
 #include <impeller/types.glsl>
@@ -275,13 +275,6 @@ float gammaCorrectedAlpha(float alpha, vec3 foreground_rgb) {
   return mix(alpha_dark, alpha_light, luma);
 }
 
-float strokeAlphaCoverage(float stroke_width, float pixel_size) {
-  if (stroke_width <= 0.0 || stroke_width >= pixel_size) {
-    return 1.0;
-  }
-  return clamp((stroke_width / max(pixel_size, 0.0001)) * 2.0, 0.0, 1.0);
-}
-
 void main() {
   vec2 p = v_position - frag_info.center;
 
@@ -291,9 +284,6 @@ void main() {
   float pixel_size = sdf_and_pixel_size.y;
 
   float alpha = SDFAlpha(sdf, pixel_size, frag_info.aa_pixels);
-  if (frag_info.stroked > 0.5) {
-    alpha *= strokeAlphaCoverage(frag_info.stroke_width, pixel_size);
-  }
   // Clamp alpha in case floating point precision errors cause it to be outside
   // [0.0, 1.0].
   alpha = clamp(alpha, 0.0, 1.0);

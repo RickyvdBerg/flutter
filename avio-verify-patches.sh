@@ -468,27 +468,9 @@ need "embedder ownership ABI field" \
   'has_external_queue_family_ownership'
 
 echo "--- Impeller visual correctness fixes ---"
-need "UberSDF two-pixel antialiasing ramp" \
+need "UberSDF uses the upstream one-pixel antialiasing ramp" \
   $F/impeller/entity/contents/uber_sdf_parameters.h \
-  'kAntialiasPixels = 2\.0f'
-need "UberSDF full-coverage inset tracks the wider ramp" \
-  $F/impeller/entity/geometry/uber_sdf_geometry.cc \
-  'kAdditionalInset'
-need "UberSDF high-precision fragment arithmetic" \
-  $F/impeller/entity/shaders/uber_sdf.frag \
-  '^precision highp float;'
-need "UberSDF thin-stroke coverage" \
-  $F/impeller/entity/shaders/uber_sdf.frag \
-  'strokeAlphaCoverage'
-need "DrawCircle takes UberSDF only for color-source paints" \
-  $F/impeller/display_list/canvas.cc \
-  'bool Canvas::ShouldDrawCircleWithSDF'
-need "solid circle keeps the analytic path regression" \
-  $F/impeller/display_list/canvas_unittests.cc \
-  'SolidCircleKeepsTheAnalyticPath'
-need "color-source circle SDF routing regression" \
-  $F/impeller/display_list/canvas_unittests.cc \
-  'ColorSourceCircleUsesSDF'
+  'kAntialiasPixels = 1\.0f'
 need "degree normalization half-open range guard" \
   $F/impeller/geometry/scalar.h \
   'if \(deg >= 360\.0f\)'

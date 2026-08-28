@@ -62,8 +62,12 @@ TEST(UberSDFContentsTest, AsBackgroundColorExactSize) {
   entity.SetTransform(Matrix());
 
   auto bg_color = contents->AsBackgroundColor(entity, ISize(500, 500));
-  // A two-pixel ramp is not fully opaque at the geometry boundary.
-  EXPECT_FALSE(bg_color.has_value());
+  // The exact size now returns true because over-conservative AA insets are
+  // removed
+  EXPECT_TRUE(bg_color.has_value());
+  if (bg_color.has_value()) {
+    EXPECT_EQ(bg_color.value(), Color::Red());
+  }
 }
 
 TEST(UberSDFContentsTest, AsBackgroundColorNonRect) {

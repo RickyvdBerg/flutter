@@ -60,7 +60,6 @@ already ancestors of the selected main target under their original commits.
 | 22 | [framework] Preserve scoped render authority and schedule residual view work | permanent framework correctness fix; input-queue portion superseded by #31 | none while Avio carries view-scoped frame admission |
 | 23 | Explicit root-target compositor mode and semantic extension negotiation | permanent ABI extension | none |
 | 24 | Engine-local vsync leases and exact per-target frame-opportunity terminality | permanent ABI/lifecycle extension | none |
-| 25 | Soften UberSDF antialiasing with high precision and thin-stroke coverage | visual correctness fork; its DrawCircle carve-out is narrowed by #43 | partial overlap with #188821/#189224; retain until equivalent thin-stroke goldens pass upstream behavior |
 | 26 | Share the raster pipeline reservation across displays | permanent while display-scoped scheduling drains through one raster pipeline | none |
 | 27 | Transfer external Vulkan image queue-family ownership | permanent explicit-sync/ownership extension | none |
 | 28 | Keep normalized degrees below a full circle | upstreamable Impeller correctness fix | submit upstream |
@@ -78,7 +77,6 @@ already ancestors of the selected main target under their original commits.
 | 40 | Bind a newly added view to its initial display before first-frame scheduling | permanent per-display lifecycle fix | none |
 | 41 | Report exact view-scoped frame-request acceptance to the framework scheduler | permanent framework/engine lifecycle fix | none |
 | 42 | Give the GTK framebuffer real multisampling | upstreamable bugfix — attach to flutter/flutter#191171 | open: flutter/flutter#191171, flutter/flutter#191234 |
-| 43 | Restore SDF circles for color-source paints | visual correctness fork; narrows #25's DrawCircle removal | none while #25 carries the two-pixel ramp |
 | 44 | Carry typed analytic clips with retained compositor materials | permanent ABI/scene extension | none |
 | 45 | Author glyph coverage for an external linear-light backdrop | permanent composition-contract extension | none — Flutter otherwise cannot know that its transparent target receives a backdrop later |
 
@@ -176,19 +174,6 @@ without work terminalize as `NoVisualChange`; admitted targets removed before
 the callback terminalize as `TargetRemoved`; requested targets absent from the
 grant cannot render. This reconciliation is what closes the conservation
 ledger for clean and concurrently removed views without a watchdog.
-
-### Patch 25: two-pixel UberSDF antialiasing
-
-The wider antialiasing ramp expands geometry coverage by
-`kAntialiasPixels`, and full-coverage detection accounts for the half-pixel
-already supplied by an integer pixel boundary. Tests derive their expected
-footprints from the same named constant, so upstream geometry changes cannot
-silently restore one-pixel assumptions or disable the background-color
-optimization wholesale.
-
-This patch also removed `DrawCircle`'s SDF branch, because the wider ramp
-fattened small circles. Patch #43 narrows that removal to solid circles, which
-are the only ones with an analytic antialiased alternative.
 
 ### Patch 27: external Vulkan image ownership
 
@@ -574,32 +559,6 @@ frames silently forever.
 `ExplicitMultisampleResolvesWithABlit`, `ExplicitMultisampleResolveFormatsMatch`,
 `SamplesClampedToDriverMaximum`, `IncompleteMultisampleFallsBackToSingleSample`,
 and `RejectedResolveFallsBackToSingleSample`.
-
-### Patch 43: SDF circles for color-source paints
-
-Patch #25 removed `DrawCircle`'s UberSDF branch outright because the widened
-ramp fattened small circles. That was correct for solid circles and wrong for
-the rest: `AttemptDrawAntialiasedCircle` rejects any paint carrying a
-`color_source`, so a gradient- or image-filled circle fell through to raw
-tessellated `CircleGeometry` with no coverage ramp at all. `DrawOval` and
-`DrawRoundRect` kept their SDF branches, so the same gradient was antialiased
-as an oval and aliased as a circle — including through `DrawOval`'s own
-square-rect shortcut into `DrawCircle`.
-
-`Canvas::ShouldDrawCircleWithSDF` restores the branch for exactly the paints
-that have no alternative. Solid circles keep the analytic `CircleContents`
-path and #25's rationale. Color-source circles reach UberSDF through
-`AddRenderSDFEntityToCurrentPass`, which already composes SDF coverage with a
-color source via `kSrcIn`.
-
-The branch is reachable only when `--impeller-use-sdfs` is passed;
-`Settings::impeller_use_sdfs` is false by default and Avio does not currently
-set it, so this restores correct behaviour for the SDF lane rather than
-changing today's default rendering.
-
-Follow-up, not implemented: re-centering the widened ramp so it grows inward as
-well as outward would let full SDF circles return without fattening, which
-would let this gate and #25's `DrawCircle` carve-out both be deleted.
 
 ### Patch 44: typed analytic material clips
 

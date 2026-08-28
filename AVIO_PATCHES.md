@@ -79,6 +79,8 @@ already ancestors of the selected main target under their original commits.
 | 41 | Report exact view-scoped frame-request acceptance to the framework scheduler | permanent framework/engine lifecycle fix | none |
 | 42 | Give the GTK framebuffer real multisampling | upstreamable bugfix — attach to flutter/flutter#191171 | open: flutter/flutter#191171, flutter/flutter#191234 |
 | 43 | Restore SDF circles for color-source paints | visual correctness fork; narrows #25's DrawCircle removal | none while #25 carries the two-pixel ramp |
+| 44 | Carry typed analytic clips with retained compositor materials | permanent ABI/scene extension | none |
+| 45 | Author glyph coverage for an external linear-light backdrop | permanent composition-contract extension | none — Flutter otherwise cannot know that its transparent target receives a backdrop later |
 
 Patch #5 also owns the later exact empty-frame and global-request corrections:
 global requests may not be consumed by a display-scoped frame; sibling-render,
@@ -598,6 +600,40 @@ changing today's default rendering.
 Follow-up, not implemented: re-centering the widened ramp so it grows inward as
 well as outward would let full SDF circles return without fattening, which
 would let this gate and #25's `DrawCircle` carve-out both be deleted.
+
+### Patch 44: typed analytic material clips
+
+Retained compositor materials carry a closed clip kind and four validated
+parameters through Dart, the layer tree, the embedder ABI, and Linux frame
+publication. `roundedRectangle` preserves the original material vocabulary;
+`bottomEdgePull` describes the Dock's deforming analytic boundary without
+flattening it into a rounded envelope or an untyped payload. Unsupported or
+malformed clip descriptors reject the exact frame at the engine boundary.
+
+### Patch 45: external linear-backdrop glyph coverage
+
+Stock Linux Impeller corrects glyph coverage in its existing text shader using
+an exponent derived from the foreground luminance. That policy assumes Flutter
+owns the destination against which the glyph is painted. Avio's transparent
+shell target deliberately violates that assumption for direct-wallpaper text:
+the anti-aliasing coverage survives into the root target, and Smithay supplies
+the wallpaper during a later linear-light blend. In that path dark glyphs keep
+the stock exponent of 1.0 and therefore look lighter and thinner than the same
+text flattened against its backdrop before composition.
+
+`Paint.avioTextCoverageMode` makes the missing destination contract explicit.
+`platformDefault` preserves upstream behavior. `externalLinearBackdrop` is
+carried through `DlPaint` and the paragraph display list into `TextFrame`, then
+selects a 2.2 coverage exponent in the existing Impeller glyph fragment shader.
+It changes no text RGB, shaping, font metrics, atlas sampling, or geometry and
+adds no draw, surface, texture, or compositor pass. An explicit
+`SetEnableGammaCorrection(false)` remains authoritative for tests and embedders
+that deliberately disable coverage correction.
+
+The mode belongs on semantic typography roles that are known to remain
+translucent until external composition. It must not become a platform-wide
+default or a Smithay heuristic over generic alpha: both would also alter text
+already flattened into opaque Flutter pixels and non-text translucent content.
 
 ## Known baseline debt
 

@@ -39,8 +39,10 @@ constexpr int kMaskFilterIndex = 13;
 constexpr int kMaskFilterBlurStyleIndex = 14;
 constexpr int kMaskFilterSigmaIndex = 15;
 constexpr int kInvertColorIndex = 16;
-constexpr size_t kDataByteCount = 68;  // 4 * (last index + 1)
-static_assert(kDataByteCount == sizeof(uint32_t) * (kInvertColorIndex + 1),
+constexpr int kAvioTextCoverageModeIndex = 17;
+constexpr size_t kDataByteCount = 72;  // 4 * (last index + 1)
+static_assert(kDataByteCount ==
+                  sizeof(uint32_t) * (kAvioTextCoverageModeIndex + 1),
               "kDataByteCount must match the size of the data array.");
 
 // Indices for objects.
@@ -190,6 +192,9 @@ const DlPaint* Paint::paint(DlPaint& paint,
   if (flags.applies_color_filter()) {
     paint.setInvertColors(uint_data[kInvertColorIndex] != 0);
   }
+
+  paint.setTextCoverageMode(
+      static_cast<DlTextCoverageMode>(uint_data[kAvioTextCoverageModeIndex]));
 
   if (flags.applies_mask_filter()) {
     switch (uint_data[kMaskFilterIndex]) {

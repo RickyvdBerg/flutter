@@ -69,6 +69,8 @@ TEST_F(ShellTest, ConvertPaintToDlPaint) {
   }
   EXPECT_EQ(dl_paint.getDrawStyle(), DlDrawStyle::kStroke);
   EXPECT_FALSE(dl_paint.isAntiAlias());
+  EXPECT_EQ(dl_paint.getTextCoverageMode(),
+            DlTextCoverageMode::kExternalLinearBackdrop);
 }
 
 TEST_F(ShellTest, ConvertDefaultPaintToDlPaint) {
@@ -112,6 +114,8 @@ TEST_F(ShellTest, ConvertDefaultPaintToDlPaint) {
   DestroyShell(std::move(shell), task_runners);
 
   EXPECT_TRUE(dl_paint.isAntiAlias());
+  EXPECT_EQ(dl_paint.getTextCoverageMode(),
+            DlTextCoverageMode::kPlatformDefault);
 }
 
 }  // namespace testing

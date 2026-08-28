@@ -42,6 +42,11 @@ class TextContents final : public Contents {
 
   Color GetColor() const;
 
+  static Scalar ComputeTextContrast(
+      Color color,
+      TextCoverageMode coverage_mode,
+      std::optional<bool> enable_gamma_correction = std::nullopt);
+
   // |Contents|
   void SetInheritedOpacity(Scalar opacity) override;
 

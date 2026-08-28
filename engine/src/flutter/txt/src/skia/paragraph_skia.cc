@@ -68,15 +68,23 @@ class DisplayListParagraphPainter : public skt::ParagraphPainter {
 
 #ifdef IMPELLER_SUPPORTS_RENDERING
     if (impeller_enabled_) {
+      auto make_text_frame = [&]() {
+        auto frame = impeller::MakeTextFrameFromTextBlobSkia(blob);
+        if (dl_paints_[paint_id].getTextCoverageMode() ==
+            DlTextCoverageMode::kExternalLinearBackdrop) {
+          frame->SetTextCoverageMode(
+              impeller::TextCoverageMode::kExternalLinearBackdrop);
+        }
+        return frame;
+      };
       SkTextBlobRunIterator run(blob.get());
       if (ShouldRenderAsPath(dl_paints_[paint_id])) {
         SkPath path = skia::textlayout::Paragraph::GetPath(blob.get());
         // If there is no path, this is an emoji and should be drawn as is,
         // ignoring the color source.
         if (path.isEmpty()) {
-          builder_->DrawText(DlTextImpeller::Make(
-                                 impeller::MakeTextFrameFromTextBlobSkia(blob)),
-                             x, y, dl_paints_[paint_id]);
+          builder_->DrawText(DlTextImpeller::Make(make_text_frame()), x, y,
+                             dl_paints_[paint_id]);
 
           return;
         }
@@ -86,9 +94,8 @@ class DisplayListParagraphPainter : public skt::ParagraphPainter {
         builder_->DrawPath(DlPath(transformed), dl_paints_[paint_id]);
         return;
       }
-      builder_->DrawText(
-          DlTextImpeller::Make(impeller::MakeTextFrameFromTextBlobSkia(blob)),
-          x, y, dl_paints_[paint_id]);
+      builder_->DrawText(DlTextImpeller::Make(make_text_frame()), x, y,
+                         dl_paints_[paint_id]);
       return;
     }
 #endif  // IMPELLER_SUPPORTS_RENDERING

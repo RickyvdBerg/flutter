@@ -18,18 +18,19 @@ DlPaint::DlPaint(DlColor color)
       stroke_miter_(kDefaultMiter) {}
 
 bool DlPaint::operator==(DlPaint const& other) const {
-  return blend_mode_ == other.blend_mode_ &&              //
-         draw_style_ == other.draw_style_ &&              //
-         stroke_cap_ == other.stroke_cap_ &&              //
-         stroke_join_ == other.stroke_join_ &&            //
-         is_anti_alias_ == other.is_anti_alias_ &&        //
-         is_invert_colors_ == other.is_invert_colors_ &&  //
-         color_ == other.color_ &&                        //
-         stroke_width_ == other.stroke_width_ &&          //
-         stroke_miter_ == other.stroke_miter_ &&          //
-         Equals(color_source_, other.color_source_) &&    //
-         Equals(color_filter_, other.color_filter_) &&    //
-         Equals(image_filter_, other.image_filter_) &&    //
+  return blend_mode_ == other.blend_mode_ &&                  //
+         draw_style_ == other.draw_style_ &&                  //
+         stroke_cap_ == other.stroke_cap_ &&                  //
+         stroke_join_ == other.stroke_join_ &&                //
+         is_anti_alias_ == other.is_anti_alias_ &&            //
+         is_invert_colors_ == other.is_invert_colors_ &&      //
+         text_coverage_mode_ == other.text_coverage_mode_ &&  //
+         color_ == other.color_ &&                            //
+         stroke_width_ == other.stroke_width_ &&              //
+         stroke_miter_ == other.stroke_miter_ &&              //
+         Equals(color_source_, other.color_source_) &&        //
+         Equals(color_filter_, other.color_filter_) &&        //
+         Equals(image_filter_, other.image_filter_) &&        //
          Equals(mask_filter_, other.mask_filter_);
 }
 

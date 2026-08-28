@@ -9,6 +9,7 @@
 #include "display_list/effects/dl_color_source.h"
 #include "display_list/utils/dl_receiver_utils.h"
 #include "gtest/gtest.h"
+#include "impeller/typographer/text_frame.h"
 #include "include/core/SkScalar.h"
 #include "runtime/test_font_data.h"
 #include "skia/paragraph_builder_skia.h"
@@ -49,6 +50,9 @@ class DlOpRecorder final : public virtual DlOpReceiver,
   int pathCount() const { return paths_.size(); }
   int textFrameCount() const { return text_frames_.size(); }
   int blobCount() const { return blobs_.size(); }
+  impeller::TextCoverageMode textCoverageMode(size_t index) const {
+    return text_frames_.at(index)->GetTextCoverageMode();
+  }
 
  private:
   void drawLine(const DlPoint& p0, const DlPoint& p1) override {
@@ -243,6 +247,24 @@ TEST_F(PainterTest, DrawTextImpeller) {
 
   EXPECT_EQ(recorder.textFrameCount(), 1);
   EXPECT_EQ(recorder.blobCount(), 0);
+  EXPECT_EQ(recorder.textCoverageMode(0),
+            impeller::TextCoverageMode::kPlatformDefault);
+}
+
+TEST_F(PainterTest, DrawTextWithExternalLinearBackdropCoverageImpeller) {
+  PretendImpellerIsEnabled(true);
+
+  auto style = makeStyle();
+  DlPaint foreground;
+  foreground.setTextCoverageMode(DlTextCoverageMode::kExternalLinearBackdrop);
+  style.foreground = foreground;
+
+  auto recorder = DlOpRecorder();
+  draw(style)->Dispatch(recorder);
+
+  ASSERT_EQ(recorder.textFrameCount(), 1);
+  EXPECT_EQ(recorder.textCoverageMode(0),
+            impeller::TextCoverageMode::kExternalLinearBackdrop);
 }
 
 TEST_F(PainterTest, DrawStrokedTextImpeller) {

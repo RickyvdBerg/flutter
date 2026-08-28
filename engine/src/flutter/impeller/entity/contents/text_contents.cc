@@ -34,6 +34,9 @@ constexpr bool kPlatformGammaCorrectionDefault =
     false;
 #endif
 
+constexpr Scalar kMaxPlatformGammaCorrection = 1.2f;
+constexpr Scalar kExternalLinearBackdropContrast = 2.2f;
+
 Point SizeToPoint(Size size) {
   return Point(size.width, size.height);
 }
@@ -45,6 +48,27 @@ using FS = GlyphAtlasPipeline::FragmentShader;
 TextContents::TextContents() {}
 
 TextContents::~TextContents() = default;
+
+Scalar TextContents::ComputeTextContrast(
+    Color color,
+    TextCoverageMode coverage_mode,
+    std::optional<bool> enable_gamma_correction) {
+  if (!enable_gamma_correction.value_or(
+          coverage_mode == TextCoverageMode::kExternalLinearBackdrop ||
+          kPlatformGammaCorrectionDefault)) {
+    return 1.0f;
+  }
+  if (coverage_mode == TextCoverageMode::kExternalLinearBackdrop) {
+    return kExternalLinearBackdropContrast;
+  }
+
+  // Calculate relative luminance using Rec. 709 luma coefficients. The
+  // platform contrast exponent ranges from 1.0 for black text to 2.2 for
+  // white text.
+  Scalar luma =
+      color.red * 0.2126f + color.green * 0.7152f + color.blue * 0.0722f;
+  return 1.0f + luma * kMaxPlatformGammaCorrection;
+}
 
 void TextContents::SetTextFrame(const std::shared_ptr<TextFrame>& frame) {
   frame_ = frame;
@@ -279,20 +303,8 @@ bool TextContents::Render(const ContentContext& renderer,
   frag_info.use_text_color = force_text_color_ ? 1.0 : 0.0;
   frag_info.text_color = ToVector(color.Premultiply());
   frag_info.is_color_glyph = type == GlyphAtlas::Type::kColorBitmap;
-  bool enable_gamma_correction = frame_->GetEnableGammaCorrection().value_or(
-      kPlatformGammaCorrectionDefault);
-  if (enable_gamma_correction) {
-    // Calculate relative luminance using Rec. 709 luma coefficients.
-    Scalar luma =
-        color.red * 0.2126f + color.green * 0.7152f + color.blue * 0.0722f;
-    // The contrast/gamma exponent applied in the shader ranges from 1.0 for
-    // black text to 2.2 (standard sRGB gamma) for white text. This interpolates
-    // the exponent based on the text color's luminance.
-    constexpr Scalar kMaxGammaCorrection = 1.2f;
-    frag_info.text_contrast = 1.0f + luma * kMaxGammaCorrection;
-  } else {
-    frag_info.text_contrast = 1.0f;
-  }
+  frag_info.text_contrast = ComputeTextContrast(
+      color, frame_->GetTextCoverageMode(), frame_->GetEnableGammaCorrection());
 
   FS::BindFragInfo(
       pass, renderer.GetTransientsDataBuffer().EmplaceUniform(frag_info));

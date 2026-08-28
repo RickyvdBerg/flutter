@@ -1342,6 +1342,7 @@ final class Paint {
   static const int _kMaskFilterBlurStyleIndex = 14;
   static const int _kMaskFilterSigmaIndex = 15;
   static const int _kInvertColorIndex = 16;
+  static const int _kAvioTextCoverageModeIndex = 17;
 
   static const int _kIsAntiAliasOffset = _kIsAntiAliasIndex << 2;
   static const int _kColorRedOffset = _kColorRedIndex << 2;
@@ -1360,9 +1361,10 @@ final class Paint {
   static const int _kMaskFilterBlurStyleOffset = _kMaskFilterBlurStyleIndex << 2;
   static const int _kMaskFilterSigmaOffset = _kMaskFilterSigmaIndex << 2;
   static const int _kInvertColorOffset = _kInvertColorIndex << 2;
+  static const int _kAvioTextCoverageModeOffset = _kAvioTextCoverageModeIndex << 2;
 
   // If you add more fields, remember to update _kDataByteCount.
-  static const int _kDataByteCount = 68; // 4 * (last index + 1).
+  static const int _kDataByteCount = 72; // 4 * (last index + 1).
 
   // Binary format must match the deserialization code in paint.cc.
   // C++ unit tests access this.
@@ -1717,6 +1719,21 @@ final class Paint {
     _data.setInt32(_kInvertColorOffset, value ? 1 : 0, _kFakeHostEndian);
   }
 
+  /// How Impeller authors glyph coverage for text drawn with this paint.
+  ///
+  /// This is an Avio engine extension and is only read when the paint is used
+  /// as a text foreground. Other drawing operations ignore it.
+  AvioTextCoverageMode get avioTextCoverageMode {
+    return AvioTextCoverageMode.values[_data.getInt32(
+      _kAvioTextCoverageModeOffset,
+      _kFakeHostEndian,
+    )];
+  }
+
+  set avioTextCoverageMode(AvioTextCoverageMode value) {
+    _data.setInt32(_kAvioTextCoverageModeOffset, value.index, _kFakeHostEndian);
+  }
+
   @override
   String toString() {
     if (const bool.fromEnvironment('dart.vm.product')) {
@@ -1782,6 +1799,23 @@ final class Paint {
     result.write(')');
     return result.toString();
   }
+}
+
+/// The downstream composition contract for glyph anti-aliasing coverage.
+///
+/// This is an Avio engine extension. It changes only glyph coverage, never the
+/// text color, glyph geometry, shaping, or font selection.
+enum AvioTextCoverageMode {
+  /// Use Flutter's platform text-gamma policy.
+  platformDefault,
+
+  /// The glyph remains translucent until an external linear-light compositor
+  /// supplies its backdrop.
+  ///
+  /// Impeller authors the coverage mask for that later blend in its existing
+  /// glyph shader. This keeps text crisp without adding another text, surface,
+  /// or compositor pass.
+  externalLinearBackdrop,
 }
 
 /// The color space describes the colors that are available to an [Image].

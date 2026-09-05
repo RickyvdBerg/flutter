@@ -64,7 +64,7 @@ need "exact opportunity feature negotiation" \
   'kFlutterAvioExtensionFeatureFrameOpportunityOutcomes'
 need "render-deadline ABI extension version" \
   $F/shell/platform/embedder/embedder.h \
-  'FLUTTER_AVIO_EXTENSION_VERSION 3'
+  'FLUTTER_AVIO_EXTENSION_VERSION 5'
 need "render-deadline semantic feature" \
   $F/shell/platform/embedder/embedder.h \
   'kFlutterAvioExtensionFeatureRenderDeadline'
@@ -506,6 +506,11 @@ absent "RenderViewImmediate (forbidden, contract §8)" 'RenderViewImmediate'
 absent "drain_tasks_now (forbidden support ABI)" 'drain_tasks_now|DrainTasksNow'
 absent "RSS probe counters" 'g_reclaim_enqueued_total'
 
+
+need "exact-frame preview feature" "$F/shell/platform/embedder/embedder.h" 'kFlutterAvioExtensionFeatureAtomicWindowPreviews'
+need "retained preview scene API" "$F/lib/ui/compositing.dart" 'pushAvioWindowPreview'
+need "preview target metadata" "$F/shell/platform/embedder/embedder.h" 'window_previews_count'
+
 echo
 [ $fail -eq 0 ] && echo "ALL PATCHES PRESERVED" || echo "FAILURES DETECTED"
-exit $fail
+exit "$fail"

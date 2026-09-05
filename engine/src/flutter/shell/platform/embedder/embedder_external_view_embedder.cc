@@ -1011,6 +1011,29 @@ void EmbedderExternalViewEmbedder::SubmitGenericFlutterView(
   frame->Submit();
 }
 
+std::vector<FlutterAvioWindowPreview>
+ConvertAvioWindowPreviewsToEmbedderCoordinates(
+    const std::vector<AvioWindowPreview>& previews,
+    const DlMatrix& transform,
+    double device_pixel_ratio) {
+  const double scale = device_pixel_ratio > 0 ? 1.0 / device_pixel_ratio : 1.0;
+  const auto convert = [&](DlRect value) {
+    const auto rect = value.TransformAndClipBounds(transform);
+    return FlutterRect{rect.GetLeft() * scale, rect.GetTop() * scale,
+                       rect.GetRight() * scale, rect.GetBottom() * scale};
+  };
+  std::vector<FlutterAvioWindowPreview> result;
+  result.reserve(previews.size());
+  for (const auto& preview : previews) {
+    result.push_back(
+        {sizeof(FlutterAvioWindowPreview), preview.surface_id,
+         convert(preview.rect), convert(preview.clip),
+         preview.corner_radius * transform.GetMaxScale2D().value_or(0) * scale,
+         preview.opacity});
+  }
+  return result;
+}
+
 void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
     int64_t flutter_view_id,
     GrDirectContext* context,
@@ -1064,6 +1087,20 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
       ConvertAvioCompositorMaterialsToEmbedderCoordinates(
           submit_info.avio_compositor_materials,
           pending_surface_transformation_, pending_device_pixel_ratio_);
+  const auto window_previews = ConvertAvioWindowPreviewsToEmbedderCoordinates(
+      submit_info.avio_window_previews, pending_surface_transformation_,
+      pending_device_pixel_ratio_);
+  if (submit_info.avio_window_previews_invalid) {
+    CompleteRootRenderTarget(
+        flutter_view_id, kFlutterPresentRenderTargetStatusInvalidWindowPreviews,
+        pending_root_render_target_
+            ? pending_root_render_target_->GetBackingStore()
+            : nullptr,
+        nullptr, &compositor_materials, false, &window_previews, true);
+    ResetPendingRootRenderTarget();
+    frame->Submit();
+    return;
+  }
   if (submit_info.avio_compositor_materials_invalid) {
     CompleteRootRenderTarget(
         flutter_view_id,
@@ -1081,7 +1118,8 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
   const bool has_previous_root_frame =
       root_paint_regions_.find(flutter_view_id) != root_paint_regions_.end();
   if ((!selected_target_damage_ || !has_previous_root_frame) &&
-      !root_view->HasEngineRenderedContents() && compositor_materials.empty()) {
+      !root_view->HasEngineRenderedContents() && compositor_materials.empty() &&
+      window_previews.empty()) {
     CompleteRootRenderTarget(
         flutter_view_id, kFlutterPresentRenderTargetStatusNoVisualChange,
         pending_root_render_target_
@@ -1272,10 +1310,10 @@ void EmbedderExternalViewEmbedder::SubmitRootRenderTarget(
   (void)render_complete_sync_fd;
 #endif
 
-  if (!CompleteRootRenderTarget(flutter_view_id,
-                                kFlutterPresentRenderTargetStatusPresented,
-                                render_target->GetBackingStore(), &present_info,
-                                &compositor_materials)) {
+  if (!CompleteRootRenderTarget(
+          flutter_view_id, kFlutterPresentRenderTargetStatusPresented,
+          render_target->GetBackingStore(), &present_info,
+          &compositor_materials, false, &window_previews)) {
     FML_LOG(ERROR) << "Could not present explicit render target for view "
                    << flutter_view_id;
   }
@@ -1294,8 +1332,11 @@ bool EmbedderExternalViewEmbedder::CompleteRootRenderTarget(
     const FlutterBackingStore* backing_store,
     const FlutterBackingStorePresentInfo* backing_store_present_info,
     const std::vector<FlutterAvioCompositorMaterial>* compositor_materials,
-    bool compositor_materials_invalid) const {
+    bool compositor_materials_invalid,
+    const std::vector<FlutterAvioWindowPreview>* window_previews,
+    bool window_previews_invalid) const {
   static const std::vector<FlutterAvioCompositorMaterial> kNoMaterials;
+  static const std::vector<FlutterAvioWindowPreview> kNoPreviews;
   return present_render_target_callback_(
       flutter_view_id,
       pending_frame_opportunity_.has_value() ? pending_frame_opportunity_->id
@@ -1306,7 +1347,9 @@ bool EmbedderExternalViewEmbedder::CompleteRootRenderTarget(
           : 0,
       status, backing_store, backing_store_present_info,
       compositor_materials ? *compositor_materials : kNoMaterials,
-      compositor_materials_invalid);
+      compositor_materials_invalid,
+      window_previews ? *window_previews : kNoPreviews,
+      window_previews_invalid);
 }
 
 }  // namespace flutter

@@ -7,6 +7,7 @@
 
 #include "dart_api.h"
 #include "flutter/flow/layers/avio_compositor_material_layer.h"
+#include "flutter/flow/layers/avio_window_preview_layer.h"
 #include "flutter/flow/layers/backdrop_filter_layer.h"
 #include "flutter/flow/layers/clip_path_layer.h"
 #include "flutter/flow/layers/clip_rect_layer.h"
@@ -224,6 +225,27 @@ void SceneBuilder::pushShaderMask(Dart_Handle layer_handle,
   if (old_layer && old_layer->Layer()) {
     layer->AssignOldLayer(old_layer->Layer().get());
   }
+}
+
+void SceneBuilder::pushAvioWindowPreview(
+    Dart_Handle handle,
+    int64_t surface_id,
+    double left,
+    double top,
+    double right,
+    double bottom,
+    double corner_radius,
+    bool replace_children,
+    const fml::RefPtr<EngineLayer>& old_layer) {
+  auto layer = std::make_shared<AvioWindowPreviewLayer>(
+      surface_id > 0 ? static_cast<uint64_t>(surface_id) : 0u,
+      DlRect::MakeLTRB(SafeNarrow(left), SafeNarrow(top), SafeNarrow(right),
+                       SafeNarrow(bottom)),
+      SafeNarrow(corner_radius), replace_children);
+  PushLayer(layer);
+  EngineLayer::MakeRetained(handle, layer);
+  if (old_layer && old_layer->Layer())
+    layer->AssignOldLayer(old_layer->Layer().get());
 }
 
 void SceneBuilder::pushAvioCompositorMaterial(

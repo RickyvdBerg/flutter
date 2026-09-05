@@ -95,6 +95,15 @@ class SceneBuilder : public RefCountedDartWrappable<SceneBuilder> {
                       int blend_mode,
                       int filter_quality_index,
                       const fml::RefPtr<EngineLayer>& old_layer);
+  void pushAvioWindowPreview(Dart_Handle layer_handle,
+                             int64_t surface_id,
+                             double left,
+                             double top,
+                             double right,
+                             double bottom,
+                             double corner_radius,
+                             bool replace_children,
+                             const fml::RefPtr<EngineLayer>& old_layer);
   void pushAvioCompositorMaterial(Dart_Handle layer_handle,
                                   int64_t id,
                                   double left,

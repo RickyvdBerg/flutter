@@ -60,6 +60,22 @@ TEST(EmbedderExternalViewEmbedderTest,
   EXPECT_EQ(converted[0].clip_parameter_3, 12.0);
 }
 
+TEST(EmbedderExternalViewEmbedderTest,
+     PreviewCoordinatesKeepCropAndApplyDprExactlyOnce) {
+  const AvioWindowPreview preview{41, DlRect::MakeXYWH(8.25f, -10.5f, 100, 60),
+                                  DlRect::MakeXYWH(8.25f, 0, 100, 49.5f), 8.f,
+                                  0.5f};
+  const auto converted = ConvertAvioWindowPreviewsToEmbedderCoordinates(
+      {preview}, DlMatrix::MakeScale({2.f, 2.f, 1.f}), 2.0);
+  ASSERT_EQ(converted.size(), 1u);
+  EXPECT_EQ(converted[0].rect.left, 8.25);
+  EXPECT_EQ(converted[0].rect.top, -10.5);
+  EXPECT_EQ(converted[0].rect.bottom, 49.5);
+  EXPECT_EQ(converted[0].clip.top, 0.0);
+  EXPECT_EQ(converted[0].corner_radius, 8.0);
+  EXPECT_EQ(converted[0].opacity, 0.5);
+}
+
 AvioCompositorMaterial MakeMaterial(uint64_t id, const DlRect& rect) {
   return AvioCompositorMaterial{
       .id = id,
@@ -140,8 +156,8 @@ TEST(EmbedderExternalViewEmbedderTest,
       [](FlutterViewId, FlutterFrameOpportunityId, FlutterEngineDisplayId,
          FlutterPresentRenderTargetStatus, const FlutterBackingStore*,
          const FlutterBackingStorePresentInfo*,
-         const std::vector<FlutterAvioCompositorMaterial>&,
-         bool) { return true; });
+         const std::vector<FlutterAvioCompositorMaterial>&, bool,
+         const std::vector<FlutterAvioWindowPreview>&, bool) { return true; });
   ExternalViewEmbedder& boundary = embedder;
   boundary.BeginFrame(nullptr, nullptr);
   boundary.SetFrameOpportunity(FrameOpportunityContext{

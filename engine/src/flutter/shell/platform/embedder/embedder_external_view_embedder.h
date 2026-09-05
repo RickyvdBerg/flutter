@@ -29,6 +29,13 @@ ConvertAvioCompositorMaterialsToEmbedderCoordinates(
     const DlMatrix& surface_transformation,
     double device_pixel_ratio);
 
+/// Preview destinations and visible clips use the same root surface mapping.
+std::vector<FlutterAvioWindowPreview>
+ConvertAvioWindowPreviewsToEmbedderCoordinates(
+    const std::vector<AvioWindowPreview>& previews,
+    const DlMatrix& surface_transformation,
+    double device_pixel_ratio);
+
 /// Everything a frame put on its target, in the physical-pixel space the root
 /// view records in: the view's recorded draw-op bounds unioned with the rects
 /// of the compositor materials the same frame published. Materials carry no
@@ -78,7 +85,9 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
       const FlutterBackingStore* backing_store,
       const FlutterBackingStorePresentInfo* backing_store_present_info,
       const std::vector<FlutterAvioCompositorMaterial>& compositor_materials,
-      bool compositor_materials_invalid)>;
+      bool compositor_materials_invalid,
+      const std::vector<FlutterAvioWindowPreview>& window_previews,
+      bool window_previews_invalid)>;
   using SurfaceTransformationCallback = std::function<DlMatrix(void)>;
 
   //----------------------------------------------------------------------------
@@ -195,7 +204,9 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
           nullptr,
       const std::vector<FlutterAvioCompositorMaterial>* compositor_materials =
           nullptr,
-      bool compositor_materials_invalid = false) const;
+      bool compositor_materials_invalid = false,
+      const std::vector<FlutterAvioWindowPreview>* window_previews = nullptr,
+      bool window_previews_invalid = false) const;
 
   const FlutterCompositorMode compositor_mode_;
   const bool selected_target_damage_;

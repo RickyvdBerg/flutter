@@ -73,7 +73,7 @@ extern "C" {
 // Flutter embedder ABI. The engine reports supported semantics through
 // FlutterEngineGetAvioExtensionCapabilities and validates the request again
 // during initialization, before creating a view or GPU resource.
-#define FLUTTER_AVIO_EXTENSION_VERSION 4u
+#define FLUTTER_AVIO_EXTENSION_VERSION 5u
 
 typedef uint64_t FlutterAvioExtensionFeatures;
 
@@ -93,6 +93,8 @@ typedef uint64_t FlutterAvioExtensionFeatures;
 #define kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition \
   0x0000000000000200ULL
 #define kFlutterAvioExtensionFeatureRenderDeadline 0x0000000000000400ULL
+#define kFlutterAvioExtensionFeatureAtomicWindowPreviews 0x0000000000000800ULL
+#define FLUTTER_AVIO_MAX_WINDOW_PREVIEWS 8u
 
 /// Hard transaction bound shared by retained scene collection and embedders.
 #define FLUTTER_AVIO_MAX_COMPOSITOR_MATERIALS 64u
@@ -2602,6 +2604,7 @@ typedef enum {
   /// may already have acquired the named backing store. Appended to preserve
   /// every established C ABI enum value.
   kFlutterPresentRenderTargetStatusInvalidCompositorMaterials,
+  kFlutterPresentRenderTargetStatusInvalidWindowPreviews,
 } FlutterPresentRenderTargetStatus;
 
 typedef enum {
@@ -2634,6 +2637,18 @@ typedef struct {
 
 typedef void (*FlutterFrameOpportunityOutcomeCallback)(
     const FlutterFrameOpportunityOutcomeInfo* info);
+
+/// One exact retained client projection. Coordinates are view-local logical
+/// pixels. `rect` retains the complete destination even when `clip` exposes
+/// only part of it; clipping must not rescale the client's content.
+typedef struct {
+  size_t struct_size;
+  uint64_t surface_id;
+  FlutterRect rect;
+  FlutterRect clip;
+  double corner_radius;
+  double opacity;
+} FlutterAvioWindowPreview;
 
 typedef struct {
   /// The size of this struct.
@@ -2672,6 +2687,10 @@ typedef struct {
   const FlutterAvioCompositorMaterial* compositor_materials;
   size_t compositor_materials_count;
   bool compositor_materials_invalid;
+  /// Complete immutable projection list belonging to this exact target.
+  const FlutterAvioWindowPreview* window_previews;
+  size_t window_previews_count;
+  bool window_previews_invalid;
 } FlutterPresentRenderTargetInfo;
 
 typedef bool (*FlutterBackingStoreCreateCallback)(

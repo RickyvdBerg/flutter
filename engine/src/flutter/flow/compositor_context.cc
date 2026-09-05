@@ -186,6 +186,10 @@ RasterStatus CompositorContext::ScopedFrame::Raster(
       layer_tree.avio_compositor_materials_invalid()) {
     return RasterStatus::kInvalidCompositorMaterials;
   }
+  if (reject_invalid_compositor_materials &&
+      layer_tree.avio_window_previews_invalid()) {
+    return RasterStatus::kInvalidWindowPreviews;
+  }
   bool needs_save_layer = root_needs_readback && !surface_supports_readback();
   PostPrerollResult post_preroll_result = PostPrerollResult::kSuccess;
   if (view_embedder_ && raster_thread_merger_) {

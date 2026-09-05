@@ -1045,6 +1045,9 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
 
     SurfaceFrame::SubmitInfo submit_info;
     submit_info.presentation_time = presentation_time;
+    submit_info.avio_window_previews = layer_tree.TakeAvioWindowPreviews();
+    submit_info.avio_window_previews_invalid =
+        layer_tree.avio_window_previews_invalid();
     submit_info.avio_compositor_materials =
         layer_tree.TakeAvioCompositorMaterials();
     submit_info.avio_compositor_materials_invalid =
@@ -1078,7 +1081,8 @@ DrawSurfaceStatus Rasterizer::DrawToSurfaceUnsafe(
 
     if (frame_status == RasterStatus::kResubmit) {
       return DrawSurfaceStatus::kRetry;
-    } else if (frame_status == RasterStatus::kInvalidCompositorMaterials) {
+    } else if (frame_status == RasterStatus::kInvalidCompositorMaterials ||
+               frame_status == RasterStatus::kInvalidWindowPreviews) {
       return DrawSurfaceStatus::kRejected;
     } else {
       FML_CHECK(frame_status == RasterStatus::kSuccess);

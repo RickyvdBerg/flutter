@@ -12,6 +12,7 @@
 
 #include "flutter/common/graphics/texture.h"
 #include "flutter/flow/avio_compositor_material.h"
+#include "flutter/flow/avio_window_preview.h"
 #include "flutter/flow/compositor_context.h"
 #include "flutter/flow/layers/layer.h"
 #include "flutter/flow/raster_cache.h"
@@ -65,6 +66,12 @@ class LayerTree {
   std::vector<AvioCompositorMaterial> TakeAvioCompositorMaterials() {
     return std::move(avio_compositor_materials_);
   }
+  std::vector<AvioWindowPreview> TakeAvioWindowPreviews() {
+    return std::move(avio_window_previews_);
+  }
+  bool avio_window_previews_invalid() const {
+    return avio_window_previews_invalid_;
+  }
   bool avio_compositor_materials_invalid() const {
     return avio_compositor_materials_invalid_;
   }
@@ -78,6 +85,8 @@ class LayerTree {
   std::vector<RasterCacheItem*> raster_cache_items_;
   std::vector<AvioCompositorMaterial> avio_compositor_materials_;
   bool avio_compositor_materials_invalid_ = false;
+  std::vector<AvioWindowPreview> avio_window_previews_;
+  bool avio_window_previews_invalid_ = false;
 
   FML_DISALLOW_COPY_AND_ASSIGN(LayerTree);
 };

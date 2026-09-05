@@ -47,6 +47,7 @@ enum class RasterStatus {
   // The retained material sidecar cannot represent the exact scene. This is
   // emitted only when a selected root target requested pre-raster validation.
   kInvalidCompositorMaterials,
+  kInvalidWindowPreviews,
 };
 
 class FrameDamage {

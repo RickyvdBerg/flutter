@@ -50,6 +50,7 @@ void LayerRasterCacheItem::PrerollFinalize(PrerollContext* context,
   // alive, but if the following conditions apply then we need to set our
   // state back to kDoNotCache so that we don't populate the entry later.
   if (context->has_platform_view || context->has_texture_layer ||
+      layer_->subtree_has_avio_window_preview() ||
       context->state_stack.content_culled(layer_->paint_bounds())) {
     return;
   }

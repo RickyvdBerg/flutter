@@ -126,7 +126,7 @@ app.*.symbols
 !/dev/ci/**/Gemfile.lock
 
 # Prebuilt binaries.
-/prebuilts/
+/prebuilts
 
 # TODO(67373): This entry is temporarily disabled, but can be restored once the
 # buildmoot is completed.
@@ -144,3 +144,6 @@ app.*.symbols
 
 # The gn-sdk from Chromium and managed by DEPS and gclient.
 /tools/fuchsia/gn-sdk
+
+# DEPS-provided license tools (directory or dependency symlink).
+/tools/licenses

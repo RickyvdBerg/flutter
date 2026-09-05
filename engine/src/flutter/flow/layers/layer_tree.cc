@@ -40,7 +40,10 @@ bool LayerTree::Preroll(CompositorContext::ScopedFrame& frame,
   const bool has_compositor_material =
       root_layer_->subtree_has_avio_compositor_material();
   const DlRect scene_cull_rect = DlRect::MakeSize(frame_size_);
-  if (has_compositor_material && !cull_rect.Contains(scene_cull_rect)) {
+  const bool has_window_preview =
+      root_layer_->subtree_has_avio_window_preview();
+  if ((has_compositor_material || has_window_preview) &&
+      !cull_rect.Contains(scene_cull_rect)) {
     // Partial raster needs a second clip history so unchanged retained nodes
     // stay in the exact-frame sidecar. A full first frame already traverses
     // the complete scene; avoid duplicating every stack mutation on that
@@ -54,6 +57,8 @@ bool LayerTree::Preroll(CompositorContext::ScopedFrame& frame,
 
   raster_cache_items_.clear();
   avio_compositor_materials_.clear();
+  avio_window_previews_.clear();
+  avio_window_previews_invalid_ = false;
   avio_compositor_materials_invalid_ = false;
 
   PrerollContext context = {
@@ -75,6 +80,10 @@ bool LayerTree::Preroll(CompositorContext::ScopedFrame& frame,
       .avio_compositor_materials_invalid =
           has_compositor_material ? &avio_compositor_materials_invalid_
                                   : nullptr,
+      .avio_window_previews =
+          has_window_preview ? &avio_window_previews_ : nullptr,
+      .avio_window_previews_invalid =
+          has_window_preview ? &avio_window_previews_invalid_ : nullptr,
   };
 
   root_layer_->Preroll(&context);

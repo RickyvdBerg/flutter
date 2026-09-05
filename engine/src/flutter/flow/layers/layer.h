@@ -14,6 +14,7 @@
 #include "flutter/common/macros.h"
 #include "flutter/display_list/dl_canvas.h"
 #include "flutter/flow/avio_compositor_material.h"
+#include "flutter/flow/avio_window_preview.h"
 #include "flutter/flow/diff_context.h"
 #include "flutter/flow/embedded_views.h"
 #include "flutter/flow/layers/layer_state_stack.h"
@@ -34,6 +35,7 @@ class MockLayer;
 
 class ContainerLayer;
 class AvioCompositorMaterialLayer;
+class AvioWindowPreviewLayer;
 class DisplayListLayer;
 class PerformanceOverlayLayer;
 class TextureLayer;
@@ -80,6 +82,8 @@ struct PrerollContext {
   // both pointers for the duration of preroll; stock callers leave them null.
   std::vector<AvioCompositorMaterial>* avio_compositor_materials = nullptr;
   bool* avio_compositor_materials_invalid = nullptr;
+  std::vector<AvioWindowPreview>* avio_window_previews = nullptr;
+  bool* avio_window_previews_invalid = nullptr;
 };
 
 struct PaintContext {
@@ -196,6 +200,16 @@ class Layer {
     subtree_has_platform_view_ = value;
   }
 
+  bool subtree_has_avio_window_preview() const {
+    return subtree_has_avio_window_preview_;
+  }
+  void set_subtree_has_avio_window_preview(bool value) {
+    subtree_has_avio_window_preview_ = value;
+  }
+  virtual const AvioWindowPreviewLayer* as_avio_window_preview_layer() const {
+    return nullptr;
+  }
+
   bool subtree_has_avio_compositor_material() const {
     return subtree_has_avio_compositor_material_;
   }
@@ -275,6 +289,7 @@ class Layer {
   uint64_t original_layer_id_;
   bool subtree_has_platform_view_ = false;
   bool subtree_has_avio_compositor_material_ = false;
+  bool subtree_has_avio_window_preview_ = false;
 
   static uint64_t NextUniqueID();
 

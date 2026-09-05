@@ -191,7 +191,8 @@ static constexpr FlutterAvioExtensionFeatures kAvioSupportedFeatures =
     kFlutterAvioExtensionFeatureViewVisibility |
     kFlutterAvioExtensionFeatureAtomicCompositorMaterials |
     kFlutterAvioExtensionFeatureTypedRenderTargetAcquisition |
-    kFlutterAvioExtensionFeatureRenderDeadline
+    kFlutterAvioExtensionFeatureRenderDeadline |
+    kFlutterAvioExtensionFeatureAtomicWindowPreviews
 #if FML_OS_LINUX && defined(SHELL_ENABLE_VULKAN) && \
     defined(IMPELLER_SUPPORTS_RENDERING)
     | kFlutterAvioExtensionFeatureResourceLifecycleConfig
@@ -2290,8 +2291,8 @@ InferExternalViewEmbedderFromArgs(
             FlutterPresentRenderTargetStatus status,
             const FlutterBackingStore* backing_store,
             const FlutterBackingStorePresentInfo* backing_store_present_info,
-            const auto& compositor_materials,
-            bool compositor_materials_invalid) {
+            const auto& compositor_materials, bool compositor_materials_invalid,
+            const auto& window_previews, bool window_previews_invalid) {
           TRACE_EVENT0("flutter", "FlutterCompositorPresentRenderTarget");
           FlutterPresentRenderTargetInfo info = {
               .struct_size = sizeof(FlutterPresentRenderTargetInfo),
@@ -2305,6 +2306,9 @@ InferExternalViewEmbedderFromArgs(
               .compositor_materials = compositor_materials.data(),
               .compositor_materials_count = compositor_materials.size(),
               .compositor_materials_invalid = compositor_materials_invalid,
+              .window_previews = window_previews.data(),
+              .window_previews_count = window_previews.size(),
+              .window_previews_invalid = window_previews_invalid,
           };
           if (frame_opportunity_registry) {
             if (opportunity_id == 0 ||

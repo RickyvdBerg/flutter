@@ -249,9 +249,12 @@ enum AvioCompositorMaterialRecipe { explicit, tiered }
 /// parameters; it does not accept an arbitrary client bitmap or path.
 enum AvioCompositorMaterialClipKind { roundedRectangle, bottomEdgePull }
 
-/// An opaque handle to an Avio compositor-material engine layer.
-///
-/// Instances are created by [SceneBuilder.pushAvioCompositorMaterial].
+/// An opaque handle created by [SceneBuilder.pushAvioWindowPreview].
+class AvioWindowPreviewEngineLayer extends _EngineLayerWrapper {
+  AvioWindowPreviewEngineLayer._(super.nativeLayer) : super._();
+}
+
+/// An opaque handle created by [SceneBuilder.pushAvioCompositorMaterial].
 class AvioCompositorMaterialEngineLayer extends _EngineLayerWrapper {
   AvioCompositorMaterialEngineLayer._(super.nativeLayer) : super._();
 }
@@ -481,11 +484,22 @@ abstract class SceneBuilder {
     FilterQuality filterQuality = FilterQuality.low,
   });
 
+  /// Declares a client projection for an Avio shell item. Geometry and opacity
+  /// are resolved in preroll and delivered with the matching root target.
+  /// With [replaceChildren], an admitted node clears its rounded opening and
+  /// suppresses its placeholder children; excess or duplicate visible nodes
+  /// keep their children. Explicit declarations instead reject invalid sets.
+  AvioWindowPreviewEngineLayer pushAvioWindowPreview({
+    required int surfaceId,
+    required Rect rect,
+    double cornerRadius = 0,
+    bool replaceChildren = false,
+    AvioWindowPreviewEngineLayer? oldLayer,
+  });
+
   /// Pushes a retained, non-painting material node for an external compositor.
-  ///
-  /// The node follows the same transform, clip, opacity, and retained-layer
-  /// diff rules as its children. Its descriptor is delivered only as part of
-  /// the exact frame presentation callback.
+  /// Its descriptor follows the scene transform, clip and opacity and is
+  /// delivered only with the exact presentation callback.
   AvioCompositorMaterialEngineLayer pushAvioCompositorMaterial({
     required int id,
     required Rect rect,
@@ -996,6 +1010,59 @@ base class _NativeSceneBuilder extends NativeFieldWrapperClass1 implements Scene
     double maskRectBottom,
     int blendMode,
     int filterQualityIndex,
+    EngineLayer? oldLayer,
+  );
+
+  @override
+  AvioWindowPreviewEngineLayer pushAvioWindowPreview({
+    required int surfaceId,
+    required Rect rect,
+    double cornerRadius = 0,
+    bool replaceChildren = false,
+    AvioWindowPreviewEngineLayer? oldLayer,
+  }) {
+    assert(surfaceId > 0 && rect.isFinite && !rect.isEmpty);
+    assert(_debugCheckCanBeUsedAsOldLayer(oldLayer, 'pushAvioWindowPreview'));
+    final EngineLayer native = _NativeEngineLayer._();
+    _pushAvioWindowPreview(
+      native,
+      surfaceId,
+      rect.left,
+      rect.top,
+      rect.right,
+      rect.bottom,
+      cornerRadius,
+      replaceChildren,
+      oldLayer?._nativeLayer,
+    );
+    final layer = AvioWindowPreviewEngineLayer._(native);
+    assert(_debugPushLayer(layer));
+    return layer;
+  }
+
+  @Native<
+    Void Function(
+      Pointer<Void>,
+      Handle,
+      Int64,
+      Double,
+      Double,
+      Double,
+      Double,
+      Double,
+      Bool,
+      Handle,
+    )
+  >(symbol: 'SceneBuilder::pushAvioWindowPreview')
+  external void _pushAvioWindowPreview(
+    EngineLayer layer,
+    int surfaceId,
+    double left,
+    double top,
+    double right,
+    double bottom,
+    double cornerRadius,
+    bool replaceChildren,
     EngineLayer? oldLayer,
   );
 

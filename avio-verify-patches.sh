@@ -58,6 +58,12 @@ absent_in "macOS desktop embedder root-target override" \
   $F/shell/platform/darwin/macos/framework/Source/FlutterEngine.mm \
   'present_render_target_callback'
 
+need "preview metadata propagates through SceneBuilder ancestors" \
+  $F/lib/ui/compositing/scene_builder.cc 'ancestor->set_subtree_has_avio_window_preview'
+need "real SceneBuilder preview regression coverage" \
+  $F/lib/ui/compositing/avio_preview_scene_builder_unittests.cc \
+  'AvioPreviewSceneBuilderPreservesNestedAndRetainedMetadata'
+
 echo "--- Exact frame opportunities ---"
 need "exact opportunity feature negotiation" \
   $F/shell/platform/embedder/embedder.h \

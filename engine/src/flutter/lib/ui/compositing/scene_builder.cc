@@ -390,12 +390,20 @@ void SceneBuilder::AddLayer(std::shared_ptr<Layer> layer) {
   FML_DCHECK(layer);
 
   if (!layer_stack_.empty()) {
-    if (layer->subtree_has_avio_compositor_material()) {
-      // Active ancestors were inserted before their children. Propagate the
-      // marker here so a wholly retained subtree keeps the one-pass full-scene
-      // material cull on its next frame without scanning the layer tree.
+    const bool has_material = layer->subtree_has_avio_compositor_material();
+    const bool has_preview = layer->subtree_has_avio_window_preview();
+    if (has_material || has_preview) {
+      // Active ancestors were inserted before their children. Both fresh and
+      // retained sidecars must reach the root before preroll chooses their
+      // collectors and full-scene cull. ContainerLayer::Add alone only marks
+      // the immediate parent.
       for (const auto& ancestor : layer_stack_) {
-        ancestor->set_subtree_has_avio_compositor_material(true);
+        if (has_material) {
+          ancestor->set_subtree_has_avio_compositor_material(true);
+        }
+        if (has_preview) {
+          ancestor->set_subtree_has_avio_window_preview(true);
+        }
       }
     }
     layer_stack_.back()->Add(std::move(layer));

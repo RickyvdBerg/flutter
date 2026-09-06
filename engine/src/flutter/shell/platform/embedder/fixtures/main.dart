@@ -1563,6 +1563,34 @@ Future<void> channel_listener_response() async {
   signalNativeTest();
 }
 
+// Selected-target native tests wait for callback registration before sending
+// their initial metrics, so startup cannot consume the first requested frame.
+@pragma('vm:entry-point')
+// ignore: non_constant_identifier_names
+void render_selected_target_ready(List<String> arguments) {
+  switch (arguments.single) {
+    case 'render_gradient_retained':
+      render_gradient_retained();
+    case 'render_partial_repaint_clear_and_blur':
+      render_partial_repaint_clear_and_blur();
+    case 'render_then_clear_to_empty':
+      render_then_clear_to_empty();
+    case 'empty_scene_posts_zero_layers_to_compositor':
+      empty_scene_posts_zero_layers_to_compositor();
+    case 'render_disjoint_partial_repaint_with_translucent_gap':
+      render_disjoint_partial_repaint_with_translucent_gap();
+    case 'render_partial_repaint_through_recycled_save_layers':
+      render_partial_repaint_through_recycled_save_layers();
+    case 'render_partial_repaint_with_root_backdrop_filter':
+      render_partial_repaint_with_root_backdrop_filter();
+    case 'render_clipped_diagonal_edge':
+      render_clipped_diagonal_edge();
+    default:
+      throw ArgumentError.value(arguments.single, 'scene');
+  }
+  signalNativeTest();
+}
+
 @pragma('vm:entry-point')
 // ignore: non_constant_identifier_names
 void render_gradient_retained() {

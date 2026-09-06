@@ -494,7 +494,13 @@ TEST_F(EmbedderTest,
 
   EmbedderConfigBuilder builder(context);
   builder.AddCommandLineArgument("--enable-impeller");
-  builder.SetDartEntrypoint("render_gradient_retained");
+  builder.SetDartEntrypoint("render_selected_target_ready");
+  builder.AddDartEntrypointArgument("render_gradient_retained");
+  fml::AutoResetWaitableEvent dart_ready;
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY(
+          [&dart_ready](Dart_NativeArguments args) { dart_ready.Signal(); }));
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
       /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
@@ -546,6 +552,9 @@ TEST_F(EmbedderTest,
   auto full_repaint_scene = context.GetNextSceneImage();
   auto engine = builder.LaunchEngine();
   ASSERT_TRUE(engine.is_valid());
+  // Window metrics must follow Dart callback registration. Otherwise the
+  // first frame can be delivered while the JIT entrypoint is still starting.
+  ASSERT_FALSE(dart_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 
   FlutterWindowMetricsEvent event = {};
   event.struct_size = sizeof(event);
@@ -621,7 +630,13 @@ TEST_F(EmbedderTest,
 
   EmbedderConfigBuilder builder(context);
   builder.AddCommandLineArgument("--enable-impeller");
-  builder.SetDartEntrypoint("render_partial_repaint_clear_and_blur");
+  builder.SetDartEntrypoint("render_selected_target_ready");
+  builder.AddDartEntrypointArgument("render_partial_repaint_clear_and_blur");
+  fml::AutoResetWaitableEvent dart_ready;
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY(
+          [&dart_ready](Dart_NativeArguments args) { dart_ready.Signal(); }));
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
       /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
@@ -668,6 +683,9 @@ TEST_F(EmbedderTest,
   auto initial_scene = context.GetNextSceneImage();
   auto engine = builder.LaunchEngine();
   ASSERT_TRUE(engine.is_valid());
+  // Window metrics must follow Dart callback registration. Otherwise the
+  // first frame can be delivered while the JIT entrypoint is still starting.
+  ASSERT_FALSE(dart_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 
   FlutterWindowMetricsEvent event = {};
   event.struct_size = sizeof(event);
@@ -732,7 +750,13 @@ TEST_F(EmbedderTest,
 
   EmbedderConfigBuilder builder(context);
   builder.AddCommandLineArgument("--enable-impeller");
-  builder.SetDartEntrypoint("render_then_clear_to_empty");
+  builder.SetDartEntrypoint("render_selected_target_ready");
+  builder.AddDartEntrypointArgument("render_then_clear_to_empty");
+  fml::AutoResetWaitableEvent dart_ready;
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY(
+          [&dart_ready](Dart_NativeArguments args) { dart_ready.Signal(); }));
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
       /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
@@ -779,6 +803,9 @@ TEST_F(EmbedderTest,
   auto initial_scene = context.GetNextSceneImage();
   auto engine = builder.LaunchEngine();
   ASSERT_TRUE(engine.is_valid());
+  // Window metrics must follow Dart callback registration. Otherwise the
+  // first frame can be delivered while the JIT entrypoint is still starting.
+  ASSERT_FALSE(dart_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 
   FlutterWindowMetricsEvent event = {};
   event.struct_size = sizeof(event);
@@ -853,7 +880,14 @@ TEST_F(EmbedderTest,
 
   EmbedderConfigBuilder builder(context);
   builder.AddCommandLineArgument("--enable-impeller");
-  builder.SetDartEntrypoint("empty_scene_posts_zero_layers_to_compositor");
+  builder.SetDartEntrypoint("render_selected_target_ready");
+  builder.AddDartEntrypointArgument(
+      "empty_scene_posts_zero_layers_to_compositor");
+  fml::AutoResetWaitableEvent dart_ready;
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY(
+          [&dart_ready](Dart_NativeArguments args) { dart_ready.Signal(); }));
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
       /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
@@ -891,6 +925,9 @@ TEST_F(EmbedderTest,
 
   auto engine = builder.LaunchEngine();
   ASSERT_TRUE(engine.is_valid());
+  // Window metrics must follow Dart callback registration. Otherwise the
+  // first frame can be delivered while the JIT entrypoint is still starting.
+  ASSERT_FALSE(dart_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 
   FlutterWindowMetricsEvent event = {};
   event.struct_size = sizeof(event);
@@ -916,8 +953,14 @@ TEST_F(EmbedderTest,
 
   EmbedderConfigBuilder builder(context);
   builder.AddCommandLineArgument("--enable-impeller");
-  builder.SetDartEntrypoint(
+  builder.SetDartEntrypoint("render_selected_target_ready");
+  builder.AddDartEntrypointArgument(
       "render_disjoint_partial_repaint_with_translucent_gap");
+  fml::AutoResetWaitableEvent dart_ready;
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY(
+          [&dart_ready](Dart_NativeArguments args) { dart_ready.Signal(); }));
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
       /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
@@ -975,6 +1018,9 @@ TEST_F(EmbedderTest,
   auto initial_scene = context.GetNextSceneImage();
   auto engine = builder.LaunchEngine();
   ASSERT_TRUE(engine.is_valid());
+  // Window metrics must follow Dart callback registration. Otherwise the
+  // first frame can be delivered while the JIT entrypoint is still starting.
+  ASSERT_FALSE(dart_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 
   FlutterWindowMetricsEvent event = {};
   event.struct_size = sizeof(event);
@@ -1047,7 +1093,13 @@ TEST_F(EmbedderTest, SelectedTargetDamageFullFallbackClearsPreservedTarget) {
 
   EmbedderConfigBuilder builder(context);
   builder.AddCommandLineArgument("--enable-impeller");
-  builder.SetDartEntrypoint("render_partial_repaint_clear_and_blur");
+  builder.SetDartEntrypoint("render_selected_target_ready");
+  builder.AddDartEntrypointArgument("render_partial_repaint_clear_and_blur");
+  fml::AutoResetWaitableEvent dart_ready;
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY(
+          [&dart_ready](Dart_NativeArguments args) { dart_ready.Signal(); }));
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
       /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
@@ -1089,6 +1141,9 @@ TEST_F(EmbedderTest, SelectedTargetDamageFullFallbackClearsPreservedTarget) {
   auto initial_scene = context.GetNextSceneImage();
   auto engine = builder.LaunchEngine();
   ASSERT_TRUE(engine.is_valid());
+  // Window metrics must follow Dart callback registration. Otherwise the
+  // first frame can be delivered while the JIT entrypoint is still starting.
+  ASSERT_FALSE(dart_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 
   FlutterWindowMetricsEvent event = {};
   event.struct_size = sizeof(event);
@@ -1145,8 +1200,14 @@ TEST_F(EmbedderTest, SelectedTargetDamageClearsRecycledSaveLayerTargets) {
 
   EmbedderConfigBuilder builder(context);
   builder.AddCommandLineArgument("--enable-impeller");
-  builder.SetDartEntrypoint(
+  builder.SetDartEntrypoint("render_selected_target_ready");
+  builder.AddDartEntrypointArgument(
       "render_partial_repaint_through_recycled_save_layers");
+  fml::AutoResetWaitableEvent dart_ready;
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY(
+          [&dart_ready](Dart_NativeArguments args) { dart_ready.Signal(); }));
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
       /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
@@ -1188,6 +1249,9 @@ TEST_F(EmbedderTest, SelectedTargetDamageClearsRecycledSaveLayerTargets) {
   auto initial_scene = context.GetNextSceneImage();
   auto engine = builder.LaunchEngine();
   ASSERT_TRUE(engine.is_valid());
+  // Window metrics must follow Dart callback registration. Otherwise the
+  // first frame can be delivered while the JIT entrypoint is still starting.
+  ASSERT_FALSE(dart_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 
   FlutterWindowMetricsEvent event = {};
   event.struct_size = sizeof(event);
@@ -1252,7 +1316,14 @@ TEST_F(EmbedderTest, SelectedTargetDamageRefusedWhenRootPassNeedsReadback) {
 
   EmbedderConfigBuilder builder(context);
   builder.AddCommandLineArgument("--enable-impeller");
-  builder.SetDartEntrypoint("render_partial_repaint_with_root_backdrop_filter");
+  builder.SetDartEntrypoint("render_selected_target_ready");
+  builder.AddDartEntrypointArgument(
+      "render_partial_repaint_with_root_backdrop_filter");
+  fml::AutoResetWaitableEvent dart_ready;
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY(
+          [&dart_ready](Dart_NativeArguments args) { dart_ready.Signal(); }));
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
       /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
@@ -1294,6 +1365,9 @@ TEST_F(EmbedderTest, SelectedTargetDamageRefusedWhenRootPassNeedsReadback) {
   auto initial_scene = context.GetNextSceneImage();
   auto engine = builder.LaunchEngine();
   ASSERT_TRUE(engine.is_valid());
+  // Window metrics must follow Dart callback registration. Otherwise the
+  // first frame can be delivered while the JIT entrypoint is still starting.
+  ASSERT_FALSE(dart_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 
   FlutterWindowMetricsEvent event = {};
   event.struct_size = sizeof(event);
@@ -1396,7 +1470,13 @@ TEST_F(EmbedderTest, SelectedTargetDamageKeepsPreservedTargetMultisampled) {
 
   EmbedderConfigBuilder builder(context);
   builder.AddCommandLineArgument("--enable-impeller");
-  builder.SetDartEntrypoint("render_clipped_diagonal_edge");
+  builder.SetDartEntrypoint("render_selected_target_ready");
+  builder.AddDartEntrypointArgument("render_clipped_diagonal_edge");
+  fml::AutoResetWaitableEvent dart_ready;
+  context.AddNativeCallback(
+      "SignalNativeTest",
+      CREATE_NATIVE_ENTRY(
+          [&dart_ready](Dart_NativeArguments args) { dart_ready.Signal(); }));
   builder.SetSurface(DlISize(800, 600));
   builder.SetRootRenderTargetCompositor(
       /*avoid_backing_store_cache=*/false, kExactSelectedTargetFeatures);
@@ -1432,6 +1512,9 @@ TEST_F(EmbedderTest, SelectedTargetDamageKeepsPreservedTargetMultisampled) {
   auto unpreserved_scene = context.GetNextSceneImage();
   auto engine = builder.LaunchEngine();
   ASSERT_TRUE(engine.is_valid());
+  // Window metrics must follow Dart callback registration. Otherwise the
+  // first frame can be delivered while the JIT entrypoint is still starting.
+  ASSERT_FALSE(dart_ready.WaitWithTimeout(fml::TimeDelta::FromSeconds(5)));
 
   FlutterWindowMetricsEvent event = {};
   event.struct_size = sizeof(event);

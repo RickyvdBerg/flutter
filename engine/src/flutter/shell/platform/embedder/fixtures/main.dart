@@ -1588,6 +1588,15 @@ void render_selected_target_ready(List<String> arguments) {
     default:
       throw ArgumentError.value(arguments.single, 'scene');
   }
+  final renderFrame = PlatformDispatcher.instance.onBeginFrame!;
+  PlatformDispatcher.instance.onBeginFrame = (Duration duration) {
+    // Engine startup may issue a frame before native window metrics arrive.
+    // It cannot produce a target, and must not advance a scene-sequence test.
+    if (PlatformDispatcher.instance.views.first.physicalSize.isEmpty) {
+      return;
+    }
+    renderFrame(duration);
+  };
   signalNativeTest();
 }
 

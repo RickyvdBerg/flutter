@@ -1762,44 +1762,55 @@ MakeRenderTargetFromBackingStoreImpeller(
   auto wrapped_source = std::make_shared<EmbedderTextureSourceVK>(
       vk_image, vk_image_view, desc, external_ownership);
 
-  auto impeller_context = aiks_context->GetContext();
-  // Impeller antialiases geometry by rastering it multisampled and resolving.
-  // A single-sample root pass therefore has no antialiasing at all: every
-  // clip edge and every arbitrary path in the frame lands hard-edged. That
-  // cost is paid by the whole frame, so the root pass asks for multisampling
-  // first and treats partial repaint as the thing that gives way.
-  auto transients = GetCachedSwapchainTransientsVK(impeller_context, desc,
-                                                   /*enable_msaa=*/true);
-  const bool multisampled = transients != nullptr;
-  if (!multisampled) {
-    // The transients budget could not seat a multisample reservation -- every
-    // matching entry is leased and no idle one can be evicted. Rastering this
-    // frame single-sampled costs the frame its antialiasing; refusing to
-    // render costs the frame entirely.
-    transients = GetCachedSwapchainTransientsVK(impeller_context, desc,
-                                                /*enable_msaa=*/false);
-  }
-  ReportRootPassSampleCount(multisampled);
+  const bool preserved_contents =
+      selected_target_damage &&
+      HasPreservedSelectedTargetContents(backing_store);
+  auto create_target =
+      [impeller_context = aiks_context->GetContext(), desc, wrapped_source,
+       preserved_contents,
+       view_id = config.view_id]() -> std::unique_ptr<impeller::RenderTarget> {
+    FML_TRACE_EVENT("flutter", "AvioMaterializeRenderTarget", "view_id",
+                    view_id, "width", desc.size.width, "height",
+                    desc.size.height);
+    // Impeller antialiases geometry by rastering it multisampled and resolving.
+    // A single-sample root pass therefore has no antialiasing at all: every
+    // clip edge and every arbitrary path in the frame lands hard-edged. That
+    // cost is paid by the whole frame, so the root pass asks for multisampling
+    // first and treats partial repaint as the thing that gives way.
+    auto transients = GetCachedSwapchainTransientsVK(impeller_context, desc,
+                                                     /*enable_msaa=*/true);
+    const bool multisampled = transients != nullptr;
+    if (!multisampled) {
+      // The transients budget could not seat a multisample reservation -- every
+      // matching entry is leased and no idle one can be evicted. Rastering this
+      // frame single-sampled costs the frame its antialiasing; refusing to
+      // render costs the frame entirely.
+      transients = GetCachedSwapchainTransientsVK(impeller_context, desc,
+                                                  /*enable_msaa=*/false);
+    }
+    ReportRootPassSampleCount(multisampled);
 
-  auto surface = impeller::SurfaceVK::WrapSwapchainImage(
-      transients, wrapped_source, []() -> bool { return true; });
-  if (!surface) {
-    FML_LOG(ERROR) << "Could not wrap Vulkan image as Impeller surface.";
-    return nullptr;
-  }
+    auto surface = impeller::SurfaceVK::WrapSwapchainImage(
+        transients, wrapped_source, []() -> bool { return true; });
+    if (!surface || !surface->IsValid()) {
+      FML_LOG(ERROR) << "Could not wrap Vulkan image as Impeller surface.";
+      return nullptr;
+    }
 
-  auto render_target = surface->GetRenderTarget();
-  // A multisampled pass resolves over the whole target, so nothing this
-  // target preserved survives it and its previous contents cannot be loaded.
-  // Only the single-sample fallback renders into the target itself, and only
-  // there can a preserved target load its exact previous contents.
-  if (!multisampled && selected_target_damage &&
-      HasPreservedSelectedTargetContents(backing_store)) {
-    auto color = render_target.GetColorAttachment(0u);
-    color.load_action = impeller::LoadAction::kLoad;
-    color.store_action = impeller::StoreAction::kStore;
-    render_target.SetColorAttachment(color, 0u);
-  }
+    auto render_target = surface->GetRenderTarget();
+    // A multisampled pass resolves over the whole target, so nothing this
+    // target preserved survives it and its previous contents cannot be loaded.
+    // Only the single-sample fallback renders into the target itself, and only
+    // there can a preserved target load its exact previous contents.
+    if (!multisampled && preserved_contents) {
+      auto color = render_target.GetColorAttachment(0u);
+      color.load_action = impeller::LoadAction::kLoad;
+      color.store_action = impeller::StoreAction::kStore;
+      render_target.SetColorAttachment(color, 0u);
+    }
+
+    return std::make_unique<impeller::RenderTarget>(std::move(render_target));
+  };
 
   fml::closure framebuffer_destruct = [callback = vulkan->destruction_callback,
                                        user_data = vulkan->user_data] {
@@ -1809,9 +1820,8 @@ MakeRenderTargetFromBackingStoreImpeller(
   };
 
   return std::make_unique<flutter::EmbedderRenderTargetImpeller>(
-      backing_store, aiks_context,
-      std::make_unique<impeller::RenderTarget>(std::move(render_target)),
-      on_release, framebuffer_destruct,
+      backing_store, aiks_context, flutter::DlISize(size),
+      std::move(create_target), on_release, framebuffer_destruct,
       [wrapped_source]() mutable -> fml::UniqueFD {
         return wrapped_source->TakeRenderCompleteSyncFD();
       });

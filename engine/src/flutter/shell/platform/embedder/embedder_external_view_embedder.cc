@@ -130,20 +130,6 @@ namespace {
 
 constexpr size_t kMaxSelectedTargetDamageRects = 4096u;
 
-// Whether the root pass over this target resolves multisampled contents over
-// every one of its pixels. Impeller reads the same fact the same way: a color
-// attachment with a resolve texture is a multisampled pass.
-bool RasterReplacesWholeTarget(const EmbedderRenderTarget& render_target) {
-#ifdef IMPELLER_SUPPORTS_RENDERING
-  const impeller::RenderTarget* impeller_target =
-      render_target.GetImpellerRenderTarget();
-  return impeller_target != nullptr &&
-         impeller_target->GetColorAttachment(0u).resolve_texture != nullptr;
-#else
-  return false;
-#endif  // IMPELLER_SUPPORTS_RENDERING
-}
-
 SurfaceFrame::FramebufferInfo ReadSelectedTargetFramebufferInfo(
     const EmbedderRenderTarget& render_target,
     const DlMatrix& surface_transformation,
@@ -152,7 +138,7 @@ SurfaceFrame::FramebufferInfo ReadSelectedTargetFramebufferInfo(
   info.supports_readback = true;
   info.supports_partial_repaint = true;
   info.existing_damage = DlRegion(DlIRect::MakeSize(frame_size));
-  info.raster_replaces_whole_target = RasterReplacesWholeTarget(render_target);
+  info.raster_replaces_whole_target = render_target.RasterReplacesWholeTarget();
 
   const FlutterBackingStore* backing_store = render_target.GetBackingStore();
   const auto* content_state =
@@ -167,7 +153,7 @@ SurfaceFrame::FramebufferInfo ReadSelectedTargetFramebufferInfo(
   info.preserved_contents = content_state->preserved_contents;
   if (!content_state->preserved_contents ||
       content_state->existing_damage == nullptr ||
-      render_target.GetImpellerRenderTarget() == nullptr ||
+      render_target.GetAiksContext() == nullptr ||
       !surface_transformation.IsInvertible()) {
     return info;
   }
@@ -618,7 +604,10 @@ class Layer {
     }
 
 #ifdef IMPELLER_SUPPORTS_RENDERING
-    if (render_target_->GetImpellerRenderTarget()) {
+    if (render_target_->GetAiksContext()) {
+      if (!render_target_->GetImpellerRenderTarget()) {
+        return;
+      }
       RenderFlutterContentsImpeller(frame_boundary);
       return;
     }

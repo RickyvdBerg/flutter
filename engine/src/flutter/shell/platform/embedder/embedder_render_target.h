@@ -80,6 +80,10 @@ class EmbedderRenderTarget {
   ///
   virtual DlISize GetRenderTargetSize() const = 0;
 
+  // Whether damage planning must permit this target to replace every pixel.
+  // This is a conservative capability query and must not allocate attachments.
+  virtual bool RasterReplacesWholeTarget() const { return false; }
+
   //----------------------------------------------------------------------------
   /// @brief      The embedder backing store descriptor. This is the descriptor
   ///             that was given to the engine by the embedder. This descriptor

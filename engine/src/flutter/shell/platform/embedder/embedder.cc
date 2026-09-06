@@ -1819,6 +1819,21 @@ MakeRenderTargetFromBackingStoreImpeller(
     }
   };
 
+  if (!selected_target_damage) {
+    // Legacy layer compositors cannot terminalize a deferred allocation
+    // failure. Preserve their acquisition-time failure boundary; only the
+    // negotiated exact-target path may defer until it can report RasterFailed.
+    auto render_target = create_target();
+    if (!render_target) {
+      return nullptr;
+    }
+    return std::make_unique<flutter::EmbedderRenderTargetImpeller>(
+        backing_store, aiks_context, std::move(render_target), on_release,
+        framebuffer_destruct, [wrapped_source]() mutable -> fml::UniqueFD {
+          return wrapped_source->TakeRenderCompleteSyncFD();
+        });
+  }
+
   return std::make_unique<flutter::EmbedderRenderTargetImpeller>(
       backing_store, aiks_context, flutter::DlISize(size),
       std::move(create_target), on_release, framebuffer_destruct,

@@ -604,10 +604,7 @@ class Layer {
     }
 
 #ifdef IMPELLER_SUPPORTS_RENDERING
-    if (render_target_->GetAiksContext()) {
-      if (!render_target_->GetImpellerRenderTarget()) {
-        return;
-      }
+    if (render_target_->GetImpellerRenderTarget()) {
       RenderFlutterContentsImpeller(frame_boundary);
       return;
     }

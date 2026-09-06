@@ -3092,13 +3092,14 @@ class BuildOwner {
       }
       return true;
     }());
-    buildScope._scheduleBuildFor(element);
     // View-scoped scheduling hook: notify the binding with the identity that
     // this element inherited from its owning View boundary.
     //
-    // Order matters: this MUST fire before [onBuildScheduled] so that the
-    // scheduleFrame call onBuildScheduled triggers can already see this
-    // element's view in the dirty-view registry.  Otherwise the first
+    // Order matters: this MUST fire before the BuildScope callback as well
+    // as [onBuildScheduled]. LayoutBuilder schedules a deferred layout frame
+    // from its scope callback, before it marks the render tree dirty. Both
+    // scheduling edges must already see the element's view in the dirty-view
+    // registry. Otherwise the first
     // scheduleFrame of a build round always falls through to the legacy
     // global platformDispatcher.scheduleFrame() path (because the
     // registry is still empty at dispatch time), which sets
@@ -3106,6 +3107,7 @@ class BuildOwner {
     // makes every subsequent scoped scheduleFrameForDisplayViews call
     // a no-op for the rest of the frame.
     onElementDirtied?.call(element.buildViewIdentity);
+    buildScope._scheduleBuildFor(element);
     if (!_scheduledFlushDirtyElements && onBuildScheduled != null) {
       _scheduledFlushDirtyElements = true;
       onBuildScheduled!();

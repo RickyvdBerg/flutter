@@ -649,24 +649,8 @@ Rasterizer::DoDrawResult Rasterizer::DoDraw(
 #if !defined(OS_FUCHSIA)
   const fml::TimePoint raster_finish_time =
       frame_timings_recorder->GetRasterEndTime();
-  const fml::TimePoint render_deadline_time =
-      frame_timings_recorder->GetRenderDeadlineTime();
   fml::TimePoint frame_target_time =
       frame_timings_recorder->GetVsyncTargetTime();
-  const auto opportunity = frame_timings_recorder->GetFrameOpportunity();
-  if (opportunity.has_value() && raster_finish_time > render_deadline_time) {
-    fml::tracing::TraceEventAsyncComplete("flutter",                 // category
-                                          "AvioRenderDeadlineMiss",  // name
-                                          render_deadline_time,  // begin_time
-                                          raster_finish_time,    // end_time
-                                          "display_id",          // arg_key_1
-                                          opportunity->display_id,  // arg_val_1
-                                          "frame_opportunity_id",   // arg_key_2
-                                          opportunity->id,          // arg_val_2
-                                          "frame_target_time",      // arg_key_3
-                                          frame_target_time         // arg_val_3
-    );
-  }
   if (raster_finish_time > frame_target_time) {
     fml::TimePoint latest_frame_target_time =
         delegate_.GetLatestFrameTargetTime();

@@ -1767,11 +1767,7 @@ MakeRenderTargetFromBackingStoreImpeller(
       HasPreservedSelectedTargetContents(backing_store);
   auto create_target =
       [impeller_context = aiks_context->GetContext(), desc, wrapped_source,
-       preserved_contents,
-       view_id = config.view_id]() -> std::unique_ptr<impeller::RenderTarget> {
-    FML_TRACE_EVENT("flutter", "AvioMaterializeRenderTarget", "view_id",
-                    view_id, "width", desc.size.width, "height",
-                    desc.size.height);
+       preserved_contents]() -> std::unique_ptr<impeller::RenderTarget> {
     // Impeller antialiases geometry by rastering it multisampled and resolving.
     // A single-sample root pass therefore has no antialiasing at all: every
     // clip edge and every arbitrary path in the frame lands hard-edged. That

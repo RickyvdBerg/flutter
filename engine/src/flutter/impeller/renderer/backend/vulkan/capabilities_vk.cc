@@ -465,9 +465,9 @@ CapabilitiesVK::GetEnabledDeviceFeatures(
     VALIDATION_LOG << "Device doesn't support the required queues.";
     return std::nullopt;
   }
-  if (!IsExtensionInList(enabled_extensions.value(),
-                         RequiredCommonDeviceExtensionVK::
-                             kKHRTimelineSemaphore)) {
+  if (!IsExtensionInList(
+          enabled_extensions.value(),
+          RequiredCommonDeviceExtensionVK::kKHRTimelineSemaphore)) {
     VALIDATION_LOG << "Device doesn't enable VK_KHR_timeline_semaphore.";
     return std::nullopt;
   }

@@ -29,8 +29,8 @@ class TestVulkanContext : public fml::RefCountedThreadSafe<TestVulkanContext> {
   VkDevice GetDeviceHandle() const;
 
   VkImageView CreateImageView(VkImage image,
-                               VkFormat format,
-                               const SkISize& size) const;
+                              VkFormat format,
+                              const SkISize& size) const;
 
   void DestroyImageView(VkImageView view) const;
 

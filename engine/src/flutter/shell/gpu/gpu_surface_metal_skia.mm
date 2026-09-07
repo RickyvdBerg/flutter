@@ -5,9 +5,9 @@
 #include "flow/surface_frame.h"
 #if !SLIMPELLER
 
-#include "flutter/shell/gpu/gpu_surface_metal_skia.h"
 #include "flutter/display_list/geometry/dl_geometry_types.h"
 #include "flutter/display_list/geometry/dl_region.h"
+#include "flutter/shell/gpu/gpu_surface_metal_skia.h"
 
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>

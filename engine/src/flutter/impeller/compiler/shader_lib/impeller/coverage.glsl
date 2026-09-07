@@ -11,10 +11,10 @@
 // `source + destination * (1 - alpha)`.
 float IPExternalLinearBackdropCoverage(float alpha) {
   float encoded_transparency = clamp(1.0 - alpha, 0.0, 1.0);
-  float linear_transparency = encoded_transparency <= 0.04045
-                                  ? encoded_transparency / 12.92
-                                  : pow((encoded_transparency + 0.055) / 1.055,
-                                        2.4);
+  float linear_transparency =
+      encoded_transparency <= 0.04045
+          ? encoded_transparency / 12.92
+          : pow((encoded_transparency + 0.055) / 1.055, 2.4);
   return 1.0 - linear_transparency;
 }
 
@@ -25,10 +25,8 @@ vec4 IPApplyExternalLinearBackdropCoverage(vec4 premultiplied_color,
   if (enabled < 0.5 || premultiplied_color.a <= 0.0) {
     return premultiplied_color;
   }
-  float alpha =
-      IPExternalLinearBackdropCoverage(premultiplied_color.a);
-  return vec4(premultiplied_color.rgb * (alpha / premultiplied_color.a),
-              alpha);
+  float alpha = IPExternalLinearBackdropCoverage(premultiplied_color.a);
+  return vec4(premultiplied_color.rgb * (alpha / premultiplied_color.a), alpha);
 }
 
 #endif

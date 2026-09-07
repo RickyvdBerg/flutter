@@ -529,7 +529,8 @@ TEST_F(TransformLayerLayerDiffTest, TransformNested) {
   transform2->AssignOldLayer(transform1.get());
   damage = DiffLayerTree(l2, l1);
 
-  EXPECT_EQ(damage.frame_damage.bounds(), DlIRect::MakeLTRB(200, 200, 300, 302));
+  EXPECT_EQ(damage.frame_damage.bounds(),
+            DlIRect::MakeLTRB(200, 200, 300, 302));
 }
 
 }  // namespace testing

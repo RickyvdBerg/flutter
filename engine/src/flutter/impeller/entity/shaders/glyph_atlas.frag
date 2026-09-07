@@ -4,8 +4,8 @@
 
 precision mediump float;
 
-#include <impeller/types.glsl>
 #include <impeller/coverage.glsl>
+#include <impeller/types.glsl>
 
 uniform f16sampler2D glyph_atlas_sampler;
 

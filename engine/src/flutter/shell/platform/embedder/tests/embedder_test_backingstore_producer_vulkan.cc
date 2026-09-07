@@ -97,16 +97,14 @@ bool EmbedderTestBackingStoreProducerVulkan::Create(
   backing_store_out->vulkan.image = image;
 
   // Create a VkImageView for Impeller use via the proc table.
-  VkImageView image_view =
-      test_vulkan_context_->CreateImageView(
-          image_info.fImage, VK_FORMAT_R8G8B8A8_UNORM,
-          SkISize::Make(surface_size.width, surface_size.height));
+  VkImageView image_view = test_vulkan_context_->CreateImageView(
+      image_info.fImage, VK_FORMAT_R8G8B8A8_UNORM,
+      SkISize::Make(surface_size.width, surface_size.height));
   if (image_view == VK_NULL_HANDLE) {
     FML_LOG(ERROR) << "Could not create VkImageView for test backing store.";
     return false;
   }
-  backing_store_out->vulkan.image_view =
-      reinterpret_cast<uint64_t>(image_view);
+  backing_store_out->vulkan.image_view = reinterpret_cast<uint64_t>(image_view);
 
   // Collect all allocated resources in the destruction_callback.
   // Hold a ref to the TestVulkanContext so its device outlives the image view.

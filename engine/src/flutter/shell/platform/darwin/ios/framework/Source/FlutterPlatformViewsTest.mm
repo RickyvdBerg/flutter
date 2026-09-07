@@ -5358,10 +5358,8 @@ static UIGestureRecognizer* FindForwardingGestureRecognizer(UIView* view) {
                                withIosContext:std::make_shared<flutter::IOSContextNoop>()];
 
   XCTAssertTrue(submit_info.has_value());
-  XCTAssertEqual(submit_info->frame_damage->bounds(),
-                 flutter::DlIRect::MakeWH(800, 600));
-  XCTAssertEqual(submit_info->buffer_damage->bounds(),
-                 flutter::DlIRect::MakeWH(400, 600));
+  XCTAssertEqual(submit_info->frame_damage->bounds(), flutter::DlIRect::MakeWH(800, 600));
+  XCTAssertEqual(submit_info->buffer_damage->bounds(), flutter::DlIRect::MakeWH(400, 600));
 }
 
 - (void)testClipSuperellipse {

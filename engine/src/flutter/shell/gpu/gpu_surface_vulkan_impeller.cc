@@ -40,8 +40,8 @@ std::vector<SkIRect> DamageRectsOrFull(
     }
   }
   if (damage_rects.empty()) {
-    damage_rects.push_back(SkIRect::MakeWH(target_size.width,
-                                           target_size.height));
+    damage_rects.push_back(
+        SkIRect::MakeWH(target_size.width, target_size.height));
   }
   return damage_rects;
 }
@@ -149,7 +149,7 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
     impeller::RenderTarget render_target = surface->GetRenderTarget();
     SurfaceFrame::EncodeCallback encode_callback = [aiks_context =
                                                         aiks_context_,  //
-                                                    render_target  //
+                                                    render_target       //
     ](SurfaceFrame& surface_frame, DlCanvas* canvas) mutable -> bool {
       if (!aiks_context) {
         return false;
@@ -161,9 +161,8 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
         return false;
       }
 
-      const auto damage_rects =
-          DamageRectsOrFull(surface_frame.submit_info(),
-                            render_target.GetRenderTargetSize());
+      const auto damage_rects = DamageRectsOrFull(
+          surface_frame.submit_info(), render_target.GetRenderTargetSize());
       return impeller::RenderToTarget(
           aiks_context->GetContentContext(),                                //
           render_target,                                                    //
@@ -255,49 +254,48 @@ std::unique_ptr<SurfaceFrame> GPUSurfaceVulkanImpeller::AcquireFrame(
       damage_->clear();
     }
 
-    SurfaceFrame::EncodeCallback encode_callback =
-        fml::MakeCopyable([aiks_context = aiks_context_,  //
-                           damage = damage_,
-                           disable_partial_repaint = disable_partial_repaint_,
-                           render_target,
-                           image_key   //
+    SurfaceFrame::EncodeCallback encode_callback = fml::MakeCopyable(
+        [aiks_context = aiks_context_,  //
+         damage = damage_, disable_partial_repaint = disable_partial_repaint_,
+         render_target,
+         image_key  //
     ](SurfaceFrame& surface_frame, DlCanvas* canvas) mutable -> bool {
-      if (!aiks_context) {
-        return false;
-      }
-
-      auto display_list = surface_frame.BuildDisplayList();
-      if (!display_list) {
-        FML_LOG(ERROR) << "Could not build display list for surface frame.";
-        return false;
-      }
-
-      if (!disable_partial_repaint && damage) {
-        for (auto& entry : *damage) {
-          if (entry.first != image_key) {
-            // Accumulate damage for other framebuffers.
-            if (surface_frame.submit_info().frame_damage) {
-              entry.second = DlRegion::MakeUnion(
-                  entry.second, *surface_frame.submit_info().frame_damage);
-            }
+          if (!aiks_context) {
+            return false;
           }
-        }
-        // Reset accumulated damage for current framebuffer.
-        (*damage)[image_key] = DlRegion();
-      }
 
-      const auto damage_rects =
-          DamageRectsOrFull(surface_frame.submit_info(),
-                            render_target.GetRenderTargetSize());
+          auto display_list = surface_frame.BuildDisplayList();
+          if (!display_list) {
+            FML_LOG(ERROR) << "Could not build display list for surface frame.";
+            return false;
+          }
 
-      return impeller::RenderToTarget(
-          aiks_context->GetContentContext(),                                //
-          render_target,                                                    //
-          display_list,                                                     //
-          damage_rects,                                                     //
-          /*reset_host_buffer=*/surface_frame.submit_info().frame_boundary  //
-      );
-    });
+          if (!disable_partial_repaint && damage) {
+            for (auto& entry : *damage) {
+              if (entry.first != image_key) {
+                // Accumulate damage for other framebuffers.
+                if (surface_frame.submit_info().frame_damage) {
+                  entry.second = DlRegion::MakeUnion(
+                      entry.second, *surface_frame.submit_info().frame_damage);
+                }
+              }
+            }
+            // Reset accumulated damage for current framebuffer.
+            (*damage)[image_key] = DlRegion();
+          }
+
+          const auto damage_rects = DamageRectsOrFull(
+              surface_frame.submit_info(), render_target.GetRenderTargetSize());
+
+          return impeller::RenderToTarget(
+              aiks_context->GetContentContext(),          //
+              render_target,                              //
+              display_list,                               //
+              damage_rects,                               //
+                                                          /*reset_host_buffer=*/
+              surface_frame.submit_info().frame_boundary  //
+          );
+        });
 
     SurfaceFrame::SubmitCallback submit_callback =
         [image = flutter_image, delegate = delegate_,

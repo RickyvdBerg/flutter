@@ -10,8 +10,8 @@
 #include <optional>
 #include <vector>
 #include "display_list/utils/dl_matrix_clip_tracker.h"
-#include "flutter/display_list/geometry/dl_region.h"
 #include "flutter/common/graphics/texture.h"
+#include "flutter/display_list/geometry/dl_region.h"
 #include "flutter/flow/paint_region.h"
 #include "flutter/fml/macros.h"
 

@@ -4,8 +4,8 @@
 
 precision mediump float;
 
-#include <impeller/texture.glsl>
 #include <impeller/coverage.glsl>
+#include <impeller/texture.glsl>
 #include <impeller/types.glsl>
 
 layout(constant_id = 0) const float supports_decal = 1.0;

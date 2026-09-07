@@ -422,8 +422,7 @@ class CapabilitiesVK final : public Capabilities,
       required_android_device_extensions_;
   std::set<OptionalAndroidDeviceExtensionVK>
       optional_android_device_extensions_;
-  std::set<OptionalLinuxDeviceExtensionVK>
-      optional_linux_device_extensions_;
+  std::set<OptionalLinuxDeviceExtensionVK> optional_linux_device_extensions_;
   std::set<OptionalDeviceExtensionVK> optional_device_extensions_;
   mutable PixelFormat default_color_format_ = PixelFormat::kUnknown;
   PixelFormat default_stencil_format_ = PixelFormat::kUnknown;

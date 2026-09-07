@@ -70,9 +70,8 @@ TEST(GPUSurfaceVulkanImpeller, DisposesThreadLocalResources) {
 
   TestGPUSurfaceVulkanDelegate delegate;
 
-  std::unique_ptr<Surface> surface =
-      std::make_unique<GPUSurfaceVulkanImpeller>(
-          &delegate, context, true /* render_to_surface */);
+  std::unique_ptr<Surface> surface = std::make_unique<GPUSurfaceVulkanImpeller>(
+      &delegate, context, true /* render_to_surface */);
 
   // Add a command pool to the global map.
   auto pool = context->GetCommandPoolRecycler()->Get();

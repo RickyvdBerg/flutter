@@ -89,7 +89,8 @@ std::vector<WaitSemaphore> TrackedObjectsVK::TakeWaitSemaphores() {
 }
 
 std::vector<TrackedObjectsVK::PendingSignalSemaphoreVK>
-TrackedObjectsVK::CreateSignalSemaphores(const std::shared_ptr<Context>& context) {
+TrackedObjectsVK::CreateSignalSemaphores(
+    const std::shared_ptr<Context>& context) {
   std::vector<PendingSignalSemaphoreVK> signal_semaphores;
   signal_semaphores.reserve(tracked_textures_.size());
   for (const auto& texture : tracked_textures_) {

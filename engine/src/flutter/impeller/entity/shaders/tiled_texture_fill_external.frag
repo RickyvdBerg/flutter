@@ -4,8 +4,8 @@
 
 precision mediump float;
 
-#include <impeller/external_texture_oes.glsl>
 #include <impeller/coverage.glsl>
+#include <impeller/external_texture_oes.glsl>
 
 uniform sampler2D SAMPLER_EXTERNAL_OES_texture_sampler;
 

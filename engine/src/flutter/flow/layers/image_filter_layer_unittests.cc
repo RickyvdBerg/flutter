@@ -653,7 +653,8 @@ TEST_F(ImageFilterLayerDiffTest, ImageFilterLayer) {
   l2.root()->Add(scale);
 
   damage = DiffLayerTree(l2, MockLayerTree());
-  EXPECT_EQ(damage.frame_damage.bounds(), DlIRect::MakeLTRB(140, 140, 280, 280));
+  EXPECT_EQ(damage.frame_damage.bounds(),
+            DlIRect::MakeLTRB(140, 140, 280, 280));
 
   MockLayerTree l3;
   l3.root()->Add(scale);
@@ -662,7 +663,8 @@ TEST_F(ImageFilterLayerDiffTest, ImageFilterLayer) {
   auto path1 = DlPath::MakeRectLTRB(130, 130, 140, 140);
   l3.root()->Add(std::make_shared<MockLayer>(path1));
   damage = DiffLayerTree(l3, l2);
-  EXPECT_EQ(damage.frame_damage.bounds(), DlIRect::MakeLTRB(130, 130, 140, 140));
+  EXPECT_EQ(damage.frame_damage.bounds(),
+            DlIRect::MakeLTRB(130, 130, 140, 140));
 
   // path intersecting ImageFilterLayer, shouldn't trigger entire
   // ImageFilterLayer repaint
@@ -671,7 +673,8 @@ TEST_F(ImageFilterLayerDiffTest, ImageFilterLayer) {
   auto path2 = DlPath::MakeRectLTRB(130, 130, 141, 141);
   l4.root()->Add(std::make_shared<MockLayer>(path2));
   damage = DiffLayerTree(l4, l3);
-  EXPECT_EQ(damage.frame_damage.bounds(), DlIRect::MakeLTRB(130, 130, 141, 141));
+  EXPECT_EQ(damage.frame_damage.bounds(),
+            DlIRect::MakeLTRB(130, 130, 141, 141));
 }
 
 TEST_F(ImageFilterLayerDiffTest, ImageFilterLayerInflatestChildSize) {

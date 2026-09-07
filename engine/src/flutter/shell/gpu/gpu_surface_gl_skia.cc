@@ -279,8 +279,8 @@ bool GPUSurfaceGLSkia::PresentSurface(const SurfaceFrame& frame) {
     return false;
   }
 
-  auto region_bounds = [](const std::optional<DlRegion>& rgn)
-      -> std::optional<DlIRect> {
+  auto region_bounds =
+      [](const std::optional<DlRegion>& rgn) -> std::optional<DlIRect> {
     if (!rgn.has_value()) {
       return std::nullopt;
     }

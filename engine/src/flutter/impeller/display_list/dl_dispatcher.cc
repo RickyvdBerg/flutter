@@ -1354,8 +1354,7 @@ bool RenderToTarget(ContentContext& context,
                     bool reset_host_buffer,
                     bool is_onscreen) {
   auto to_impeller_rect = [](const SkIRect& rect) {
-    return Rect::MakeLTRB(rect.left(), rect.top(), rect.right(),
-                          rect.bottom());
+    return Rect::MakeLTRB(rect.left(), rect.top(), rect.right(), rect.bottom());
   };
   if (damage_rects.empty()) {
     auto size = render_target.GetRenderTargetSize();
@@ -1367,8 +1366,8 @@ bool RenderToTarget(ContentContext& context,
 
   if (damage_rects.size() == 1) {
     return RenderToTarget(context, render_target, display_list,
-                          to_impeller_rect(damage_rects[0]),
-                          reset_host_buffer, is_onscreen);
+                          to_impeller_rect(damage_rects[0]), reset_host_buffer,
+                          is_onscreen);
   }
 
   // Multiple damage rects: delegate to single-rect overload with the bounding

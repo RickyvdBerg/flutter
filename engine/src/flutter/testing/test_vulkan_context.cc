@@ -191,8 +191,8 @@ VkDevice TestVulkanContext::GetDeviceHandle() const {
 }
 
 VkImageView TestVulkanContext::CreateImageView(VkImage image,
-                                                VkFormat format,
-                                                const SkISize& size) const {
+                                               VkFormat format,
+                                               const SkISize& size) const {
   auto vkCreateImageView = reinterpret_cast<PFN_vkCreateImageView>(
       vk_->GetDeviceProcAddr(device_->GetHandle(), "vkCreateImageView"));
   if (!vkCreateImageView) {

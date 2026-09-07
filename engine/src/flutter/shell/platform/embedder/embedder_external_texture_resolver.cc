@@ -9,8 +9,8 @@
 #include <utility>
 
 #ifdef __linux__
-#include <set>
 #include <unistd.h>
+#include <set>
 
 #include "flutter/fml/logging.h"
 #include "flutter/shell/platform/embedder/dmabuf_texture_mailbox.h"
@@ -107,9 +107,8 @@ class EmbedderExternalTextureDmabuf final : public Texture {
       desc.acquire_fence_fd = mutable_pending_desc.acquire_fence_fd.release();
     }
 
-    auto texture_source =
-        std::make_shared<impeller::DmabufTextureSourceVK>(impeller_context,
-                                                          desc);
+    auto texture_source = std::make_shared<impeller::DmabufTextureSourceVK>(
+        impeller_context, desc);
     if (!texture_source->IsValid()) {
       CloseTransferredDescriptorFds(desc);
       entry->pending_descriptor.reset();

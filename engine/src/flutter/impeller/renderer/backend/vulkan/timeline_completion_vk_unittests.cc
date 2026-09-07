@@ -19,8 +19,8 @@ TEST(TimelineCompletionVKTest, ExecutesCompletionCallback) {
 
   auto signal = fml::ManualResetWaitableEvent();
   const auto value = completion->ReserveSubmitValue();
-  ASSERT_TRUE(completion->AddCompletion(
-      value, [&signal](CommandBuffer::Status status) {
+  ASSERT_TRUE(
+      completion->AddCompletion(value, [&signal](CommandBuffer::Status status) {
         EXPECT_EQ(status, CommandBuffer::Status::kCompleted);
         signal.Signal();
       }));
@@ -89,8 +89,8 @@ TEST(TimelineCompletionVKTest, ExecutesAlreadyCompletedValueImmediately) {
   ASSERT_TRUE(completion->WaitFor(value));
 
   bool called = false;
-  ASSERT_TRUE(completion->AddCompletion(
-      value, [&called](CommandBuffer::Status status) {
+  ASSERT_TRUE(
+      completion->AddCompletion(value, [&called](CommandBuffer::Status status) {
         EXPECT_EQ(status, CommandBuffer::Status::kCompleted);
         called = true;
       }));
